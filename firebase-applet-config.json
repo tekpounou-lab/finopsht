@@ -1,12 +1,12 @@
 {
-  "projectId": "tek-pou-nou-tpn",
-  "appId": "1:116629444151:web:1644ac9f21b2818d1f91b2",
-  "apiKey": "AIzaSyBtX4P2PpNJnb3Ua1LdIb8rEhGFLOIf5NM",
-  "authDomain": "tek-pou-nou-tpn.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-finopstekpounou-007bdbb1-7c82-4aab-ab17-f3b0aff2673c",
-  "storageBucket": "tek-pou-nou-tpn.firebasestorage.app",
-  "messagingSenderId": "116629444151",
+  "projectId": "telegram-agent-lead",
+  "appId": "1:401009421871:web:d0686f1ce00706b94ee0da",
+  "apiKey": "AIzaSyCmqF-MYwmaJRk-HJh1GcvgGY8pwhxa2CU",
+  "authDomain": "telegram-agent-lead.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-finopsht-a182bd2a-328e-4e7f-9402-50bcc509be2e",
+  "storageBucket": "telegram-agent-lead.firebasestorage.app",
+  "messagingSenderId": "401009421871",
   "measurementId": "",
-  "oAuthClientId": "116629444151-rgif2u8idbck2v0tirb126gv85imis5l.apps.googleusercontent.com",
+  "oAuthClientId": "401009421871-6kio6oo4eq2b0uumm3t0f2p36a7ug8lc.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

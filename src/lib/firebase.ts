@@ -3,7 +3,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRe
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache, doc, collection, writeBatch, serverTimestamp, setLogLevel } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 import { getStorage } from "firebase/storage";
-import { getPerformance } from "firebase/performance";
+// import { getPerformance } from "firebase/performance";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { LogSanitizer } from "../services/security/LogSanitizer";
 import { logger } from "../services/observability/Logger";
@@ -69,19 +69,7 @@ export const functions = getFunctions(app);
 export const storage = getStorage(app);
 
 // Guard Firebase Performance Monitoring against unsupported/local domains
-const isSupportedHost = typeof window !== "undefined" && 
-  !window.location.hostname.includes("localhost") &&
-  !window.location.hostname.includes("127.0.0.1");
-
-export const perf = isSupportedHost && typeof window !== "undefined"
-  ? (() => {
-      try {
-        return getPerformance(app);
-      } catch (err) {
-        return null;
-      }
-    })()
-  : null;
+export const perf = null;
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
