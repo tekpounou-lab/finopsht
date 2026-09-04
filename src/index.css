@@ -1,0 +1,339 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* LIGHT MODE VALUES (Default) */
+  --slate-50: #0f172a;       /* Text: Slate-50 becomes dark text */
+  --slate-100: #0f172a;      /* Text: Slate-100 becomes dark primary text */
+  --slate-200: #1e293b;      /* Text/Subtle: becomes slate-800 */
+  --slate-250: #334155;      /* Text representation */
+  --slate-300: #334155;      /* Text: Slate-300 becomes slate-700 */
+  --slate-400: #475569;      /* Text: Slate-400 becomes slate-600 */
+  --slate-500: #454f5b;      /* Enhanced contrast for small headers/subtexts (WCAG AA compliant >4.5:1 on white) */
+  --slate-600: #cbd5e1;      /* Border: Slate-600 becomes lighter grid line */
+  --slate-700: #e2e8f0;      /* Border: Lighter slate edge */
+  --slate-800: #cbd5e1;      /* Border: Primary slate-800 border is now soft light gray */
+  --slate-850: #f1f5f9;      /* Secondary bg: Dark blue-gray backdrop is now soft light-gray */
+  --slate-900: #ffffff;      /* Cards bg: #0f172a theme is now pure white card backdrops */
+  --slate-950: #f8fafc;      /* Application base-bg: #020617 is now clean light slate-50 */
+  
+  --glass-bg: rgba(255, 255, 255, 0.88); /* Higher opacity solid white surface in light mode to preserve readability */
+  --glass-border: rgba(203, 213, 225, 0.85); /* Solid high-contrast borders in Light Mode */
+
+  /* Chart Colors */
+  --chart-grid: #e2e8f0;
+  --chart-text: #454f5b;
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-border: #cbd5e1;
+  --chart-tooltip-text: #050b14;
+
+  /* HIGH ACCESS ACCENT & Badge Action Token Overrides for WCAG AA/AAA Compliance */
+  --cyan-300: #0c4a6e;       /* Sky-900 (ultra high contrast text) */
+  --cyan-400: #0369a1;       /* Sky-700 (bright but strong & readable on white: contrast 4.75:1) */
+  --cyan-500: #0284c7;       /* Sky-600 (very vibrant but readable) */
+  --cyan-600: #0369a1;       /* Sky-700 for borders */
+  
+  --emerald-300: #14532d;    /* Green-900 */
+  --emerald-400: #15803d;    /* Green-700 (exceptional text contrast: 4.61:1) */
+  --emerald-500: #166534;    /* Green-800 */
+  
+  --rose-300: #7f1d1d;       /* Red-900 */
+  --rose-400: #b91c1c;       /* Red-700 (standard high contrast text: 5.75:1) */
+  --rose-450: #991b1b;       /* Red-800 */
+  --rose-500: #991b1b;       /* Red-800 */
+
+  --amber-350: #78350f;      /* Orange-900 */
+  --amber-400: #b45309;      /* Orange-700 (solid text readability: 4.88:1) */
+  --amber-500: #92400e;      /* Orange-800 */
+  
+  --teal-300: #115e59;       /* Teal-800 */
+  --teal-400: #0f766e;       /* Teal-700 */
+  --teal-500: #115e59;       /* Teal-800 */
+
+  --indigo-300: #312e81;     /* Indigo-900 */
+  --indigo-400: #4338ca;     /* Indigo-700 */
+  --indigo-500: #3730a3;     /* Indigo-800 */
+  --indigo-600: #312e81;     /* Indigo-900 */
+}
+
+.dark, :root.dark {
+  /* DARK MODE VALUES */
+  --slate-50: #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-200: #e2e8f0;
+  --slate-250: #cbd5e1;
+  --slate-300: #cbd5e1;
+  --slate-400: #94a6b8;
+  --slate-500: #64748b;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1e293b;
+  --slate-850: #1e293b;
+  --slate-900: #0f172a;
+  --slate-950: #020617;
+  
+  --glass-bg: rgba(15, 23, 42, 0.4);
+  --glass-border: rgba(30, 41, 59, 0.6);
+
+  /* Chart Colors */
+  --chart-grid: #1e293b;
+  --chart-text: #94a3b8;
+  --chart-tooltip-bg: #0f172a;
+  --chart-tooltip-border: #1e293b;
+  --chart-tooltip-text: #f8fafc;
+
+  /* Accent & Status Colors for Dark Mode (Originals) */
+  --cyan-300: #67e8f9;
+  --cyan-400: #22d3ee;
+  --cyan-500: #06b6d4;
+  --cyan-600: #0891b2;
+  
+  --emerald-300: #6ee7b7;
+  --emerald-400: #34d399;
+  --emerald-500: #10b981;
+  
+  --rose-300: #fda4af;
+  --rose-400: #fb7185;
+  --rose-450: #f43f5e;
+  --rose-500: #f43f5e;
+
+  --amber-350: #f59e0b;
+  --amber-400: #fbbf24;
+  --amber-500: #f59e0b;
+  
+  --teal-300: #5eead4;
+  --teal-400: #2dd4bf;
+  --teal-500: #14b8a6;
+
+  --indigo-300: #a5b4fc;
+  --indigo-400: #818cf8;
+  --indigo-500: #818cf8;
+  --indigo-600: #6366f1;
+}
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "Fira Mono", "JetBrains Mono", monospace;
+  
+  --color-slate-50: var(--slate-50);
+  --color-slate-100: var(--slate-100);
+  --color-slate-200: var(--slate-200);
+  --color-slate-250: var(--slate-250);
+  --color-slate-300: var(--slate-300);
+  --color-slate-400: var(--slate-400);
+  --color-slate-500: var(--slate-500);
+  --color-slate-600: var(--slate-600);
+  --color-slate-700: var(--slate-700);
+  --color-slate-800: var(--slate-800);
+  --color-slate-850: var(--slate-850);
+  --color-slate-900: var(--slate-900);
+  --color-slate-950: var(--slate-950);
+
+  /* Status Colors mapped dynamically to prevent custom styling leakage in light mode */
+  --color-cyan-300: var(--cyan-300);
+  --color-cyan-400: var(--cyan-400);
+  --color-cyan-500: var(--cyan-500);
+  --color-cyan-600: var(--cyan-600);
+
+  --color-emerald-300: var(--emerald-300);
+  --color-emerald-400: var(--emerald-400);
+  --color-emerald-500: var(--emerald-500);
+
+  --color-rose-300: var(--rose-300);
+  --color-rose-400: var(--rose-400);
+  --color-rose-450: var(--rose-450);
+  --color-rose-500: var(--rose-500);
+
+  --color-amber-350: var(--amber-350);
+  --color-amber-400: var(--amber-400);
+  --color-amber-500: var(--amber-500);
+
+  --color-teal-300: var(--teal-300);
+  --color-teal-400: var(--teal-400);
+  --color-teal-500: var(--teal-500);
+
+  --color-indigo-300: var(--indigo-300);
+  --color-indigo-400: var(--indigo-400);
+  --color-indigo-500: var(--indigo-500);
+  --color-indigo-600: var(--indigo-600);
+}
+
+/* GLOBAL FALLBACK REASSURANCES FOR ACCESSIBLE CONTRAST IN GLASS AND TRANSLUCENT SURFACES (Not applicable when dark mode is enabled) */
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950/"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900\\/"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950\\/"] {
+  background-color: rgba(15, 23, 42, 0.05) !important; /* Soft gray contrast-aligned nested panel styling */
+}
+
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/1"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950/1"] {
+  background-color: rgba(15, 23, 42, 0.04) !important;
+}
+
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/2"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950/2"] {
+  background-color: rgba(15, 23, 42, 0.06) !important;
+}
+
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/35"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/30"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/4"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/5"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-900/6"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950/4"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950/5"],
+html:not([class*="dark"]):not(.dark) [class*="bg-slate-950/6"] {
+  background-color: rgba(15, 23, 42, 0.07) !important;
+}
+
+html:not([class*="dark"]):not(.dark) [class*="border-slate-800/"],
+html:not([class*="dark"]):not(.dark) [class*="border-slate-900/"] {
+  border-color: rgba(15, 23, 42, 0.12) !important; /* Soft distinct borders for perfect visual boundary guidelines */
+}
+
+html:not([class*="dark"]):not(.dark) .glass {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(15, 23, 42, 0.15) !important;
+}
+
+/* LIGHT MODE TEXT READABILITY HARDENING */
+html:not([class*="dark"]):not(.dark) {
+  /* Increase readability of slate texts by ensuring they have high contrast values */
+  --slate-300: #0f172a; /* Force Slate-300 to map to slate-900 */
+  --slate-400: #334155; /* Force Slate-400 to map to slate-700 (instead of slate-600) for stronger readable subtexts */
+  --slate-500: #1e293b; /* Force Slate-500 to map to slate-800 for supreme small text contrast */
+}
+
+/* Force elements with light-slate numbers like text-slate-600, 700, 800 (which map to borders in CSS files) to resolve as highly readable text inside light mode */
+html:not([class*="dark"]):not(.dark) .text-slate-600,
+html:not([class*="dark"]):not(.dark) [class*="text-slate-600"] {
+  color: #334155 !important;
+}
+html:not([class*="dark"]):not(.dark) .text-slate-700,
+html:not([class*="dark"]):not(.dark) [class*="text-slate-700"] {
+  color: #1e293b !important;
+}
+html:not([class*="dark"]):not(.dark) .text-slate-800,
+html:not([class*="dark"]):not(.dark) [class*="text-slate-800"] {
+  color: #0f172a !important;
+}
+
+/* Placeholders contrast protection */
+html:not([class*="dark"]):not(.dark) ::placeholder,
+html:not([class*="dark"]):not(.dark) input::placeholder,
+html:not([class*="dark"]):not(.dark) textarea::placeholder,
+html:not([class*="dark"]):not(.dark) [class*="placeholder:text-slate-"]::placeholder {
+  color: #475569 !important;
+  opacity: 1 !important;
+}
+
+/* Ensure form input values are fully legible and have sufficient font weight and dark coloring */
+html:not([class*="dark"]):not(.dark) input,
+html:not([class*="dark"]):not(.dark) select,
+html:not([class*="dark"]):not(.dark) textarea {
+  color: #0f172a !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Hover-on-light safety: prevent elements from having white text on bright card surfaces is a critical issue */
+html:not([class*="dark"]):not(.dark) .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+html:not([class*="dark"]):not(.dark) .hover\:bg-slate-800:hover {
+  background-color: #e2e8f0 !important;
+}
+html:not([class*="dark"]):not(.dark) .hover\:bg-slate-900:hover {
+  background-color: #f1f5f9 !important;
+}
+
+/* If light mode is active, any element inside glass or bg-slate or modal overlays styled with text-white should inherit dark text color unless it's a dynamic button, badge or accented backgrounds */
+html:not([class*="dark"]):not(.dark) .bg-slate-900 .text-white:not(button):not([class*="bg-indigo"]):not([class*="bg-cyan"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-amber"]):not([class*="bg-teal"]),
+html:not([class*="dark"]):not(.dark) .bg-slate-950 .text-white:not(button):not([class*="bg-indigo"]):not([class*="bg-cyan"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-amber"]):not([class*="bg-teal"]),
+html:not([class*="dark"]):not(.dark) .glass .text-white:not(button):not([class*="bg-indigo"]):not([class*="bg-cyan"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-amber"]):not([class*="bg-teal"]),
+html:not([class*="dark"]):not(.dark) [class*="fixed inset-0"] .text-white:not(button):not([class*="bg-indigo"]):not([class*="bg-cyan"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-amber"]):not([class*="bg-teal"]) {
+  color: #0f172a !important;
+}
+
+html, body, #root, #finops-root-container, #finops-app-shell-body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  background-color: var(--slate-950);
+  color: var(--slate-100);
+  font-family: var(--font-sans);
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+  
+  /* Touch action optimization to prevent unwanted scroll bounces and support pinch zoom gracefully */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  
+  /* SAFE AREA MARGINS */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Custom premium design classes from High Density theme */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+}
+
+.border-accent {
+  border-color: rgba(6, 182, 212, 0.3);
+}
+
+.text-cyan {
+  color: #06b6d4;
+}
+
+.text-emerald {
+  color: #10b981;
+}
+
+.text-rose {
+  color: #f43f5e;
+}
+
+/* Custom High Density font weights and classes */
+.mono {
+  font-family: var(--font-mono);
+  letter-spacing: -0.05em;
+}
+
+/* High density scrollbar utilities */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--slate-950);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--slate-800);
+  border: 2px solid var(--slate-950);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan-600);
+}
+
+
+/* Utility for hiding scrollbar but allowing scroll */
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar,
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

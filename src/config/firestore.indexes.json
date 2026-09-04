@@ -1,0 +1,58 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "employees",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" },
+        { "fieldPath": "employee_id", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "payroll_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "periodKey", "order": "ASCENDING" },
+        { "fieldPath": "employee_id", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" },
+        { "fieldPath": "clockIn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employee_id", "order": "ASCENDING" },
+        { "fieldPath": "clockIn", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

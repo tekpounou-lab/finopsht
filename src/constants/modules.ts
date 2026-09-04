@@ -1,0 +1,488 @@
+/**
+ * System Modules and Role-Module Authorization Matrix
+ * Single Source of Truth for ERP Module Definitions
+ */
+
+export interface SystemModuleDefinition {
+  id: string;
+  name: string;
+  nameFr: string;
+  nameHt: string;
+  description: string;
+  category: "intelligence" | "workforce" | "operations" | "platform" | "system";
+  superAdminOnly: boolean;
+  icon: string;
+  route: string;
+}
+
+export const SUPER_ADMIN_SYSTEM_MODULE_IDS = [
+  "forensic",
+  "health",
+  "system_health",
+  "reliability",
+  "resilience_dlq",
+  "dlq",
+  "recovery",
+  "disaster_recovery"
+] as const;
+
+export const SYSTEM_MODULES: SystemModuleDefinition[] = [
+  // Intelligence
+  {
+    id: "bi",
+    name: "Executive BI",
+    nameFr: "Intelligence Décisionnelle",
+    nameHt: "Entelijans Desizyonèl",
+    description: "Multi-dimensional business analytics and predictive metrics",
+    category: "intelligence",
+    superAdminOnly: false,
+    icon: "BarChart3",
+    route: "/dashboard?tab=bi"
+  },
+  {
+    id: "aicfo",
+    name: "AI CFO Advisory",
+    nameFr: "Conseiller Financier IA",
+    nameHt: "Konseye Finansye IA",
+    description: "Intelligent fiscal agent and forensic financial advisor",
+    category: "intelligence",
+    superAdminOnly: false,
+    icon: "Sparkles",
+    route: "/dashboard?tab=aicfo"
+  },
+
+  // Workforce
+  {
+    id: "personnel",
+    name: "Personnel Directory",
+    nameFr: "Registre du Personnel",
+    nameHt: "Rejis Pèsonèl",
+    description: "Employee records, contracts, and identity registry",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "Users",
+    route: "/dashboard?tab=personnel"
+  },
+  {
+    id: "performance",
+    name: "Performance & Commission",
+    nameFr: "Performance & Commissions",
+    nameHt: "Pèfòmans & Komisyon",
+    description: "Dual attribution workforce and commission management",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "Target",
+    route: "/dashboard?tab=performance"
+  },
+  {
+    id: "organization",
+    name: "Organization Structure",
+    nameFr: "Structure Organique",
+    nameHt: "Estrikti Orgàn",
+    description: "Branches, departments, and cost centers hierarchy",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "Network",
+    route: "/dashboard?tab=organization"
+  },
+  {
+    id: "planning",
+    name: "Work Planning",
+    nameFr: "Planification & Horaires",
+    nameHt: "Planifikasyon & Orè",
+    description: "Shift schedules, rosters, and operational planning",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "CalendarRange",
+    route: "/dashboard?tab=planning"
+  },
+  {
+    id: "leave",
+    name: "Leave & Absences",
+    nameFr: "Congés & Absences",
+    nameHt: "Konje & Absans",
+    description: "Leave request workflows and balances",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "Calendar",
+    route: "/dashboard?tab=leave"
+  },
+  {
+    id: "documents",
+    name: "Document Vault",
+    nameFr: "Documents & Contrats",
+    nameHt: "Dokiman & Kontra",
+    description: "Document management, templates, and digital signatures",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "FolderOpen",
+    route: "/dashboard?tab=documents"
+  },
+  {
+    id: "employeeSpace",
+    name: "Employee Self-Service",
+    nameFr: "Espace Collaborateur",
+    nameHt: "Espas Kolaboratè",
+    description: "Personal payslips, clocking, and leave portal",
+    category: "workforce",
+    superAdminOnly: false,
+    icon: "Briefcase",
+    route: "/dashboard?tab=employeeSpace"
+  },
+
+  // Operations & Finance
+  {
+    id: "attendance",
+    name: "Biometric Attendance",
+    nameFr: "Pointage & Présences",
+    nameHt: "Pwentaj & Prezans",
+    description: "Live time-tracking, badge scans, and shifts ledger",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "Fingerprint",
+    route: "/dashboard?tab=attendance"
+  },
+  {
+    id: "payroll",
+    name: "Payroll Engine V3",
+    nameFr: "Traitement Paie V3",
+    nameHt: "Tretman Pèyman V3",
+    description: "ONA/OFATMA tax compliance, survival floor, and disbursement",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "Wallet",
+    route: "/dashboard?tab=payroll"
+  },
+  {
+    id: "ledger",
+    name: "General Ledger",
+    nameFr: "Grand Livre Comptable",
+    nameHt: "Gwo Liv Kontab",
+    description: "Double-entry accounting, balance sheet, and audit trail",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "BookOpen",
+    route: "/dashboard?tab=ledger"
+  },
+  {
+    id: "crm",
+    name: "Commercial CRM",
+    nameFr: "CRM & Ventes",
+    nameHt: "CRM & Lavant",
+    description: "Client pipeline, contracts, and revenue tracking",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "Target",
+    route: "/dashboard?tab=crm"
+  },
+  {
+    id: "leads",
+    name: "Leads & Prospects",
+    nameFr: "Contacts & Prospects",
+    nameHt: "Kontak & Pwospè",
+    description: "Commercial prospecting pipeline and lead qualification",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "Users",
+    route: "/leads"
+  },
+  {
+    id: "prospects",
+    name: "Prospects Pipeline",
+    nameFr: "Pipeline Prospects",
+    nameHt: "Tiyo Pwospè",
+    description: "Opportunity tracking and conversion to clients",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "UserCheck",
+    route: "/prospects"
+  },
+  {
+    id: "proformas",
+    name: "Proforma Quotes",
+    nameFr: "Devis Proforma",
+    nameHt: "Devi Pwofòma",
+    description: "Commercial quotes, estimations and validation workflows",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "FileSpreadsheet",
+    route: "/proformas"
+  },
+  {
+    id: "invoices",
+    name: "Sales Invoices",
+    nameFr: "Facturation & Encaissements",
+    nameHt: "Faktirasyon & Rekouvreman",
+    description: "Tax-compliant invoices, payment recording and double-entry integration",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "FileText",
+    route: "/invoices"
+  },
+  {
+    id: "invoice_template",
+    name: "Invoice Templates",
+    nameFr: "Modèles de Facture",
+    nameHt: "Modèl Faktir",
+    description: "Branded PDF layouts, fiscal headers and customizable invoice styles",
+    category: "operations",
+    superAdminOnly: false,
+    icon: "Palette",
+    route: "/invoice-template"
+  },
+
+  // Platform & SRE — SUPER_ADMIN ONLY
+  {
+    id: "forensic",
+    name: "Forensic Audit Trail",
+    nameFr: "Forensic Audit",
+    nameHt: "Odit Forensik",
+    description: "SHA-256 cryptographic forensic audit ledger and tamper proof verification",
+    category: "platform",
+    superAdminOnly: true,
+    icon: "History",
+    route: "/forensic"
+  },
+  {
+    id: "health",
+    name: "System Health Console",
+    nameFr: "Santé du Système",
+    nameHt: "Sante Sistèm",
+    description: "Real-time engine telemetry, latency monitoring, and database sanity checks",
+    category: "platform",
+    superAdminOnly: true,
+    icon: "Activity",
+    route: "/health"
+  },
+  {
+    id: "reliability",
+    name: "Reliability & DLQ",
+    nameFr: "Résilience & DLQ",
+    nameHt: "Rezilyans & DLQ",
+    description: "Dead Letter Queue manager, event stream replay, and offline sync resilience",
+    category: "platform",
+    superAdminOnly: true,
+    icon: "Cpu",
+    route: "/reliability"
+  },
+  {
+    id: "recovery",
+    name: "Disaster Recovery",
+    nameFr: "Restauration Catastrophe",
+    nameHt: "Restorasyon Katastwòf",
+    description: "Snapshot rollback, multi-tenant backup archives, and disaster continuity",
+    category: "platform",
+    superAdminOnly: true,
+    icon: "Database",
+    route: "/recovery"
+  },
+
+  // System & Settings
+  {
+    id: "settings",
+    name: "Enterprise Settings",
+    nameFr: "Paramètres & Sécurité",
+    nameHt: "Paramèt & Sekirite",
+    description: "Multi-tenant configuration, RBAC, and tax preferences",
+    category: "system",
+    superAdminOnly: false,
+    icon: "Settings",
+    route: "/dashboard?tab=settings"
+  }
+];
+
+export const DEFAULT_ROLE_MODULE_MATRIX: Record<string, Record<string, boolean>> = {
+  SUPER_ADMIN: {
+    bi: true,
+    personnel: true,
+    performance: true,
+    organization: true,
+    planning: true,
+    leave: true,
+    attendance: true,
+    payroll: true,
+    ledger: true,
+    accounting: true,
+    crm: true,
+    leads: true,
+    prospects: true,
+    proformas: true,
+    invoices: true,
+    invoice_template: true,
+    invoiceTemplate: true,
+    documents: true,
+    forensic: true,
+    health: true,
+    system_health: true,
+    reliability: true,
+    resilience_dlq: true,
+    dlq: true,
+    recovery: true,
+    disaster_recovery: true,
+    aicfo: true,
+    employeespace: true,
+    employeeSpace: true,
+    settings: true
+  },
+  OWNER: {
+    bi: true,
+    personnel: true,
+    performance: true,
+    organization: true,
+    planning: true,
+    leave: true,
+    attendance: true,
+    payroll: true,
+    ledger: true,
+    accounting: true,
+    crm: true,
+    leads: true,
+    prospects: true,
+    proformas: true,
+    invoices: true,
+    invoice_template: true,
+    invoiceTemplate: true,
+    documents: true,
+    // Explicitly denied to non-SUPER_ADMIN:
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: true,
+    employeespace: true,
+    employeeSpace: true,
+    settings: true
+  },
+  ADMIN: {
+    bi: true,
+    personnel: true,
+    performance: true,
+    organization: true,
+    planning: true,
+    leave: true,
+    attendance: true,
+    payroll: true,
+    ledger: true,
+    accounting: true,
+    crm: true,
+    leads: true,
+    prospects: true,
+    proformas: true,
+    invoices: true,
+    invoice_template: true,
+    invoiceTemplate: true,
+    documents: true,
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: true,
+    employeespace: true,
+    employeeSpace: true,
+    settings: true
+  },
+  MANAGER: {
+    bi: true,
+    personnel: true,
+    performance: true,
+    organization: true,
+    planning: true,
+    leave: true,
+    attendance: true,
+    payroll: false,
+    ledger: false,
+    accounting: false,
+    crm: true,
+    leads: true,
+    prospects: true,
+    proformas: true,
+    invoices: true,
+    invoice_template: false,
+    invoiceTemplate: false,
+    documents: true,
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: false,
+    employeespace: true,
+    employeeSpace: true,
+    settings: false
+  },
+  SUPERVISOR: {
+    bi: false,
+    personnel: false,
+    performance: true,
+    organization: false,
+    planning: true,
+    leave: true,
+    attendance: true,
+    payroll: false,
+    ledger: false,
+    accounting: false,
+    crm: false,
+    leads: false,
+    prospects: false,
+    proformas: false,
+    invoices: false,
+    invoice_template: false,
+    invoiceTemplate: false,
+    documents: false,
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: false,
+    employeespace: true,
+    employeeSpace: true,
+    settings: false
+  },
+  EMPLOYEE: {
+    bi: false,
+    personnel: false,
+    performance: false,
+    organization: false,
+    planning: false,
+    leave: true,
+    attendance: true,
+    payroll: false,
+    ledger: false,
+    accounting: false,
+    crm: false,
+    leads: false,
+    prospects: false,
+    proformas: false,
+    invoices: false,
+    invoice_template: false,
+    invoiceTemplate: false,
+    documents: false,
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: false,
+    employeespace: true,
+    employeeSpace: true,
+    settings: false
+  }
+};

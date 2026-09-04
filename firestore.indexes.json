@@ -1,0 +1,362 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "audit_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "commission_claimed", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "departmentId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "department_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "debit_account", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "credit_account", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "payroll_cycles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "periodKey", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "employees",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "departmentId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "event_outbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" },
+        { "fieldPath": "clockIn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employee_id", "order": "ASCENDING" },
+        { "fieldPath": "clockIn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "workflow_instances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "workflow_instances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "entityId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "approval_policies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "entityType", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "approval_instances",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "workflowInstanceId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "workflow_dead_letters",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "resolved", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leave_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leaves",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "invitations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "normalizedEmail", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "invitations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "email", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "employees",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "employees",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "firebase_uid", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leave_approvals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "leaveId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "read", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "cost_center_id", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ledger_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "branch_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leave_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "business_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

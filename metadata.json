@@ -1,0 +1,9 @@
+{
+  "name": "FinOps (Tek Pou Nou)",
+  "description": "Plateforme ERP fintech multi-tenant pour les PME en Haïti. Gestion du personnel, pointage QR intelligent, paie automatisée, livre financier immuable, journal d'audit et IA CFO avec Gemini.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

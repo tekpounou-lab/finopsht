@@ -1,0 +1,247 @@
+{
+  "metadata": {
+    "platform": "FINOPS ERP",
+    "version": "2.0",
+    "phase": "PHASE_3_ENTERPRISE_ROLLOUT",
+    "timestamp": "2026-09-03T14:07:16.398Z",
+    "executionMode": "DRY_RUN_SIMULATION",
+    "tenantScope": "ALL_TENANTS",
+    "targetCollections": [
+      "users",
+      "businesses",
+      "branches",
+      "departments",
+      "employees",
+      "attendance_records",
+      "payroll_cycles",
+      "invoices",
+      "proformas",
+      "ledger_transactions",
+      "notifications",
+      "shifts",
+      "leaves"
+    ],
+    "delayBetweenBatchesMs": 300,
+    "delayBetweenTenantsMs": 300,
+    "totalTenantsProcessed": 1,
+    "tenantsSucceeded": 1,
+    "tenantsFailed": 0,
+    "totalScanned": 0,
+    "totalModified": 0,
+    "totalFieldsDeleted": 0,
+    "totalForeignKeysRepaired": 0,
+    "snapshotVerified": true
+  },
+  "tenants": {
+    "DEFAULT_TENANT": {
+      "tenantId": "DEFAULT_TENANT",
+      "tenantName": "DEFAULT_TENANT",
+      "status": "SUCCESS",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "collectionStats": {
+        "users": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "businesses": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "branches": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "departments": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "employees": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "attendance_records": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "payroll_cycles": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "invoices": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "proformas": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "ledger_transactions": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "notifications": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "shifts": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        },
+        "leaves": {
+          "scanned": 0,
+          "modified": 0,
+          "deletedFields": 0,
+          "fkRepaired": 0
+        }
+      },
+      "errors": []
+    }
+  },
+  "collectionsAggregate": {
+    "users": {
+      "collectionName": "users",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "businesses": {
+      "collectionName": "businesses",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "branches": {
+      "collectionName": "branches",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "departments": {
+      "collectionName": "departments",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "employees": {
+      "collectionName": "employees",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "attendance_records": {
+      "collectionName": "attendance_records",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "payroll_cycles": {
+      "collectionName": "payroll_cycles",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "invoices": {
+      "collectionName": "invoices",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "proformas": {
+      "collectionName": "proformas",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "ledger_transactions": {
+      "collectionName": "ledger_transactions",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "notifications": {
+      "collectionName": "notifications",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "shifts": {
+      "collectionName": "shifts",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    },
+    "leaves": {
+      "collectionName": "leaves",
+      "scannedCount": 0,
+      "modifiedCount": 0,
+      "deletedFieldsTotal": 0,
+      "foreignKeysRepairedTotal": 0,
+      "sampleMutations": [],
+      "errors": []
+    }
+  },
+  "summaryText": "Phase 3 Multi-Tenant achevée. 1 tenants traités (1 succès, 0 échecs), 0 documents inspectés, 0 documents corrigés/simulés, 0 champs nettoyés, 0 clés étrangères réparées."
+}

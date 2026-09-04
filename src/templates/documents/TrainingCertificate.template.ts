@@ -1,0 +1,33 @@
+import { jsPDF } from "jspdf";
+import { DocumentTemplateData } from "./types";
+import { BaseDocumentHeaderFooter } from "./BaseDocumentHeaderFooter";
+
+export function renderTrainingCertificate(pdf: jsPDF, data: DocumentTemplateData): void {
+  const startY = BaseDocumentHeaderFooter.renderHeader(pdf, data);
+  const { employee, additionalData } = data;
+
+  const textDark = [51, 65, 85];
+  const primaryNavy = [15, 23, 42];
+
+  pdf.setTextColor(textDark[0], textDark[1], textDark[2]);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9.5);
+
+  const trainingTitle = additionalData?.title || "Formation Qualifiante FINOPS ERP";
+
+  pdf.setFont("helvetica", "bold");
+  pdf.setTextColor(primaryNavy[0], primaryNavy[1], primaryNavy[2]);
+  pdf.text("CERTIFICAT DE FORMATION ET D'HABILITATION RH", 15, startY);
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(textDark[0], textDark[1], textDark[2]);
+  pdf.text(`Atteste que M./Mme ${employee.name} a suivi avec succès le programme de formation :`, 15, startY + 8);
+
+  pdf.setFont("helvetica", "bold");
+  pdf.text(`${trainingTitle}`, 20, startY + 15);
+
+  pdf.setFont("helvetica", "normal");
+  pdf.text("Ce certificat valide l'acquisition des compétences professionnelles correspondantes.", 15, startY + 23);
+
+  BaseDocumentHeaderFooter.renderFooter(pdf, data);
+}

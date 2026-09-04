@@ -1,0 +1,929 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile containing roles, linked business ID, and basic metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["OWNER", "MANAGER", "SUPERVISOR", "EMPLOYEE", "SUPER_ADMIN"] },
+        "business_id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "PENDING", "DEACTIVATED"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "role"]
+    },
+    "Business": {
+      "title": "Business Entity",
+      "description": "SaaS Tenant representing a discrete enterprise.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "domain": { "type": "string" },
+        "nif": { "type": "string" },
+        "onboarding_complete": { "type": "boolean" },
+        "settings": { "type": "object" },
+        "featureFlags": { "type": "array" }
+      },
+      "required": ["id", "name", "onboarding_complete"]
+    },
+    "BusinessTaxConfiguration": {
+      "title": "Business Tax Configuration",
+      "description": "Configurable payroll tax rates, survival floor, and historical effective periods.",
+      "type": "object",
+      "properties": {
+        "cnssRateEmployee": { "type": "number" },
+        "cnssRateEmployer": { "type": "number" },
+        "cnsRateEmployee": { "type": "number" },
+        "cnsRateEmployer": { "type": "number" },
+        "survivalFloorHTG": { "type": "number" },
+        "currency": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cnssRateEmployee": { "type": "number" },
+              "cnssRateEmployer": { "type": "number" },
+              "cnsRateEmployee": { "type": "number" },
+              "cnsRateEmployer": { "type": "number" },
+              "survivalFloorHTG": { "type": "number" },
+              "effectiveFrom": { "type": "string" },
+              "effectiveTo": { "type": "string" }
+            },
+            "required": ["cnssRateEmployee", "cnssRateEmployer", "cnsRateEmployee", "cnsRateEmployer", "survivalFloorHTG", "effectiveFrom"]
+          }
+        }
+      },
+      "required": ["cnssRateEmployee", "cnssRateEmployer", "cnsRateEmployee", "cnsRateEmployer", "survivalFloorHTG", "currency"]
+    },
+    "Branch": {
+      "title": "Branch Office",
+      "description": "Physical division or geographical site of an enterprise.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" }
+      },
+      "required": ["id", "business_id", "name"]
+    },
+    "Department": {
+      "title": "Department office",
+      "description": "Organizational department dividing staff functions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "business_id", "name"]
+    },
+    "Employee": {
+      "title": "Employee Data",
+      "description": "HR details of an operator or employee profile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "salary": { "type": "number" },
+        "hireDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "TERMINATED", "SUSPENDED"] }
+      },
+      "required": ["id", "business_id", "branchId", "departmentId", "name", "email", "salary"]
+    },
+    "AttendanceRecord": {
+      "title": "Attendance Record",
+      "description": "Biometric pointage logs containing geographic coordinates, hash and signature validation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "date": { "type": "string" },
+        "checkIn": { "type": "string" },
+        "checkOut": { "type": "string" },
+        "status": { "type": "string" },
+        "isBiometricVerified": { "type": "boolean" },
+        "signature": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "date"]
+    },
+    "PayrollRecord": {
+      "title": "Payroll Bulletin",
+      "description": "Calculated salary, CNSS, CNS, OFATMA and double-trace signature audits.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "cycleId": { "type": "string" },
+        "baseSalary": { "type": "number" },
+        "cnssDeduction": { "type": "number" },
+        "cnsDeduction": { "type": "number" },
+        "ofatmaDeduction": { "type": "number" },
+        "netPay": { "type": "number" },
+        "signature": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "cycleId"]
+    },
+    "PayrollCycle": {
+      "title": "Payroll Cycle",
+      "description": "Organizational period tracking payroll states from DRAFT to PAID.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "cycleName": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "VALIDATED", "LOCKED", "PAID", "REOPEN_REQUESTED", "REOPEN_APPROVED"] },
+        "validatedBy": { "type": "string" },
+        "validatedAt": { "type": "string" }
+      },
+      "required": ["id", "business_id", "cycleName", "startDate", "endDate", "status"]
+    },
+    "Transaction": {
+      "title": "General Ledger Record",
+      "description": "Accounting transaction entries including cash flows and reconciliation metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "type": { "type": "string" },
+        "amount": { "type": "number" },
+        "amount_cents": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "currency": { "type": "string", "enum": ["HTG", "USD"] },
+        "status": { "type": "string", "enum": ["PENDING", "POSTED", "LOCKED", "REVERSED"] },
+        "source": { "type": "string" }
+      },
+      "required": ["id", "business_id", "date", "type", "amount", "currency", "status"]
+    },
+    "ERPEvent": {
+      "title": "Event Orchestrations",
+      "description": "Transactional offline events logs awaiting background replication or process.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "type": { "type": "string" },
+        "business_id": { "type": "string" },
+        "payload": { "type": "object" },
+        "status": { "type": "string", "enum": ["PROCESSED", "PENDING", "DLQ", "FAILED"] },
+        "retryCount": { "type": "number" }
+      },
+      "required": ["id", "timestamp", "type", "business_id", "payload", "status"]
+    },
+    "ForensicLog": {
+      "title": "Audit Forensic Trail",
+      "description": "Unmodifiable system events recording security, access levels and double validation triggers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "actor": { "type": "string" },
+        "action": { "type": "string" },
+        "severity": { "type": "string" },
+        "signature": { "type": "string" }
+      },
+      "required": ["id", "business_id", "timestamp", "actor", "action"]
+    },
+    "Invitation": {
+      "title": "User Invitation",
+      "description": "Invitations sent to prospective managers or workers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "status": { "type": "string" },
+        "invitedAt": { "type": "string" }
+      },
+      "required": ["id", "business_id", "email", "role", "status"]
+    },
+    "BranchDepartmentLink": {
+      "title": "Branch-Department Link",
+      "description": "Operational connection binding business departments with geographical locations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "branchId": { "type": "string" },
+        "departmentId": { "type": "string" }
+      },
+      "required": ["id", "business_id", "branchId", "departmentId"]
+    },
+    "EmployeeContract": {
+      "title": "Employee Contract",
+      "description": "Legal contract metadata determining salaries, work shift schedules and security requirements.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "contractType": { "type": "string" },
+        "monthlyWage": { "type": "number" },
+        "active": { "type": "boolean" },
+        "signature": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "monthlyWage"]
+    },
+    "Shift": {
+      "title": "Planned Shift",
+      "description": "Work shifts assigned to employees by supervisors or managers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "date"]
+    },
+    "IntegrityReport": {
+      "title": "Compliance Report",
+      "description": "Compliance auditing report produced by double-entry ledger scans.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "integrityScore": { "type": "number" },
+        "outliers": { "type": "array" }
+      },
+      "required": ["id", "business_id", "timestamp", "integrityScore"]
+    },
+    "UserPreference": {
+      "title": "User Preferences",
+      "description": "User notification choices, localized preferences and read trackers.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "readNotificationIds": { "type": "array" },
+        "theme": { "type": "string" }
+      },
+      "required": ["userId"]
+    },
+    "EmployeeBadge": {
+      "title": "Employee QR Badge",
+      "description": "Secure identity card metadata including anti-spoof cryptography signatures.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "serialNumber": { "type": "string" },
+        "signature": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "serialNumber"]
+    },
+    "AnalyticsSnapshot": {
+      "title": "Cached Analytics",
+      "description": "Performance intelligence cached snapshots.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "lastUpdated": { "type": "string" },
+        "metrics": { "type": "object" }
+      },
+      "required": ["id", "business_id", "metrics"]
+    },
+    "LeaveRecord": {
+      "title": "Leave Request Record",
+      "description": "Leave requests submitted by employees or admin with multi-state transitions and auditing.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "type": { "type": "string", "enum": ["ANNUAL_LEAVE", "SICK_LEAVE", "SPECIAL_LEAVE", "MATERNITY_LEAVE", "UNPAID_LEAVE"] },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "totalDays": { "type": "number" },
+        "reason": { "type": "string" },
+        "attachmentUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "MANAGER_REVIEW", "APPROVED", "PAYROLL_SYNCED", "REJECTED", "CANCELLED"] },
+        "submittedBy": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "rejectionReason": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "type", "startDate", "endDate", "status"]
+    },
+    "OvertimeRequest": {
+      "title": "Overtime Request",
+      "description": "Overtime hours requests submitted by employees and approved by managers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "totalHours": { "type": "number" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "approvedBy": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "business_id", "employeeId", "date", "startTime", "endTime", "totalHours", "status"]
+    },
+    "AbsenceEvent": {
+      "title": "Absence or Lateness Event",
+      "description": "Logged absence or tardiness incidents with justification workflows.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string", "enum": ["UNEXCUSED_ABSENCE", "CRITICAL_LATE", "EARLY_LEAVE"] },
+        "minutes": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING_JUSTIFICATION", "JUSTIFIED", "REJECTED_JUSTIFICATION"] },
+        "justification": { "type": "string" },
+        "justifiedBy": { "type": "string" },
+        "justifiedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "employeeId", "date", "type", "status"]
+    },
+    "ModuleHealth": {
+      "title": "Module Health Status",
+      "description": "Real-time health status snapshots of enterprise modules.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["GREEN", "YELLOW", "RED"] },
+        "lastUpdate": { "type": "string", "format": "date-time" },
+        "message": { "type": "string" },
+        "metrics": { "type": "object" }
+      },
+      "required": ["name", "status", "lastUpdate"]
+    },
+    "EnterpriseIncident": {
+      "title": "Enterprise Incident",
+      "description": "System health and runtime monitoring incidents.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "module": { "type": "string" },
+        "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+        "status": { "type": "string", "enum": ["OPEN", "INVESTIGATING", "RESOLVED", "ARCHIVED"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "timeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timestamp": { "type": "string", "format": "date-time" },
+              "message": { "type": "string" },
+              "type": { "type": "string" }
+            },
+            "required": ["timestamp", "message", "type"]
+          }
+        },
+        "affectedModules": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "businessId", "module", "severity", "priority", "status", "title", "description", "timeline", "affectedModules", "createdAt", "updatedAt"]
+    },
+    "AICFOAuditLog": {
+      "title": "AI CFO Security Audit Log",
+      "description": "Immutable security and permission audit logs generated by AI CFO query governance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "user_name": { "type": "string" },
+        "role": { "type": "string" },
+        "branch_id": { "type": "string" },
+        "department_id": { "type": "string" },
+        "question": { "type": "string" },
+        "data_accessed": { "type": "array", "items": { "type": "string" } },
+        "permission_result": { "type": "string", "enum": ["ALLOW", "PARTIAL_MASKED", "DENIED"] },
+        "ai_response_type": { "type": "string", "enum": ["GEMINI_AI", "HEURISTIC_FALLBACK", "SECURITY_REFUSAL"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "security_level": { "type": "string", "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"] },
+        "refusal_reason": { "type": "string" }
+      },
+      "required": ["id", "business_id", "user_id", "role", "question", "permission_result", "ai_response_type", "timestamp", "security_level"]
+    },
+    "WorkflowDeadLetter": {
+      "title": "Workflow Dead Letter",
+      "description": "Replicated dead-letter records of workflows that failed during orchestration.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workflowInstanceId": { "type": "string" },
+        "businessId": { "type": "string" },
+        "error": { "type": "string" },
+        "stack": { "type": "string" },
+        "lastState": { "type": "object" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "resolved": { "type": "boolean" }
+      },
+      "required": ["id", "workflowInstanceId", "businessId", "error", "lastState", "timestamp", "resolved"]
+    },
+    "EDMSDocument": {
+      "title": "Enterprise EDMS Document",
+      "description": "Digital vault employee document record with SHA256 checksums, versioning, and digital seals.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "documentType": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "businessId": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "reference": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "version": { "type": "number" },
+        "mimeType": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "storageProvider": { "type": "string" },
+        "fileSize": { "type": "number" },
+        "checksum": { "type": "string" },
+        "signature": { "type": "string" },
+        "generatedAt": { "type": "string" },
+        "generatedBy": { "type": "string" },
+        "signed": { "type": "boolean" }
+      },
+      "required": ["id", "documentType", "employeeId", "businessId", "reference", "title", "status", "version", "checksum", "signature"]
+    },
+    "ShiftTemplate": {
+      "title": "Shift Template",
+      "description": "Reusable shift definitions for recurring schedules.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "branchId": { "type": "string" },
+        "name": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "breakDuration": { "type": "number" },
+        "workingDays": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] }
+      },
+      "required": ["id", "businessId", "name", "startTime", "endTime"]
+    },
+    "EmployeeAssignment": {
+      "title": "Employee Schedule Assignment",
+      "description": "Assignments linking employees to specific shift templates or patterns.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "templateId": { "type": "string" },
+        "type": { "type": "string", "enum": ["permanent", "temporary", "rotation"] },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "EXPIRED", "PAUSED"] }
+      },
+      "required": ["id", "businessId", "employeeId", "templateId", "status"]
+    },
+    "ShiftChangeRequest": {
+      "title": "Shift Change Request",
+      "description": "Requests for shift swaps, drops, or modifications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "shiftId": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "requestedAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "employeeId", "shiftId", "status"]
+    },
+    "EmployeeSalesSummary": {
+      "title": "Employee Sales Summary",
+      "description": "Intermediate sales summary frozen per employee and payroll cycle for Commission and Payroll calculation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "payroll_cycle_id": { "type": "string" },
+        "employee_id": { "type": "string" },
+        "employee_email": { "type": "string" },
+        "gross_sales": { "type": "number" },
+        "transaction_count": { "type": "number" },
+        "department_breakdown": { "type": "object" },
+        "commission_rate": { "type": "number" },
+        "calculated_commission": { "type": "number" },
+        "generated_at": { "type": "string" },
+        "is_frozen": { "type": "boolean" }
+      },
+      "required": ["id", "business_id", "payroll_cycle_id", "employee_id", "gross_sales", "calculated_commission"]
+    },
+    "EmployeeAttendanceSnapshot": {
+      "title": "Employee Attendance Snapshot",
+      "description": "Attendance summary frozen per employee and payroll cycle for Prime and Penalty calculation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "payroll_cycle_id": { "type": "string" },
+        "employee_id": { "type": "string" },
+        "employee_email": { "type": "string" },
+        "expected_hours": { "type": "number" },
+        "worked_hours": { "type": "number" },
+        "missing_hours": { "type": "number" },
+        "extra_hours": { "type": "number" },
+        "hourly_rate": { "type": "number" },
+        "prime_amount": { "type": "number" },
+        "penality_amount": { "type": "number" },
+        "attendance_score": { "type": "number" },
+        "generated_at": { "type": "string" },
+        "is_frozen": { "type": "boolean" }
+      },
+      "required": ["id", "business_id", "payroll_cycle_id", "employee_id", "expected_hours", "worked_hours"]
+    },
+    "GL": {
+      "title": "General Ledger Bulk Records",
+      "description": "Bulk uploaded general ledger transaction entries, optimized for analytical queries.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "employee_email": { "type": "string" },
+        "branch_code": { "type": "string" },
+        "department_code": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "business_id", "date", "type", "category", "description", "amount", "currency"]
+    },
+    "ExchangeRate": {
+      "title": "Exchange Rate Entry",
+      "description": "Active or historical exchange rate or override between currencies.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "fromCurrency": { "type": "string", "enum": ["HTG", "USD"] },
+        "toCurrency": { "type": "string", "enum": ["HTG", "USD"] },
+        "rate": { "type": "number" },
+        "effectiveDate": { "type": "string" },
+        "source": { "type": "string", "enum": ["BRH", "ADMIN_OVERRIDE"] },
+        "actorId": { "type": "string" },
+        "justification": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "fromCurrency", "toCurrency", "rate", "effectiveDate", "source", "actorId"]
+    },
+    "SecurityAlert": {
+      "title": "Security Threat Alert",
+      "description": "Realtime security threat and anomaly detection alerts with forensic cryptographic seals.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "user": { "type": "string" },
+        "userId": { "type": "string" },
+        "tenant": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "detail": { "type": "string" },
+        "severity": { "type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] },
+        "time": { "type": "string" },
+        "ip": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "ACKNOWLEDGED", "RESOLVED", "DISMISSED"] },
+        "signature": { "type": "string" }
+      },
+      "required": ["id", "type", "user", "detail", "severity", "time", "ip", "status"]
+    },
+    "PlatformSecurityPolicy": {
+      "title": "Platform Security Policy",
+      "description": "Enterprise-wide security configuration, MFA enforcement, and IP whitelist rules.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "mfaMandatoryForOwners": { "type": "boolean" },
+        "mfaMandatoryForAll": { "type": "boolean" },
+        "superAdminIpRestrictions": { "type": "array", "items": { "type": "string" } },
+        "ipRestrictionEnabled": { "type": "boolean" },
+        "sessionTimeoutMinutes": { "type": "number" },
+        "maxFailedLoginAttempts": { "type": "number" },
+        "autoLockoutEnabled": { "type": "boolean" },
+        "enforceForensicSignatures": { "type": "boolean" },
+        "strictMultiTenantIsolation": { "type": "boolean" },
+        "complianceFrameworks": { "type": "object" },
+        "lastAuditedAt": { "type": "string" }
+      },
+      "required": ["id", "mfaMandatoryForOwners", "mfaMandatoryForAll", "ipRestrictionEnabled"]
+    },
+    "SubscriptionPlan": {
+      "title": "Subscription Plan",
+      "description": "Multi-tenant dynamic subscription plans with collaborator limits, pricing, features, and multi-gateway readiness (Stripe, MonCash, Natcash).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "currency": { "type": "string" },
+        "priceUsd": { "type": "number" },
+        "priceHtg": { "type": "number" },
+        "extraUserPriceUsd": { "type": "number" },
+        "extraUserPriceHtg": { "type": "number" },
+        "billingCycle": { "type": "string", "enum": ["MONTHLY", "ANNUAL", "QUARTERLY"] },
+        "userLimit": { "type": "number" },
+        "maxBranches": { "type": "number" },
+        "maxTransactions": { "type": "number" },
+        "maxStorageMB": { "type": "number" },
+        "description": { "type": "string" },
+        "featuresEnabled": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "ARCHIVED"] },
+        "isPopular": { "type": "boolean" },
+        "badgeText": { "type": "string" },
+        "trialDays": { "type": "number" },
+        "supportedGateways": { "type": "array", "items": { "type": "string" } },
+        "stripePriceId": { "type": "string" },
+        "stripeProductId": { "type": "string" },
+        "moncashServiceId": { "type": "string" },
+        "moncashMerchantCode": { "type": "string" },
+        "natcashServiceId": { "type": "string" },
+        "natcashMerchantCode": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "code", "name", "price", "currency", "billingCycle", "userLimit", "maxTransactions", "status"]
+    },
+    "FinancialSnapshot": {
+      "title": "Financial Snapshot",
+      "description": "Calculated balance sheet, income statement, trial balance and financial ratios snapshot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "periodType": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "currency": { "type": "string" },
+        "trialBalance": { "type": "object" },
+        "balanceSheet": { "type": "object" },
+        "incomeStatement": { "type": "object" },
+        "ratios": { "type": "object" },
+        "generatedAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "startDate", "endDate", "currency", "trialBalance", "balanceSheet", "incomeStatement"]
+    },
+    "BankReconciliation": {
+      "title": "Bank Reconciliation",
+      "description": "Bank statement matching and reconciliation record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "bankAccountCode": { "type": "string" },
+        "statementStartDate": { "type": "string" },
+        "statementEndDate": { "type": "string" },
+        "statementOpeningBalanceCents": { "type": "number" },
+        "statementClosingBalanceCents": { "type": "number" },
+        "statementLines": { "type": "array" },
+        "reconciledCount": { "type": "number" },
+        "unreconciledCount": { "type": "number" },
+        "discrepancyDeltaCents": { "type": "number" },
+        "isBalanced": { "type": "boolean" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "businessId", "bankAccountCode", "statementStartDate", "statementEndDate", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Profiles, roles, and linked company identifiers of participants."
+    },
+    "/businesses/{businessId}": {
+      "schema": "Business",
+      "description": "Tenant-specific company settings, custom rules and feature configurations."
+    },
+    "/businesses/{businessId}/settings/tax_config": {
+      "schema": "BusinessTaxConfiguration",
+      "description": "Configured payroll tax rates, survival floor thresholds, and historical effective periods."
+    },
+    "/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Geographical locations used to perform location context audits during pointage."
+    },
+    "/departments/{deptId}": {
+      "schema": "Department",
+      "description": "Corporate division levels tracking cost matrices."
+    },
+    "/employees/{empId}": {
+      "schema": "Employee",
+      "description": "Active staff roster metadata tracking salaries, branches and active departments."
+    },
+    "/attendance_logs/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Realtime biometric pointages recording absolute check-in times."
+    },
+    "/payrolls/{payrollId}": {
+      "schema": "PayrollRecord",
+      "description": "Lock bulletins tracking computed wages, CNSS, OFATMA and structural audits."
+    },
+    "/payroll_cycles/{cycleId}": {
+      "schema": "PayrollCycle",
+      "description": "Time-bound cycles managing state transitions for collective payroll runs."
+    },
+    "/transactions/{txId}": {
+      "schema": "Transaction",
+      "description": "Reconciled ledger transactions tracking incoming SaaS revenue and active costs."
+    },
+    "/events/{eventId}": {
+      "schema": "ERPEvent",
+      "description": "Synchronized replication flow recording system events and transactional state changes."
+    },
+    "/audit_logs/{logId}": {
+      "schema": "ForensicLog",
+      "description": "Security audit logger tracking critical events, authorization escalations and user sign-ins."
+    },
+    "/invitations/{inviteId}": {
+      "schema": "Invitation",
+      "description": "Invitations used to bring onboarding operators or workers into the secure portal."
+    },
+    "/branch_department_links/{linkId}": {
+      "schema": "BranchDepartmentLink",
+      "description": "Relational matching records joining physical branches with active workflows."
+    },
+    "/employee_contracts/{contractId}": {
+      "schema": "EmployeeContract",
+      "description": "Active contracts tracking gross remuneration terms."
+    },
+    "/shifts/{shiftId}": {
+      "schema": "Shift",
+      "description": "Planned work calendars checking worker absences and overtime deviations."
+    },
+    "/integrity_reports/{reportId}": {
+      "schema": "IntegrityReport",
+      "description": "Compliance reporting records keeping track of systematic blockchain ledger checks."
+    },
+    "/user_preferences/{userId}": {
+      "schema": "UserPreference",
+      "description": "Track client settings and notification read states."
+    },
+    "/employee_badges/{badgeId}": {
+      "schema": "EmployeeBadge",
+      "description": "Registered credentials supporting anti-fingerprint QR matching checks."
+    },
+    "/analytics_snapshots/{snapId}": {
+      "schema": "AnalyticsSnapshot",
+      "description": "CFO dashboard precompiled analytics."
+    },
+    "/leaves/{leaveId}": {
+      "schema": "LeaveRecord",
+      "description": "Employee leave request applications and multi-step HR approvals."
+    },
+    "/overtime_requests/{requestId}": {
+      "schema": "OvertimeRequest",
+      "description": "Operator overtime request entries and validations."
+    },
+    "/absence_events/{eventId}": {
+      "schema": "AbsenceEvent",
+      "description": "Absence and tardiness incidents mapped to justification workflows."
+    },
+    "/enterprise_incidents/{id}": {
+      "schema": "EnterpriseIncident",
+      "description": "Enterprise health and process-related incidents."
+    },
+    "/enterprise_health_snapshots/{id}": {
+      "schema": "ModuleHealth",
+      "description": "Real-time health status snapshots of enterprise modules."
+    },
+    "/workflow_dead_letters/{id}": {
+      "schema": "WorkflowDeadLetter",
+      "description": "Dead letter queue records of failed or rollbacked workflows."
+    },
+    "/ai_cfo_audit_logs/{logId}": {
+      "schema": "AICFOAuditLog",
+      "description": "Immutable audit trails generated by AI CFO Role-Based Intelligence Governance."
+    },
+    "/documents/{docId}": {
+      "schema": "EDMSDocument",
+      "description": "Enterprise Document Management System vault documents."
+    },
+    "/businesses/{businessId}/documents/{docId}": {
+      "schema": "EDMSDocument",
+      "description": "Tenant-scoped Enterprise Document Management System vault documents."
+    },
+    "/shift_templates/{templateId}": {
+      "schema": "ShiftTemplate",
+      "description": "Reusable shift definitions for the organization."
+    },
+    "/employee_assignments/{assignmentId}": {
+      "schema": "EmployeeAssignment",
+      "description": "Mapping of employees to shift templates or rotation patterns."
+    },
+    "/shift_change_requests/{requestId}": {
+      "schema": "ShiftChangeRequest",
+      "description": "Requests from employees for schedule modifications."
+    },
+    "/employee_department_history/{id}": {
+      "schema": "EmployeeDepartmentHistory",
+      "description": "Historical records of employee department assignments and transfers."
+    },
+    "/commission_plans/{id}": {
+      "schema": "CommissionPlan",
+      "description": "Active and archived commission rules and compensation plans."
+    },
+    "/employee_performance_snapshots/{id}": {
+      "schema": "EmployeePerformanceSnapshot",
+      "description": "Aggregated performance and cross-department revenue attribution snapshots."
+    },
+    "/department_performance_snapshots/{id}": {
+      "schema": "DepartmentPerformanceSnapshot",
+      "description": "Departmental profit & loss snapshots with labor and commission breakdowns."
+    },
+    "/branch_performance_snapshots/{id}": {
+      "schema": "BranchPerformanceSnapshot",
+      "description": "Branch profitability and headcount snapshots."
+    },
+    "/business_performance_snapshots/{id}": {
+      "schema": "BusinessPerformanceSnapshot",
+      "description": "Executive level business performance snapshots."
+    },
+    "/employee_sales_summary/{summaryId}": {
+      "schema": "EmployeeSalesSummary",
+      "description": "Intermediate sales summaries frozen per employee and payroll cycle."
+    },
+    "/employee_attendance_snapshots/{id}": {
+      "schema": "EmployeeAttendanceSnapshot",
+      "description": "Attendance snapshots frozen per employee and payroll cycle for Prime and Penalty calculation."
+    },
+    "/GL/{id}": {
+      "schema": "GL",
+      "description": "General Ledger entries imported from bulk upload."
+    },
+    "/exchange_rates/{rateId}": {
+      "schema": "ExchangeRate",
+      "description": "Active or historical exchange rate entries and overrides."
+    },
+    "/security_alerts/{alertId}": {
+      "schema": "SecurityAlert",
+      "description": "Security threat alerts and anomaly detection logs."
+    },
+    "/system_config/{configId}": {
+      "schema": "PlatformSecurityPolicy",
+      "description": "Enterprise platform global configurations and security policy definitions."
+    },
+    "/subscription_plans/{planId}": {
+      "schema": "SubscriptionPlan",
+      "description": "Dynamic SaaS subscription plans with collaborator limits and payment gateway readiness (Stripe, MonCash, Natcash)."
+    },
+    "/financial_snapshots/{id}": {
+      "schema": "FinancialSnapshot",
+      "description": "Snapshots of Trial Balance, Balance Sheet, P&L and Financial Ratios."
+    },
+    "/bank_reconciliations/{id}": {
+      "schema": "BankReconciliation",
+      "description": "Bank reconciliation matching sessions with ledger transactions."
+    }
+  }
+}
