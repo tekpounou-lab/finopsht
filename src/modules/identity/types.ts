@@ -1,4 +1,4 @@
-import { Role, Business, Employee, BusinessSnapshot } from "../../types";
+import { Role, Business, Employee, BusinessSnapshot, PendingBusiness } from "../../types";
 
 export type OrchestratorState = 
   | "UNKNOWN"
@@ -33,6 +33,7 @@ export interface IdentitySnapshot {
   employee: Employee | null;
   business: Business | null;
   businessSnapshot: BusinessSnapshot | null;
+  pendingBusiness?: PendingBusiness | null;
   
   role: Role | "UNASSIGNED";
   requested_role?: Role | "UNASSIGNED";

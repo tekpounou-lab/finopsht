@@ -12,7 +12,7 @@ import {
 import { useIdentity } from "../../modules/identity/IdentityContext";
 
 interface OnboardingChoiceProps {
-  onSelect: (choice: "CREATE" | "WAITING") => void;
+  onSelect: (choice: "CREATE" | "MEMBER") => void;
 }
 
 export const OnboardingChoice: React.FC<OnboardingChoiceProps> = ({ onSelect }) => {
@@ -59,17 +59,17 @@ export const OnboardingChoice: React.FC<OnboardingChoiceProps> = ({ onSelect }) 
               </div>
 
               <div className="space-y-4 mb-10">
-                <h2 className="text-3xl font-black text-white tracking-tight uppercase">Propriétaire</h2>
+                <h2 className="text-3xl font-black text-white tracking-tight uppercase">Créer une entreprise</h2>
                 <p className="text-slate-400 leading-relaxed font-medium">
                   Devenez le fondateur de votre propre espace de travail ERP. 
-                  Gérez vos branches, vos collaborateurs et vos finances en toute autonomie.
+                  Gérez vos branches, vos collaborateurs, vos devises et vos caisses en toute autonomie.
                 </p>
               </div>
 
               <div className="mt-auto pt-8 border-t border-white/5 flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="text-cyan-400 font-black uppercase text-[10px] tracking-[0.2em]">Provisioning</span>
-                  <span className="text-slate-500 text-xs font-mono">Create Workspace</span>
+                  <span className="text-cyan-400 font-black uppercase text-[10px] tracking-[0.2em]">Fondateur</span>
+                  <span className="text-slate-500 text-xs font-mono">Nouvelle Organisation</span>
                 </div>
                 <div id="choice-create-owner-btn" className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-cyan-500 transition-all duration-500 group-hover:shadow-lg group-hover:shadow-cyan-500/30">
                   <ArrowRight className="text-white group-hover:text-slate-950" size={24} />
@@ -78,12 +78,12 @@ export const OnboardingChoice: React.FC<OnboardingChoiceProps> = ({ onSelect }) 
             </div>
           </motion.div>
 
-          {/* Join/Wait Option (Journey B) */}
+          {/* Join/Member Option */}
           <motion.div 
             id="choice-join-employee-card"
             whileHover={{ y: -8, scale: 1.01 }}
             className="group cursor-pointer"
-            onClick={() => onSelect("WAITING")}
+            onClick={() => onSelect("MEMBER")}
           >
             <div className="h-full glass rounded-[40px] p-10 border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-all relative overflow-hidden flex flex-col shadow-2xl">
               <div className="absolute top-0 right-0 p-12 opacity-5 group-hover:opacity-10 transition-opacity">
@@ -97,17 +97,16 @@ export const OnboardingChoice: React.FC<OnboardingChoiceProps> = ({ onSelect }) 
               </div>
 
               <div className="space-y-4 mb-10">
-                <h2 className="text-3xl font-black text-white tracking-tight uppercase">Collaborateur</h2>
+                <h2 className="text-3xl font-black text-white tracking-tight uppercase">Devenir Membre</h2>
                 <p className="text-slate-400 leading-relaxed font-medium">
-                  Connectez-vous à une organisation existante. Accédez à votre profil, vos contrats, 
-                  et votre dashboard de performance opérationnelle.
+                  Rejoignez une entreprise existante sur FINOPS ERP. Complétez vos coordonnées et recevez l'invitation de votre organisation.
                 </p>
               </div>
 
               <div className="mt-auto pt-8 border-t border-white/5 flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="text-slate-400 font-black uppercase text-[10px] tracking-[0.2em]">Affiliation</span>
-                  <span className="text-slate-500 text-xs font-mono">Join Workspace</span>
+                  <span className="text-slate-400 font-black uppercase text-[10px] tracking-[0.2em]">Collaborateur</span>
+                  <span className="text-slate-500 text-xs font-mono">Rejoindre une Organisation</span>
                 </div>
                 <div id="choice-join-employee-btn" className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-white transition-all duration-500">
                   <ArrowRight className="text-white group-hover:text-slate-950" size={24} />

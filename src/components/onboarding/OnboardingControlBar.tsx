@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 
 export interface OnboardingControlBarProps {
-  activeState: "RESOLVING" | "SELECT_PATH" | "CREATE" | "JOIN" | "WAITING_APPROVAL" | "INVITATION" | "OFFLINE";
+  activeState: "RESOLVING" | "SELECT_PATH" | "CREATE" | "JOIN" | "MEMBER" | "WAITING_APPROVAL" | "INVITATION" | "OFFLINE";
   canGoBack?: boolean;
   onBack?: () => void;
   onSwitchPath?: () => Promise<void> | void;
@@ -66,6 +66,7 @@ export const OnboardingControlBar: React.FC<OnboardingControlBarProps> = ({
       case "SELECT_PATH": return "2/4 • Sélection Mode";
       case "CREATE": return "3/4 • Enregistrement Entreprise";
       case "JOIN": return "3/4 • Demande de Raccordement";
+      case "MEMBER": return "3/4 • Profil Collaborateur";
       case "WAITING_APPROVAL": return "4/4 • Attente Approbation";
       case "INVITATION": return "3/4 • Validation Invitation";
       default: return "Onboarding FINOPS";

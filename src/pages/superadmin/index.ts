@@ -5,3 +5,4 @@ export { TenantDetailsDrawer } from "./components/TenantDetailsDrawer";
 export { CreateTenantModal } from "./components/CreateTenantModal";
 export { SystemHealthCards } from "./components/SystemHealthCards";
 export { GlobalAuditLogViewer } from "./components/GlobalAuditLogViewer";
+export { AdminPendingBusinesses } from "./components/AdminPendingBusinesses";

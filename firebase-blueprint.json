@@ -32,6 +32,26 @@
       },
       "required": ["id", "name", "onboarding_complete"]
     },
+    "PendingBusiness": {
+      "title": "Pending Business Application",
+      "description": "Founder application for a new organization pending Super Admin approval.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "businessName": { "type": "string" },
+        "taxId": { "type": "string" },
+        "industry": { "type": "string" },
+        "selectedPlan": { "type": "string", "enum": ["STARTER", "PROFESSIONAL", "BUSINESS", "ENTERPRISE"] },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "businessId": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "ownerUid", "ownerEmail", "businessName", "selectedPlan", "status"]
+    },
     "BusinessTaxConfiguration": {
       "title": "Business Tax Configuration",
       "description": "Configurable payroll tax rates, survival floor, and historical effective periods.",
@@ -924,6 +944,10 @@
     "/bank_reconciliations/{id}": {
       "schema": "BankReconciliation",
       "description": "Bank reconciliation matching sessions with ledger transactions."
+    },
+    "/pending_businesses/{id}": {
+      "schema": "PendingBusiness",
+      "description": "Founder applications for organization registration awaiting Super Admin validation."
     }
   }
 }

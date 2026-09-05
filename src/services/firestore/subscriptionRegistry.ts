@@ -24,8 +24,8 @@ class SubscriptionRegistry {
   private activeListenersCount = 0;
   private duplicatesPreventedCount = 0;
   private cleanupsExecutedCount = 0;
-  private MAX_ACTIVE_LISTENERS = 20;
-  private readonly rateLimiter = RateLimiter.get("firestore_subscription_rate", 300, 60000);
+  private MAX_ACTIVE_LISTENERS = 60;
+  private readonly rateLimiter = RateLimiter.get("firestore_subscription_rate", 600, 60000);
 
   public setMaxActiveListeners(max: number): void {
     if (max > 0) {

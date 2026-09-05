@@ -320,6 +320,9 @@ export default function UnifiedAuthPortal({
         } else if (err.code === "auth/invalid-email") {
           title = "Adresse email invalide";
           message = "Veuillez saisir une adresse email valide (ex: utilisateur@icloud.com).";
+        } else if (err.code === "auth/network-request-failed") {
+          title = "Échec de l'inscription";
+          message = "Firebase: Error (auth/network-request-failed).";
         }
         setAuthError({ title, message });
       } finally {
@@ -860,7 +863,7 @@ export default function UnifiedAuthPortal({
                     {isEmailLoading 
                       ? a.processing 
                       : isSignUp 
-                        ? "Créer mon compte employé" 
+                        ? "Créer mon compte" 
                         : t.organization.loginBtn
                     }
                   </button>

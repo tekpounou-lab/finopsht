@@ -652,7 +652,7 @@ export const PredictiveIntelligenceCenter: React.FC = () => {
                         contentStyle={{ backgroundColor: "#020617", borderColor: "#334155", color: "#f8fafc", fontSize: "11px", borderRadius: "8px" }}
                         formatter={(value: any) => [`${Math.round(value).toLocaleString()} ${currencySymbol}`]}
                       />
-                      <Legend style={{ fontSize: "10px" }} />
+                      <Legend wrapperStyle={{ fontSize: "10px" }} />
                       
                       {/* Area of Actual Revenue */}
                       <Area type="monotone" dataKey="actualRevenue" fill="#10b981" stroke="#10b981" fillOpacity={0.05} name={isFr ? "Revenu Réel" : "Lajan Antre Réel"} />

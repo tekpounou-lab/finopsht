@@ -37,10 +37,10 @@ const SuperAdminPlatform = lazyWithRetry(() => import("../pages/SuperAdminPlatfo
 
 export interface DashboardShellProps {
   initialTab?: string;
-  initialSubTab?: "LEADS" | "PROFORMAS" | "INVOICES" | "TEMPLATES";
+  initialSubTab?: "LEADS" | "PROFORMAS" | "INVOICES" | "TEMPLATES" | "PENDING";
 }
 
-export function DashboardShell({ initialTab }: DashboardShellProps = {}) {
+export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProps = {}) {
   const { user: authUser, role: authRole, logout } = useAuth();
   const currentRole: Role = (authRole as Role) || "OWNER";
 
@@ -128,7 +128,7 @@ export function DashboardShell({ initialTab }: DashboardShellProps = {}) {
             }
           >
             {(normalizedActiveTab === "platform" || normalizedActiveTab === "tenants" || normalizedActiveTab === "superadmin") && (
-              <SuperAdminPlatform initialTab="tenants" />
+              <SuperAdminPlatform initialTab={initialSubTab === "PENDING" ? "pending" : "tenants"} />
             )}
 
             {normalizedActiveTab === "plans" && (

@@ -228,7 +228,7 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }
     });
-  }, [resolve, stage, identity?.user_uid]);
+  }, [resolve]);
 
   // 3. Keep static PermissionService synchronized
   useEffect(() => {
@@ -315,6 +315,8 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           let nextIdentityStatus = prev.identityStatus;
           if (data.account_status === "ACTIVE" || data.status === "ACTIVE" || prev.employee?.status === "ACTIVE" || nextRole === "SUPER_ADMIN" || prev.onboardingStatus === "COMPLETED") {
             nextIdentityStatus = "ACTIVE";
+          } else if (data.account_status === "PENDING_OWNER" || data.account_status === "PENDING_MEMBER") {
+            nextIdentityStatus = "INITIAL_IDENTITY";
           } else if (data.account_status === "SUSPENDED" || data.status === "SUSPENDED") {
             nextIdentityStatus = "SUSPENDED";
           } else if (data.account_status === "INVITED") {
@@ -354,7 +356,7 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       console.log(`[FirestoreListener] Unsubscribing from users/${user.uid}`);
       unsub();
     };
-  }, [user?.uid, stage, resolve]);
+  }, [user?.uid, resolve]);
 
   // 5. Real-Time Listener: Employee Document
   useEffect(() => {
@@ -393,7 +395,7 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => {
       unsub();
     };
-  }, [user?.uid, identity?.employee?.id, stage]);
+  }, [user?.uid, identity?.employee?.id]);
 
   // 6. Real-Time Listener: Business Document & Snapshot
   useEffect(() => {

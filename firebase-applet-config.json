@@ -1,12 +1,12 @@
 {
-  "projectId": "telegram-agent-lead",
-  "appId": "1:401009421871:web:d0686f1ce00706b94ee0da",
-  "apiKey": "AIzaSyCmqF-MYwmaJRk-HJh1GcvgGY8pwhxa2CU",
-  "authDomain": "telegram-agent-lead.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-finopsht-a182bd2a-328e-4e7f-9402-50bcc509be2e",
-  "storageBucket": "telegram-agent-lead.firebasestorage.app",
-  "messagingSenderId": "401009421871",
+  "projectId": "finopsht",
+  "appId": "1:231531725507:web:9cba5094f7aeec52a81876",
+  "apiKey": "AIzaSyD4eoMrhYM79xz3Kfa6lnmPJK985BddoJg",
+  "authDomain": "finopsht.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-finopserp-ef001fee-dd79-4547-8e51-9e59e365e98a",
+  "storageBucket": "finopsht.firebasestorage.app",
+  "messagingSenderId": "231531725507",
   "measurementId": "",
-  "oAuthClientId": "401009421871-6kio6oo4eq2b0uumm3t0f2p36a7ug8lc.apps.googleusercontent.com",
+  "oAuthClientId": "231531725507-41cmf311hkne77evr105s99cke3o2l12.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

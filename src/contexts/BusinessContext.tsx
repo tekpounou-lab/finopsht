@@ -386,10 +386,11 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
     }
 
     // Phase 2: Start Managed Synchronization (Mandatory for SSOT consistency)
-    // CRITICAL: Ensure auth.currentUser is populated before starting sync to avoid permission race conditions
+    // CRITICAL: Ensure auth.currentUser is populated and business is active before starting sync
     const isAuthReady = !authLoading && !identityLoading && auth.currentUser;
+    const isBizActive = identity?.business?.status === "ACTIVE" || identity?.business?.status === "APPROVED" || identity?.onboardingStatus === "COMPLETED";
     
-    if (business_id && business_id !== "none" && state !== "INITIALIZING" && state !== "LOADING" && isAuthReady) {
+    if (business_id && business_id !== "none" && state !== "INITIALIZING" && state !== "LOADING" && isAuthReady && isBizActive) {
       SynchronizationEngine.startSync(business_id);
     }
 

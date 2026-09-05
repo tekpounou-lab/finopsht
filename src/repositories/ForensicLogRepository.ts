@@ -23,7 +23,10 @@ export const ForensicLogRepository = {
    * Helper to construct and cryptographically seal a ForensicLog document.
    */
   async createAndSignLog(
-    params: Omit<ForensicLog, "id" | "signature">
+    params: Omit<ForensicLog, "id" | "signature" | "userName" | "userRole"> & {
+      userName?: string;
+      userRole?: any;
+    }
   ): Promise<ForensicLog> {
     const logId = `flog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const signaturePayload = {
@@ -41,6 +44,8 @@ export const ForensicLogRepository = {
 
     return {
       id: logId,
+      userName: params.userName || "SYSTEM",
+      userRole: params.userRole || "SYSTEM",
       ...params,
       signature
     } as ForensicLog;

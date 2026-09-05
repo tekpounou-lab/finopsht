@@ -9,6 +9,7 @@ import {
   Layers,
   FileText,
   Radio,
+  Clock,
   Loader2
 } from "lucide-react";
 import { 
@@ -18,7 +19,8 @@ import {
   TenantDetailsDrawer, 
   CreateTenantModal, 
   SystemHealthCards, 
-  GlobalAuditLogViewer 
+  GlobalAuditLogViewer,
+  AdminPendingBusinesses
 } from "./superadmin";
 import { lazyWithRetry } from "../utils/lazyWithRetry";
 import { SubscriptionPlanRepository, SubscriptionPlanDocument, SubscriptionRepository } from "../repositories";
@@ -60,6 +62,12 @@ export function SuperAdminPlatform({ initialTab = "tenants" }: SuperAdminPlatfor
   // Normalize initialTab
   const resolvedInitialTab = initialTab === "system/reliability" ? "reliability" : initialTab;
   const [activeTab, setActiveTab] = useState<string>(resolvedInitialTab);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab === "system/reliability" ? "reliability" : initialTab);
+    }
+  }, [initialTab]);
 
   // 1. Tenant Management Hook
   const {
@@ -253,6 +261,19 @@ export function SuperAdminPlatform({ initialTab = "tenants" }: SuperAdminPlatfor
 
         <button
           type="button"
+          onClick={() => setActiveTab("pending")}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+            activeTab === "pending"
+              ? "bg-amber-600 text-white shadow-md shadow-amber-900/30"
+              : "text-slate-400 hover:text-white hover:bg-slate-900"
+          }`}
+        >
+          <Clock className="w-4 h-4 text-amber-400" />
+          <span>Demandes d'activation</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab("plans")}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-medium transition-all cursor-pointer ${
             activeTab === "plans"
@@ -352,6 +373,14 @@ export function SuperAdminPlatform({ initialTab = "tenants" }: SuperAdminPlatfor
             onRejectTenant={rejectTenant}
           />
         </div>
+      )}
+
+      {activeTab === "pending" && (
+        <AdminPendingBusinesses
+          onApprovalSuccess={() => {
+            setActiveTab("tenants");
+          }}
+        />
       )}
 
       {activeTab === "plans" && (

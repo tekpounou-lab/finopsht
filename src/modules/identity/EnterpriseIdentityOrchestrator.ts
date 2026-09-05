@@ -20,11 +20,12 @@ import {
   IdentityStatus,
   OnboardingStatus
 } from "./types";
-import { Employee, Business, Role, UserProfile, BusinessSnapshot } from "../../types";
+import { Employee, Business, Role, UserProfile, BusinessSnapshot, PendingBusiness } from "../../types";
 import { WorkspaceProvisioningService } from "../../services/business/WorkspaceProvisioningService";
 import { BusinessSnapshotService } from "../../services/business/BusinessSnapshotService";
 import { SUPER_ADMIN_EMAIL, isSuperAdminEmail } from "../../config/superadmin";
 import { PermissionRepository } from "../../repositories";
+import { PendingBusinessRepository } from "../../repositories/PendingBusinessRepository";
 import { OptimizedResolver } from "../../services/identity/OptimizedResolver";
 import { BusinessResolver } from "../../services/business/BusinessResolver";
 import { PermissionService } from "../../services/PermissionService";
@@ -39,14 +40,10 @@ import { SecurityAuditLogger } from "../../services/security/SecurityAuditLogger
 
 function cleanPayload<T extends Record<string, any>>(obj: T): Partial<T> {
   const obsolete = new Set([
-    'business_id', 'branch_id', 'department_id', 'employee_id', 'firebase_uid', 
-    'display_name', 'employee_name', 'created_at', 'updated_at', 'hire_date', 
-    'base_salary', 'salary_base_htg', 'salaryBaseHtg', 'payment_model', 'commission_rate', 
-    'business_status', 'account_status', 'onboarding_completed', 'normalized_email', 
+    'salary_base_htg', 'salaryBaseHtg', 'payment_model', 'commission_rate', 
     'total_gross_htg', 'total_net_htg', 'amount_paid', 'is_paid', 'customer_id', 
-    'invoice_date', 'due_date', 'owner_id', 'is_active', 'totalGrossHtg', 'totalNetHtg',
-    'target_user_id', 'target_roles', 'read_at', 'amount_cents', 'debit_account',
-    'credit_account', 'debit_cents', 'credit_cents', 'requested_role', 'user_id'
+    'invoice_date', 'due_date', 'totalGrossHtg', 'totalNetHtg',
+    'amount_cents', 'debit_account', 'credit_account', 'debit_cents', 'credit_cents'
   ]);
   const cleaned: Record<string, any> = {};
   for (const [key, val] of Object.entries(obj)) {
@@ -355,11 +352,17 @@ export class EnterpriseIdentityOrchestrator {
         return null;
       });
 
-      const [userProfile, initialEmployee, snapBiz, resolvedInvitation] = await Promise.all([
+      const pendingBizPromise = PendingBusinessRepository.getByOwnerUid(user.uid).catch(err => {
+        console.warn(`[Orchestrator][${correlationId}] pendingBiz lookup non-fatal warning:`, err);
+        return null;
+      });
+
+      const [userProfile, initialEmployee, snapBiz, resolvedInvitation, pendingBusiness] = await Promise.all([
         profilePromise,
         initialEmployeePromise,
         ownerBizPromise,
-        invitationPromise
+        invitationPromise,
+        pendingBizPromise
       ]);
 
       let employee = initialEmployee;
@@ -405,6 +408,7 @@ export class EnterpriseIdentityOrchestrator {
         : null;
 
       snapshot.invitation = resolvedInvitation;
+      snapshot.pendingBusiness = pendingBusiness;
       snapshot.orchestratorState = "USER_RESOLVED";
       snapshot.employee = employee;
 
@@ -444,8 +448,8 @@ export class EnterpriseIdentityOrchestrator {
       
       // 5. ONBOARDING & IDENTITY STATUS RESOLUTION
       snapshot.orchestratorState = "ONBOARDING_RESOLVED";
-      snapshot.onboardingStatus = this.determineOnboardingStatus(userProfile, employee, snapshot.business, resolvedInvitation);
-      snapshot.identityStatus = this.determineIdentityStatus(userProfile, employee);
+      snapshot.onboardingStatus = this.determineOnboardingStatus(userProfile, employee, snapshot.business, resolvedInvitation, pendingBusiness);
+      snapshot.identityStatus = this.determineIdentityStatus(userProfile, employee, snapshot.business, pendingBusiness);
 
       // 6. FINAL VALIDATION
       if (snapshot.onboardingStatus === "COMPLETED" && !snapshot.business && !isSuperAdmin) {
@@ -969,7 +973,8 @@ export class EnterpriseIdentityOrchestrator {
     profile: UserProfile | null, 
     employee: Employee | null, 
     business: Business | null,
-    invitation: any | null
+    invitation: any | null,
+    pendingBusiness?: PendingBusiness | null
   ): OnboardingStatus {
     const bizStatus = business?.status || profile?.businessStatus || (profile as any)?.business_status;
     const bizId = business?.id || profile?.businessId || profile?.business_id || employee?.businessId || employee?.business_id;
@@ -978,8 +983,9 @@ export class EnterpriseIdentityOrchestrator {
       bizId,
       bizStatus,
       profileRole: profile?.role,
+      profileAccountStatus: profile?.accountStatus || (profile as any)?.account_status,
       profileOnboarding: profile?.onboardingComplete || profile?.onboarding_completed,
-      profileStatus: profile?.businessStatus || (profile as any)?.business_status,
+      pendingBusinessStatus: pendingBusiness?.status,
       employeeStatus: employee?.status,
       invitationStatus: invitation?.status
     });
@@ -994,16 +1000,26 @@ export class EnterpriseIdentityOrchestrator {
       return "COMPLETED";
     }
 
+    // 2. User waiting room checks
+    const accStatus = profile?.accountStatus || (profile as any)?.account_status;
+    if (accStatus === "PENDING_MEMBER" || accStatus === "PENDING_OWNER" || accStatus === "REJECTED") {
+      return "WAITING";
+    }
+
+    if (pendingBusiness && (pendingBusiness.status === "PENDING" || pendingBusiness.status === "REJECTED")) {
+      return "WAITING";
+    }
+
     if (bizStatus === "PENDING" || bizStatus === "PENDING_APPROVAL") {
       return "WAITING";
     }
     
-    // 2. Invitation Acceptance Blocking
+    // 3. Invitation Acceptance Blocking
     if (invitation && (invitation.status === "PENDING" || invitation.status === "SENT")) {
       return "JOINING";
     }
 
-    // 3. Active Workspace Completed
+    // 4. Active Workspace Completed
     if (business || bizId) {
       if (profile?.onboardingComplete || profile?.onboarding_completed || employee || bizId) {
         return "COMPLETED";
@@ -1015,21 +1031,51 @@ export class EnterpriseIdentityOrchestrator {
     return "PENDING_ONBOARDING";
   }
 
-  private static determineIdentityStatus(profile: UserProfile | null, employee: Employee | null): IdentityStatus {
-    const hasBiz = profile?.businessId || profile?.business_id || employee?.businessId || employee?.business_id;
-    const isProfileOnboarded = profile?.onboardingComplete || profile?.onboarding_completed;
-    const isAccountActive = profile?.accountStatus === "ACTIVE" || profile?.account_status === "ACTIVE" || profile?.status === "ACTIVE";
+  private static determineIdentityStatus(
+    profile: UserProfile | null, 
+    employee: Employee | null,
+    business?: Business | null,
+    pendingBusiness?: PendingBusiness | null
+  ): IdentityStatus {
+    const accStatus = profile?.accountStatus || (profile as any)?.account_status;
 
-    if (
-      employee?.status === "ACTIVE" || 
-      (isAccountActive && (hasBiz || isProfileOnboarded)) || 
-      employee?.status === "PENDING_ACCEPTANCE" ||
-      hasBiz
-    ) {
+    if (profile?.role === "SUPER_ADMIN" || isSuperAdminEmail((profile as any)?.email)) {
+      return "SUPER_ADMIN";
+    }
+
+    if (accStatus === "SUSPENDED" || (profile as any)?.status === "SUSPENDED") {
+      return "SUSPENDED";
+    }
+
+    if (employee?.status === "INVITED" || accStatus === "INVITED") {
+      return "INVITED";
+    }
+
+    const isBizActive = business?.status === "ACTIVE" || business?.status === "APPROVED";
+    const isEmployeeActive = employee?.status === "ACTIVE";
+    const isAccountActive = accStatus === "ACTIVE" || (profile as any)?.status === "ACTIVE";
+
+    // Active status requires active employee contract or active account with an active business workspace
+    if (isEmployeeActive || (isAccountActive && isBizActive)) {
       return "ACTIVE";
     }
-    if (employee?.status === "INVITED" || profile?.accountStatus === "INVITED" || profile?.account_status === "INVITED") return "INVITED";
-    if (profile?.id && (hasBiz || (profile?.role && profile?.role !== "UNASSIGNED"))) return "PROFILE_ONLY";
+
+    // Pending owners, pending members, or pending businesses are in INITIAL_IDENTITY
+    if (
+      accStatus === "PENDING_OWNER" || 
+      accStatus === "PENDING_MEMBER" || 
+      pendingBusiness?.status === "PENDING" || 
+      business?.status === "PENDING" ||
+      business?.status === "PENDING_APPROVAL"
+    ) {
+      return "INITIAL_IDENTITY";
+    }
+
+    const hasBiz = profile?.businessId || profile?.business_id || employee?.businessId || employee?.business_id;
+    if (profile?.id && (hasBiz || (profile?.role && profile?.role !== "UNASSIGNED"))) {
+      return "PROFILE_ONLY";
+    }
+
     return "NEW_USER";
   }
 

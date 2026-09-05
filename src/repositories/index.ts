@@ -657,4 +657,7 @@ export {
   mapPayrollCycle
 } from "../utils/caseConverter";
 export { IntegrityValidator, ForeignKeyIntegrityViolationError } from "../services/integrity/ForeignKeyIntegrityValidator";
+export { PendingBusinessRepository } from "./PendingBusinessRepository";
+export { UserProfileRepository } from "./UserProfileRepository";
+export { InvitationRepository } from "./InvitationRepository";
 

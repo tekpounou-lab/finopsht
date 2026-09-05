@@ -15,11 +15,13 @@ export default function WaitingRoom() {
     identity?.role === "OWNER" || 
     identity?.employee?.role === "OWNER" || 
     identity?.requested_role === "OWNER" || 
-    identity?.business?.owner_id === user?.uid;
+    identity?.business?.owner_id === user?.uid ||
+    Boolean(identity?.pendingBusiness) ||
+    (identity as any)?.userProfile?.accountStatus === "PENDING_OWNER";
 
   // Auto-redirect to dashboard when business is active & onboarding complete
   useEffect(() => {
-    const isBizActive = identity?.business?.status === "ACTIVE" || identity?.business?.status === "APPROVED";
+    const isBizActive = identity?.business?.status === "ACTIVE" || identity?.business?.status === "APPROVED" || identity?.pendingBusiness?.status === "APPROVED";
     if (!identityLoading && isBizActive && (identity?.onboardingStatus === "COMPLETED" || !identity?.onboardingStatus)) {
       if (identity?.role === "EMPLOYEE" || identity?.employee?.role === "EMPLOYEE") {
         navigate("/workspace");
@@ -35,7 +37,7 @@ export default function WaitingRoom() {
 
   const getStatus = (): WaitingRoomStatus => {
     const bSt = (businessStatus as string) || "";
-    const isBizPending = bSt === "PENDING" || bSt === "PENDING_APPROVAL" || bSt === "WAITING_APPROVAL" || bSt === "WAITING";
+    const isBizPending = bSt === "PENDING" || bSt === "PENDING_APPROVAL" || bSt === "WAITING_APPROVAL" || bSt === "WAITING" || Boolean(identity?.pendingBusiness);
     if (isOwner && (isBizPending || !bSt)) return "WAITING_SUPERADMIN_APPROVAL";
     if (identity?.invitation?.status === "PENDING") return "INVITATION_PENDING";
     return "WAITING_FOR_INVITATION";
@@ -77,9 +79,10 @@ export default function WaitingRoom() {
       email={identity?.email || user?.email || ""}
       status={getStatus()}
       isOwner={isOwner}
-      businessName={identity?.business?.name}
-      businessId={identity?.business?.id}
+      businessName={identity?.pendingBusiness?.businessName || identity?.business?.name}
+      businessId={identity?.pendingBusiness?.id || identity?.business?.id}
       onBack={handleBack}
+      onEditMemberInfo={() => navigate("/onboarding-choice")}
       onCreateBusiness={handleCreateBusiness}
       onExploreDemo={handleExploreDemo}
       onGoToSuperAdmin={handleGoToSuperAdmin}

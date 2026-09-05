@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useIdentity } from "../../modules/identity/IdentityContext";
 import { useAuth } from "../../hooks/useAuth";
 import { OnboardingChoice } from "./OnboardingChoice";
-import { BusinessCreationWizard } from "./BusinessCreationWizard";
+import { MemberInfoForm } from "./MemberInfoForm";
+import { BusinessInfoForm } from "./BusinessInfoForm";
 import { InvitationAcceptance } from "./InvitationAcceptance";
 import { WaitingRoom } from "./WaitingRoom";
 import { OnboardingControlBar } from "./OnboardingControlBar";
@@ -14,6 +15,7 @@ import { Loader2 } from "lucide-react";
 export type OnboardingActiveState = 
   | "RESOLVING" 
   | "SELECT_PATH" 
+  | "MEMBER"
   | "CREATE" 
   | "JOIN" 
   | "WAITING_APPROVAL" 
@@ -26,6 +28,7 @@ export const OnboardingOrchestrator: React.FC = () => {
   
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [wizardStep, setWizardStep] = useState(1);
+  const [selectedPath, setSelectedPath] = useState<"CREATE" | "MEMBER" | null>(null);
 
   // 1. Network status listener
   useEffect(() => {
@@ -52,11 +55,25 @@ export const OnboardingOrchestrator: React.FC = () => {
     if (loading && !identity) return "RESOLVING";
     if (identity?.identityStatus === "INVITED" || identity?.invitation) return "INVITATION";
     
+    // Check pending business / approval status
     const bizStatus = (identity?.business?.status as string) || "";
-    const isBizPending = bizStatus === "PENDING" || bizStatus === "PENDING_APPROVAL" || bizStatus === "WAITING_APPROVAL" || bizStatus === "WAITING" || (identity?.onboardingStatus as string) === "WAITING";
+    const isBizPending = 
+      bizStatus === "PENDING" || 
+      bizStatus === "PENDING_APPROVAL" || 
+      bizStatus === "WAITING_APPROVAL" || 
+      bizStatus === "WAITING" || 
+      (identity?.onboardingStatus as string) === "WAITING" ||
+      Boolean(identity?.pendingBusiness);
+
     const isBizActive = bizStatus === "ACTIVE" || bizStatus === "APPROVED";
 
-    if (identity?.business?.id && (isBizPending || (identity?.onboardingStatus !== "COMPLETED" && !isBizActive))) {
+    // Check accountStatus in profile or pendingBusiness
+    const accountStatus = (identity as any)?.userProfile?.accountStatus;
+    if (accountStatus === "PENDING_MEMBER" || accountStatus === "PENDING_OWNER" || isBizPending) {
+      // If active already, resolve
+      if (isBizActive && identity?.onboardingStatus === "COMPLETED") {
+        return "RESOLVING";
+      }
       return "WAITING_APPROVAL";
     }
 
@@ -64,12 +81,20 @@ export const OnboardingOrchestrator: React.FC = () => {
       return "RESOLVING";
     }
 
+    // Local user choice takes precedence when not yet in waiting room
+    if (selectedPath === "MEMBER") {
+      return "MEMBER";
+    }
+    if (selectedPath === "CREATE") {
+      return "CREATE";
+    }
+
     const requestedRole = identity?.requested_role;
     if (requestedRole === "OWNER" && !identity?.business?.id) {
       return "CREATE";
     }
     if ((requestedRole === "EMPLOYEE" || requestedRole === "SUPERVISOR") && !identity?.business?.id) {
-      return "JOIN";
+      return "MEMBER";
     }
 
     // Fallback if role is explicitly assigned
@@ -86,7 +111,6 @@ export const OnboardingOrchestrator: React.FC = () => {
   useEffect(() => {
     if (user?.uid && currentState !== "RESOLVING") {
       const businessId = identity?.business?.id;
-      // Emit persistent tenant event ONLY if business is established
       if (businessId && businessId !== "global") {
         const correlationId = `nav_${user.uid}_${currentState}_${wizardStep}`;
         finopsEventOrchestrator.emit("ONBOARDING_STATE_TRANSITION", businessId, {
@@ -103,7 +127,7 @@ export const OnboardingOrchestrator: React.FC = () => {
 
       // Save draft state snapshot locally
       OnboardingDraftManager.saveDraft(user.uid, {
-        activeState: currentState === "CREATE" ? "CREATE" : currentState === "JOIN" ? "JOIN" : "SELECT_PATH",
+        activeState: currentState === "CREATE" ? "CREATE" : currentState === "MEMBER" ? "JOIN" : "SELECT_PATH",
         wizardStep
       });
     }
@@ -113,12 +137,7 @@ export const OnboardingOrchestrator: React.FC = () => {
   const handleBack = useCallback(async () => {
     if (!user?.uid) return;
     
-    if (currentState === "CREATE" && wizardStep > 1) {
-      setWizardStep(prev => prev - 1);
-      return;
-    }
-
-    // Revert role selection back to SELECT_PATH
+    setSelectedPath(null);
     await setRequestedRole("UNASSIGNED");
     setWizardStep(1);
     if (user?.uid) {
@@ -127,11 +146,12 @@ export const OnboardingOrchestrator: React.FC = () => {
         wizardStep: 1
       });
     }
-  }, [currentState, wizardStep, user?.uid, setRequestedRole]);
+  }, [user?.uid, setRequestedRole]);
 
   const handleSwitchPath = useCallback(async () => {
     if (!user?.uid) return;
     const targetRole = currentState === "CREATE" ? "EMPLOYEE" : "OWNER";
+    setSelectedPath(targetRole === "OWNER" ? "CREATE" : "MEMBER");
     await setRequestedRole(targetRole);
     setWizardStep(1);
     if (user?.uid) {
@@ -144,6 +164,7 @@ export const OnboardingOrchestrator: React.FC = () => {
 
   const handleReset = useCallback(async () => {
     if (!user?.uid) return;
+    setSelectedPath(null);
     OnboardingDraftManager.clearDraft(user.uid);
     await setRequestedRole("UNASSIGNED");
     setWizardStep(1);
@@ -154,7 +175,7 @@ export const OnboardingOrchestrator: React.FC = () => {
     refresh();
   }, [refresh]);
 
-  const canGoBack = currentState === "CREATE" || currentState === "JOIN" || currentState === "WAITING_APPROVAL";
+  const canGoBack = currentState === "CREATE" || currentState === "MEMBER" || currentState === "WAITING_APPROVAL";
 
   // Render View Body
   const renderBody = () => {
@@ -184,10 +205,18 @@ export const OnboardingOrchestrator: React.FC = () => {
     }
 
     if (currentState === "WAITING_APPROVAL") {
-      const isOwner = identity?.role === "OWNER" || identity?.requested_role === "OWNER" || identity?.business?.owner_id === user?.uid;
+      const isOwner = 
+        identity?.role === "OWNER" || 
+        identity?.requested_role === "OWNER" || 
+        identity?.business?.owner_id === user?.uid ||
+        Boolean(identity?.pendingBusiness) ||
+        (identity as any)?.userProfile?.accountStatus === "PENDING_OWNER";
+
       const getWaitingStatus = (): any => {
         const st = (identity?.business?.status as string) || "";
-        if (isOwner && (st === "PENDING" || st === "PENDING_APPROVAL" || st === "WAITING_APPROVAL" || st === "WAITING")) return "WAITING_SUPERADMIN_APPROVAL";
+        if (isOwner && (st === "PENDING" || st === "PENDING_APPROVAL" || st === "WAITING_APPROVAL" || st === "WAITING" || Boolean(identity?.pendingBusiness))) {
+          return "WAITING_SUPERADMIN_APPROVAL";
+        }
         const state = identity?.orchestratorState;
         if (state === "SNAPSHOT_RESOLVED" || state === "READY") return "BUILDING_CONTEXT";
         if (state === "BUSINESS_RESOLVED") return "PROVISIONING_WORKSPACE";
@@ -197,32 +226,37 @@ export const OnboardingOrchestrator: React.FC = () => {
 
       return (
         <WaitingRoom 
-          email={identity?.email} 
+          email={identity?.email || user?.email} 
           status={getWaitingStatus()}
           isOwner={isOwner}
-          businessName={identity?.business?.name}
-          businessId={identity?.business?.id}
+          businessName={identity?.pendingBusiness?.businessName || identity?.business?.name}
+          businessId={identity?.pendingBusiness?.id || identity?.business?.id}
           onBack={handleBack} 
+          onEditMemberInfo={() => setSelectedPath("MEMBER")}
+        />
+      );
+    }
+
+    if (currentState === "MEMBER") {
+      return (
+        <MemberInfoForm
+          onSuccess={() => {
+            setSelectedPath(null);
+            refresh();
+          }}
+          onBack={handleBack}
         />
       );
     }
 
     if (currentState === "CREATE") {
       return (
-        <BusinessCreationWizard 
-          onBackToChoice={handleBack}
-          onStepChanged={(s) => setWizardStep(s)}
-        />
-      );
-    }
-
-    if (currentState === "JOIN") {
-      return (
-        <WaitingRoom 
-          email={identity?.email} 
-          status="WAITING_FOR_INVITATION"
-          isOwner={false}
-          onBack={handleBack} 
+        <BusinessInfoForm
+          onSuccess={() => {
+            setSelectedPath(null);
+            refresh();
+          }}
+          onBack={handleBack}
         />
       );
     }
@@ -232,8 +266,10 @@ export const OnboardingOrchestrator: React.FC = () => {
       <OnboardingChoice 
         onSelect={async (choice) => {
           if (choice === "CREATE") {
+            setSelectedPath("CREATE");
             await setRequestedRole("OWNER");
           } else {
+            setSelectedPath("MEMBER");
             await setRequestedRole("EMPLOYEE");
           }
         }} 
@@ -263,7 +299,7 @@ export const OnboardingOrchestrator: React.FC = () => {
         activeState={currentState}
         canGoBack={canGoBack}
         onBack={handleBack}
-        onSwitchPath={currentState === "CREATE" || currentState === "JOIN" ? handleSwitchPath : undefined}
+        onSwitchPath={currentState === "CREATE" || currentState === "MEMBER" ? handleSwitchPath : undefined}
         onReset={handleReset}
         onRetry={handleRetry}
         isOffline={isOffline}

@@ -134,6 +134,9 @@ export default function AppRouter() {
         <Route path="/invoice_template" element={<CrmRoute><DashboardShell initialTab="crm" initialSubTab="TEMPLATES" /></CrmRoute>} />
 
         {/* Platform Supervision & System SRE Modules (Super Admin Only) */}
+        <Route path="/admin/pending-businesses" element={<SuperAdminRoute><DashboardShell initialTab="platform" initialSubTab="PENDING" /></SuperAdminRoute>} />
+        <Route path="/admin/pending_businesses" element={<SuperAdminRoute><DashboardShell initialTab="platform" initialSubTab="PENDING" /></SuperAdminRoute>} />
+        <Route path="/platform/pending" element={<SuperAdminRoute><DashboardShell initialTab="platform" initialSubTab="PENDING" /></SuperAdminRoute>} />
         <Route path="/platform" element={<SuperAdminRoute><DashboardShell initialTab="platform" /></SuperAdminRoute>} />
         <Route path="/platform/*" element={<SuperAdminRoute><DashboardShell initialTab="platform" /></SuperAdminRoute>} />
         <Route path="/super-admin" element={<SuperAdminRoute><DashboardShell initialTab="platform" /></SuperAdminRoute>} />

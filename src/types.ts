@@ -68,7 +68,11 @@ export interface UserProfile {
   email: string;
   name: string;
   displayName?: string;
+  phoneNumber?: string;
+  phone?: string;
   role: Role;
+  requested_role?: "MEMBER" | "OWNER" | Role | string;
+  requestedRole?: "MEMBER" | "OWNER" | Role | string;
   businessId?: string;
   business_id?: string;
   branchId?: string;
@@ -76,8 +80,8 @@ export interface UserProfile {
   avatarUrl?: string;
   employeeId?: string;
   employee_id?: string;
-  accountStatus?: string;
-  account_status?: string;
+  accountStatus?: "NEW_USER" | "PENDING_MEMBER" | "PENDING_OWNER" | "ACTIVE" | "REJECTED" | string;
+  account_status?: "NEW_USER" | "PENDING_MEMBER" | "PENDING_OWNER" | "ACTIVE" | "REJECTED" | string;
   businessStatus?: string;
   business_status?: string;
   status?: string;
@@ -578,10 +582,36 @@ export interface Invitation {
   branch_name?: string;
   departmentId: string;
   department_name?: string;
-  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED" | "REJECTED" | "SENT";
   invitedAt: string;
+  invitedBy?: string;
   token?: string; // unique transaction token
   expiresAt?: string; // invitation expiration date
+  acceptedAt?: any;
+  rejectedAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface PendingBusiness {
+  id: string; // Document ID (ou requestId)
+  ownerUid: string; // Firebase Auth UID du demandeur
+  owner_uid?: string;
+  ownerEmail: string;
+  owner_email?: string;
+  ownerName?: string;
+  businessName: string;
+  taxId?: string; // Numéro fiscal (NIF / CIF)
+  industry?: string;
+  selectedPlan: "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE";
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  businessId?: string; // Renseigné lors de l'approbation
+  rejectionReason?: string; // Si rejeté
+  approvalNote?: string;
+  approvedBy?: string; // UID du Super Admin
+  approvedAt?: any;
+  createdAt: any;
+  updatedAt: any;
 }
 
 export interface EmployeeBadge {
