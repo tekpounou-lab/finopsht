@@ -120,6 +120,8 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "invoices",
         "invoice_template",
         "documents",
+        "forensic",
+        "audit",
         "aicfo",
         "bi",
         "settings",

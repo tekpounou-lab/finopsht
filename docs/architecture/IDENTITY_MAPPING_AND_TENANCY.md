@@ -218,3 +218,21 @@ service cloud.firestore {
   }
 }
 ```
+
+---
+
+## 5. Enterprise Status & Activation Lifecycle (`isBizActive`)
+
+### 5.1 Resolution Rules for `isBizActive`
+The enterprise workspace is determined active (`isBizActive = true`) if ANY of the following criteria are met:
+1. `identityStatus === "ACTIVE"`
+2. `business.status === "ACTIVE"` or `"APPROVED"`
+3. `onboardingStatus === "COMPLETED"`
+4. `role === "SUPER_ADMIN"`
+
+### 5.2 SuperAdmin Approval Workflow (`PENDING_OWNER` → `ACTIVE`)
+Upon SuperAdmin approval of a pending business request in `PendingBusinessRepository.approve()`:
+1. The `pending_businesses` document is marked as `"APPROVED"`.
+2. The founder's user profile (`/users/{uid}`) is updated with `accountStatus: "ACTIVE"`, `account_status: "ACTIVE"`, and assigned `business_id`.
+3. The provisioned business document (`/businesses/{businessId}`) and subscription (`/subscriptions/{businessId}`) are set to `status: "ACTIVE"`.
+4. `useAuth.flowState` transitions from `"BUSINESS_PENDING"` to `"OWNER_ACTIVE"`, granting immediate access to `/workspace` and full dashboard modules.

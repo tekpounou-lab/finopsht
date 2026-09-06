@@ -11,6 +11,9 @@ export default defineConfig(() => {
         'react',
         'react-dom',
         'react-router-dom',
+        '@dnd-kit/core',
+        '@dnd-kit/sortable',
+        '@dnd-kit/utilities',
         'xlsx',
         'html5-qrcode',
         'jspdf',
@@ -31,7 +34,7 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(process.cwd(), './src'),
       },
-      dedupe: ['react', 'react-dom'],
+      dedupe: ['react', 'react-dom', '@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
     },
     build: {
       chunkSizeWarningLimit: 1200,

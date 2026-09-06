@@ -30,6 +30,8 @@ import EmployeeDirectory from "./staff/EmployeeDirectory";
 import { CommissionEngine } from "../services/CommissionEngine";
 import { useCommandBus } from "../hooks/useCommandBus";
 import { ReferenceResolver } from "../services/ReferenceResolver";
+import { useBusinessContext } from "../contexts/BusinessContext";
+import { useAuth } from "../hooks/useAuth";
 
 interface ConnectedPersonnelProps {
   employees?: any[];
@@ -51,24 +53,37 @@ interface ConnectedPersonnelProps {
 }
 
 export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
-  employees = [],
-  branches = [],
-  departments = [],
-  currentRole = "ADMIN",
-  currentUser,
-  attendanceRecords = [],
+  employees: propsEmployees = [],
+  branches: propsBranches = [],
+  departments: propsDepartments = [],
+  currentRole: propsRole,
+  currentUser: propsUser,
+  attendanceRecords: propsAttendanceRecords = [],
   handleUpdateAttendance,
-  employeeBadges = [],
+  employeeBadges: propsEmployeeBadges = [],
   handleAddEvent,
   handleAddForensicLog,
-  currentBusiness,
-  ledgerTransactions = [],
-  employeeContracts = [],
+  currentBusiness: propsCurrentBusiness,
+  ledgerTransactions: propsLedgerTransactions = [],
+  employeeContracts: propsEmployeeContracts = [],
   language = "fr",
   setFocusedEmployeeIdForProfile = () => {},
   setActiveTab = () => {},
 }) => {
   const { dispatch } = useCommandBus();
+  const ctx = useBusinessContext();
+  const { user: authUser, role: authRole } = useAuth();
+
+  const employees = (propsEmployees && propsEmployees.length > 0) ? propsEmployees : ctx.employees || [];
+  const branches = (propsBranches && propsBranches.length > 0) ? propsBranches : ctx.branches || [];
+  const departments = (propsDepartments && propsDepartments.length > 0) ? propsDepartments : ctx.departments || [];
+  const currentBusiness = propsCurrentBusiness || ctx.business;
+  const currentRole = propsRole || (authRole as any) || "ADMIN";
+  const currentUser = propsUser || { name: authUser?.displayName || "Admin", email: authUser?.email || "", id: authUser?.uid || "usr_1" };
+  const attendanceRecords = (propsAttendanceRecords && propsAttendanceRecords.length > 0) ? propsAttendanceRecords : ctx.attendanceRecords || [];
+  const ledgerTransactions = (propsLedgerTransactions && propsLedgerTransactions.length > 0) ? propsLedgerTransactions : ctx.ledgerTransactions || [];
+  const employeeContracts = (propsEmployeeContracts && propsEmployeeContracts.length > 0) ? propsEmployeeContracts : ctx.employeeContracts || [];
+  const employeeBadges = (propsEmployeeBadges && propsEmployeeBadges.length > 0) ? propsEmployeeBadges : ctx.employeeBadges || [];
 
   // Selected employee for inline profile view in personnel grid
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(() => {

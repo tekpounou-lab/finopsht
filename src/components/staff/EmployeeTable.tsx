@@ -49,6 +49,7 @@ interface EmployeeTableProps {
   onToggleSelectAll: () => void;
   isLoading?: boolean;
   currentRole?: Role;
+  attendanceRecords?: any[];
 }
 
 const tableDict = {
@@ -171,7 +172,8 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({
   onToggleSelect,
   onToggleSelectAll,
   isLoading,
-  currentRole
+  currentRole,
+  attendanceRecords
 }) => {
   const { language } = useI18n();
   const d = tableDict[(language === "ht" || language === "en") ? language : "fr"];
@@ -252,21 +254,38 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({
         </thead>
         <tbody className="divide-y divide-slate-800/60">
           {employees.map((emp, index) => {
-            // Deterministic pseudo-random seed based on employee ID
-            let seed = 0;
-            for (let i = 0; i < emp.id.length; i++) {
-              seed += emp.id.charCodeAt(i);
-            }
-            
-            const random = () => {
-              const x = Math.sin(seed++) * 10000;
-              return x - Math.floor(x);
-            };
+            // Real attendance sparkline data calculated from attendanceRecords (SSOT)
+            const empAttendanceRecords = (attendanceRecords || []).filter(
+              r => r.employeeId === emp.id || r.employee_id === emp.id
+            );
 
-            // Mock data for attendance sparkline
-            const mockSparklineData = Array.from({ length: 7 }).map(() => ({
-              value: Math.floor(random() * 40) + 60
-            }));
+            // Calculate 7-day attendance series
+            const last7DaysData = Array.from({ length: 7 }).map((_, idx) => {
+              const dayOffset = 6 - idx;
+              const dateObj = new Date();
+              dateObj.setDate(dateObj.getDate() - dayOffset);
+              const dateStr = dateObj.toISOString().split("T")[0];
+
+              const recordForDay = empAttendanceRecords.find(
+                r => r.date === dateStr || (r.checkIn && r.checkIn.startsWith(dateStr))
+              );
+
+              let val = 100;
+              if (recordForDay) {
+                if (recordForDay.status === "ABSENT") val = 0;
+                else if (recordForDay.status === "LATE") val = 75;
+                else val = 100;
+              } else if (emp.isActive === false || emp.status === "SUSPENDED") {
+                val = 0;
+              } else if (emp.status === "ON_LEAVE") {
+                val = 80;
+              }
+
+              return { day: dateStr, value: val };
+            });
+
+            const totalScore = last7DaysData.reduce((acc, d) => acc + d.value, 0);
+            const attendancePct = Math.round(totalScore / 7);
 
             const empDisplayName = (emp.name || (emp as any).displayName || (emp as any).display_name || (emp as any).employee_name || (emp.role === 'OWNER' ? 'Propriétaire' : 'Collaborateur')).trim();
             const empInitials = empDisplayName.substring(0, 2).toUpperCase() || "EP";
@@ -351,13 +370,15 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({
                 <div className="flex flex-col items-center gap-1 w-24 mx-auto">
                   <div className="h-6 w-full">
                     <SafeChartContainer height="100%" minHeight={24}>
-                      <LineChart data={mockSparklineData}>
-                        <YAxis domain={['dataMin - 10', 'dataMax + 10']} hide />
-                        <Line type="monotone" dataKey="value" stroke="#10b981" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                      <LineChart data={last7DaysData}>
+                        <YAxis domain={[0, 100]} hide />
+                        <Line type="monotone" dataKey="value" stroke={attendancePct >= 90 ? "#10b981" : attendancePct >= 70 ? "#f59e0b" : "#f43f5e"} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                       </LineChart>
                     </SafeChartContainer>
                   </div>
-                  <span className="text-[9px] font-mono text-emerald-400">95% (7j)</span>
+                  <span className={`text-[9px] font-mono ${attendancePct >= 90 ? "text-emerald-400" : attendancePct >= 70 ? "text-amber-400" : "text-rose-400"}`}>
+                    {attendancePct}% (7j)
+                  </span>
                 </div>
               </td>
               <td className="py-2 px-3 text-center">

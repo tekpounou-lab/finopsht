@@ -10,10 +10,11 @@ import {
   onSnapshot, 
   serverTimestamp 
 } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../lib/firebase";
+import { db, auth, handleFirestoreError, OperationType } from "../lib/firebase";
 import { PendingBusiness } from "../types";
 import { ForensicLogRepository } from "./ForensicLogRepository";
 import { WorkspaceProvisioningService } from "../services/business/WorkspaceProvisioningService";
+import { NotificationEngine } from "../modules/workflow/NotificationEngine";
 
 export const PendingBusinessRepository = {
   /**
@@ -68,6 +69,17 @@ export const PendingBusinessRepository = {
         console.warn("[PendingBusinessRepository] Forensic log non-fatal error:", err)
       );
 
+      // Notify Super Admins of new pending business application
+      await NotificationEngine.send({
+        businessId: "PLATFORM_ROOT",
+        targetRoles: ["SUPER_ADMIN"],
+        type: "CRITICAL",
+        severity: "HIGH",
+        title: "Nouvelle Demande d'Entreprise En Attente",
+        message: `L'entreprise "${data.businessName}" (${data.ownerEmail}) a soumis une demande d'inscription.`,
+        module: "TENANT_PROVISIONING"
+      }).catch(err => console.warn("[PendingBusinessRepository] Notification creation warning:", err));
+
       return {
         ...newRecord,
         createdAt: new Date().toISOString(),
@@ -82,6 +94,7 @@ export const PendingBusinessRepository = {
    * Retrieves a pending business by its unique document ID.
    */
   async getById(id: string): Promise<PendingBusiness | null> {
+    if (!id || !auth.currentUser) return null;
     try {
       const docRef = doc(db, "pending_businesses", id);
       const snap = await getDoc(docRef);
@@ -96,6 +109,7 @@ export const PendingBusinessRepository = {
    * Retrieves a pending business by the owner's Firebase UID.
    */
   async getByOwnerUid(ownerUid: string): Promise<PendingBusiness | null> {
+    if (!ownerUid || !auth.currentUser) return null;
     try {
       // First check direct ID convention
       const directRef = doc(db, "pending_businesses", `pbiz_${ownerUid}`);
@@ -126,7 +140,8 @@ export const PendingBusinessRepository = {
 
       return null;
     } catch (error) {
-      throw handleFirestoreError(error, OperationType.LIST, "pending_businesses");
+      console.warn(`[PendingBusinessRepository] Non-fatal lookup error for owner ${ownerUid}:`, error);
+      return null;
     }
   },
 
@@ -137,6 +152,10 @@ export const PendingBusinessRepository = {
     ownerUid: string, 
     onUpdate: (data: PendingBusiness | null) => void
   ): () => void {
+    if (!ownerUid || !auth.currentUser) {
+      onUpdate(null);
+      return () => {};
+    }
     const directRef = doc(db, "pending_businesses", `pbiz_${ownerUid}`);
     
     return onSnapshot(
@@ -170,6 +189,7 @@ export const PendingBusinessRepository = {
    * Retrieves all pending businesses with status "PENDING" for Super Admin review.
    */
   async getAllPending(): Promise<PendingBusiness[]> {
+    if (!auth.currentUser) return [];
     try {
       const q = query(
         collection(db, "pending_businesses"), 
@@ -186,6 +206,10 @@ export const PendingBusinessRepository = {
    * Listens in real-time to all pending business applications (for Super Admin dashboard).
    */
   listenAllPending(onUpdate: (data: PendingBusiness[]) => void): () => void {
+    if (!auth.currentUser) {
+      onUpdate([]);
+      return () => {};
+    }
     console.debug("[PendingBusinessRepository] Starting listenAllPending query on collection 'pending_businesses' with filter status == 'PENDING'");
     const q = query(
       collection(db, "pending_businesses"), 
@@ -251,17 +275,30 @@ export const PendingBusinessRepository = {
         updatedAt: serverTimestamp()
       });
 
-      // Update owner's userProfile doc to ACTIVE with assigned business_id
+      // Update owner's userProfile doc & business doc to ACTIVE
       try {
         const userDocRef = doc(db, "users", beforeData.ownerUid);
         await updateDoc(userDocRef, {
           accountStatus: "ACTIVE",
+          account_status: "ACTIVE",
           business_id: finalBusinessId,
           role: "OWNER",
           updatedAt: serverTimestamp()
         });
+
+        const bizDocRef = doc(db, "businesses", finalBusinessId);
+        await updateDoc(bizDocRef, {
+          status: "ACTIVE",
+          updatedAt: serverTimestamp()
+        }).catch(() => {});
+
+        const subDocRef = doc(db, "subscriptions", finalBusinessId);
+        await updateDoc(subDocRef, {
+          status: "ACTIVE",
+          updatedAt: serverTimestamp()
+        }).catch(() => {});
       } catch (err) {
-        console.warn("[PendingBusinessRepository] User profile status update warning:", err);
+        console.warn("[PendingBusinessRepository] User profile/business status update warning:", err);
       }
 
       // Forensic Log
@@ -282,6 +319,20 @@ export const PendingBusinessRepository = {
       await ForensicLogRepository.writeForensicLog(log).catch(err =>
         console.warn("[PendingBusinessRepository] Forensic log write failed:", err)
       );
+
+      // Notify Owner of approval
+      if (beforeData?.ownerUid) {
+        await NotificationEngine.send({
+          businessId: finalBusinessId,
+          userId: beforeData.ownerUid,
+          targetRoles: ["OWNER"],
+          type: "INFO",
+          severity: "MEDIUM",
+          title: "Entreprise Approuvée",
+          message: `Félicitations! Votre espace d'entreprise "${beforeData.businessName}" a été validé et activé.`,
+          module: "TENANT_PROVISIONING"
+        }).catch(err => console.warn("[PendingBusinessRepository] Approval notification warning:", err));
+      }
 
       return { businessId: finalBusinessId };
     } catch (error) {
@@ -339,6 +390,20 @@ export const PendingBusinessRepository = {
       await ForensicLogRepository.writeForensicLog(log).catch(err =>
         console.warn("[PendingBusinessRepository] Forensic log write failed:", err)
       );
+
+      // Notify Owner of rejection
+      if (beforeData?.ownerUid) {
+        await NotificationEngine.send({
+          businessId: beforeData.businessId || "PLATFORM_ROOT",
+          userId: beforeData.ownerUid,
+          targetRoles: ["OWNER"],
+          type: "CRITICAL",
+          severity: "HIGH",
+          title: "Demande d'Entreprise Refusée",
+          message: `Votre demande d'inscription pour "${beforeData.businessName}" a été refusée. Raison: ${reason}`,
+          module: "TENANT_PROVISIONING"
+        }).catch(err => console.warn("[PendingBusinessRepository] Rejection notification warning:", err));
+      }
     } catch (error) {
       throw handleFirestoreError(error, OperationType.WRITE, `pending_businesses/${id}`);
     }

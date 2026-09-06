@@ -223,6 +223,8 @@ service cloud.firestore {
     match /pending_businesses/{id} {
       allow get: if isAuthenticated() && (
         isSuperAdmin() || 
+        resource == null ||
+        id == ('pbiz_' + request.auth.uid) ||
         resource.data.get('ownerUid', '') == request.auth.uid ||
         resource.data.get('owner_uid', '') == request.auth.uid
       );
@@ -839,7 +841,8 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (
         isSuperAdmin() ||
         isBusinessOwner(getBusinessId(request.resource.data)) ||
-        getUserRole() in ['ADMIN', 'OWNER', 'MANAGER']
+        getUserRole() in ['ADMIN', 'OWNER', 'MANAGER'] ||
+        (getBusinessId(request.resource.data) == getUserBusinessId() && getBusinessId(request.resource.data) != '')
       );
 
       allow update: if isAuthenticated() && (

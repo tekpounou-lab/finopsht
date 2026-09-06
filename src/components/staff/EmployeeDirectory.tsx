@@ -1048,6 +1048,7 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             employees={paginatedEmployees}
             branches={branches}
             departments={departments}
+            attendanceRecords={attendanceRecords}
             sortField={sortField}
             sortDirection={sortDirection}
             onSort={toggleSort}

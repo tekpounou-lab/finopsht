@@ -23,7 +23,9 @@ export function lazyWithRetry<T extends ComponentType<any>>(
           const pascalCaseMatch = candidates.find(([key]) => /^[A-Z]/.test(key));
           component = pascalCaseMatch ? pascalCaseMatch[1] : (candidates[0] ? candidates[0][1] : module);
         }
-        return { default: component as T };
+        if (component) {
+          return { default: component as T };
+        }
       } catch (error) {
         lastError = error;
         console.warn(`[lazyWithRetry] Dynamic import failed (attempt ${i + 1}/${maxRetries + 1}):`, error);
@@ -41,6 +43,7 @@ export function lazyWithRetry<T extends ComponentType<any>>(
       sessionStorage.setItem(storageKey, now.toString());
       console.warn("[lazyWithRetry] All retries exhausted, reloading page to fetch fresh bundle...");
       window.location.reload();
+      return new Promise(() => {});
     }
 
     throw lastError;

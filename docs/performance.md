@@ -20,3 +20,11 @@ FINOPS ERP maintains desktop-class UI performance (> 60 FPS) and low latency eve
 - **Firestore Query Bounds**: Queries enforce `.limit(N)` clauses on real-time collection listeners to bound memory usage.
 - **Snapshot Compression**: Snapshot engines collapse thousands of granular ledger lines into a single compressed `BusinessSnapshot` document.
 - **Image Optimization**: Avatars and badges use scaled WebP or optimized vector assets.
+
+---
+
+## 3. SynchronizationEngine & Listener Rate-Limiting
+
+- **Conditional Listener Startup (`isBizActive`)**: Real-time Firestore subscriptions via `SynchronizationEngine.startSync(business_id)` are executed ONLY when `isBizActive` resolves to `true` (`identityStatus === "ACTIVE"`, `business.status === "ACTIVE" | "APPROVED"`, `onboardingStatus === "COMPLETED"`, or `role === "SUPER_ADMIN"`).
+- **Subscription Rate-Limiter**: High-volume Firestore streams (`branches`, `departments`, `employees`, `ledger_transactions`, `payroll_records`, `attendance_logs`) are governed by a token-bucket `RateLimiter` and capped listener budget (`MAX_ACTIVE_LISTENERS = 60`) to prevent stream saturation and rate-limit warnings.
+- **Resilient Fallback Render**: Smart wrappers (`ConnectedFinanceLedger`, `ConnectedBusinessIntelligence`, `PayrollEngine`) utilize fallback contexts from `useBusinessContext()` and local draft states to ensure sub-second UI rendering with Skeletons/Spinners without blocking component layouts during initial sync setup.

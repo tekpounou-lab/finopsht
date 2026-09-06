@@ -141,7 +141,7 @@ Environmental variables required for execution are documented in `.env.example`.
 
 ```env
 # Non-Sensitive Configuration Keys
-VITE_FIREBASE_API_KEY=AIzaSyA...
+VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY_HERE
 VITE_FIREBASE_AUTH_DOMAIN=finops-erp-prod.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=finops-erp-production
 VITE_FIREBASE_STORAGE_BUCKET=finops-erp-prod.appspot.com

@@ -754,6 +754,28 @@
         "status": { "type": "string" }
       },
       "required": ["id", "businessId", "bankAccountCode", "statementStartDate", "statementEndDate", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time in-app operational, HR, financial, and security alert document.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "targetRoles": { "type": "array", "items": { "type": "string" } },
+        "targetUserId": { "type": "string" },
+        "type": { "type": "string", "enum": ["CRITICAL", "FINANCE", "ATTENDANCE", "HR", "SECURITY", "SYSTEM", "PAYROLL", "INFO", "ALERT"] },
+        "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL", "INFO", "WARNING", "ERROR"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" },
+        "readAt": { "type": "string" },
+        "sourceId": { "type": "string" },
+        "actionUrl": { "type": "string" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["id", "businessId", "type", "severity", "title", "message", "createdAt", "read"]
     }
   },
   "firestore": {
@@ -948,6 +970,10 @@
     "/pending_businesses/{id}": {
       "schema": "PendingBusiness",
       "description": "Founder applications for organization registration awaiting Super Admin validation."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Real-time in-app operational, HR, financial, and security notifications."
     }
   }
 }

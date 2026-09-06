@@ -23,9 +23,25 @@ export function usePayrollRuns({
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   const tenantCycles = useMemo(() => {
-    return (payrollCycles || [])
-      .filter((c) => c.business_id === current_business_id)
+    const list = (payrollCycles || [])
+      .filter((c) => c.business_id === current_business_id || (c as any).businessId === current_business_id || !c.business_id)
       .sort((a, b) => new Date(b.startDate || 0).getTime() - new Date(a.startDate || 0).getTime());
+
+    if (list.length > 0) return list;
+
+    // Fallback default cycle for immediate operation if no cycle exists yet
+    const now = new Date();
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
+    const year = now.getFullYear();
+    const defaultCycle: PayrollCycle = {
+      id: `cyc_auto_${year}_${month}`,
+      business_id: current_business_id,
+      cycleName: `Paie ${month}/${year} - Quinzaine 1`,
+      startDate: `${year}-${month}-01`,
+      endDate: `${year}-${month}-15`,
+      status: "DRAFT"
+    };
+    return [defaultCycle];
   }, [payrollCycles, current_business_id]);
 
   const activeCycle = useMemo(() => {

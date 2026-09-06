@@ -62,3 +62,13 @@ Imports should be ordered cleanly as follows:
 - **Mock Service Logging**: Simulated services (`MockServiceManager`, `KioskSimulator`, `QRAttendanceSimulator`) must route logs via `MockServiceManager.getLogger(service)` using `console.debug`. They are silenced by default and enabled only in development when `VITE_ENABLE_MOCK_LOGS=true`.
 - **Database Transport Logging**: Resilient Firestore operations (`resilientGetDoc`, `resilientGetDocs`) output debug traces only when `VITE_DEBUG_FIRESTORE=true`.
 - **Structured Error Logging**: All system anomalies must be captured via `FinopsException` and contextual forensic records rather than raw unstructured strings.
+
+---
+
+## 7. Connected Component Self-Containment & Fallback Pattern
+
+Connected page wrappers (`ConnectedOrganizationStructure`, `ConnectedPersonnel`, `ConnectedForensicLogs`, `ConnectedBusinessIntelligence`, `ConnectedFinanceLedger`) must enforce **autonomous state resolution**:
+- **Zero-Prop Invocability**: Connected wrappers must be callable without props (e.g. `<ConnectedOrganizationStructure />` inside `DashboardShell.tsx`).
+- **Context Fallbacks**: Missing props (`currentRole`, `currentUser`, `branches`, `departments`, `employees`, `business`) must automatically fallback to `useBusinessContext()` and `useAuth()`.
+- **Callback Fallbacks**: Required callback props (`onAddBranch`, `onSendInvite`, etc.) must default to noop functions (`() => {}`) or dispatch via `useCommandBus()` to prevent `TypeError: props.func is not a function` runtime crashes.
+- **Safe Array Scoping**: All `.filter()`, `.map()`, and `.reduce()` operations on domain collections must wrap targets in safe array guards (`(items || []).filter(...)`).

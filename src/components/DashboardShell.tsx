@@ -7,13 +7,14 @@ import {
   Sidebar, 
   TopBar, 
   QuickActionMenu, 
-  NotificationCenter, 
   UserDropdown, 
   useNavigation, 
   useQuickActions 
 } from "./dashboard";
+import { useNotifications } from "../hooks/useNotifications";
 import { normalizeTab } from "./dashboard/hooks/useNavigation";
 import { Role, Business } from "../types";
+import EnterpriseErrorBoundary from "./ui/ErrorBoundary";
 
 // Subcomponents - Lazy loaded for performance & code splitting
 const AttendanceLedger = lazyWithRetry(() => import("../pages/AttendanceLedger"));
@@ -27,13 +28,15 @@ const SystemHealthConsole = lazyWithRetry(() => import("../pages/SystemHealthCon
 const DisasterRecovery = lazyWithRetry(() => import("./DisasterRecovery"));
 const EnterpriseSetupWizard = lazyWithRetry(() => import("./onboarding/EnterpriseSetupWizard"));
 const MyWorkspace = lazyWithRetry(() => import("../pages/employee/MyWorkspace"));
-const ConnectedOrganizationStructure = lazyWithRetry(() => import("./ConnectedOrganizationStructure").then(m => ({ default: m.ConnectedOrganizationStructure || m.default })));
-const ConnectedFinanceLedger = lazyWithRetry(() => import("./ConnectedFinanceLedger").then(m => ({ default: m.ConnectedFinanceLedger || m.default })));
-const ConnectedForensicLogs = lazyWithRetry(() => import("./ConnectedForensicLogs").then(m => ({ default: m.ConnectedForensicLogs || m.default })));
-const ConnectedPersonnel = lazyWithRetry(() => import("./ConnectedPersonnel").then(m => ({ default: m.ConnectedPersonnel || m.default })));
-const PerformanceIntelligenceCenter = lazyWithRetry(() => import("../pages/PerformanceIntelligenceCenter").then(m => ({ default: m.PerformanceIntelligenceCenter || m.default })));
-const ConnectedBusinessIntelligence = lazyWithRetry(() => import("./ConnectedBusinessIntelligence").then(m => ({ default: m.ConnectedBusinessIntelligence || m.default })));
-const SuperAdminPlatform = lazyWithRetry(() => import("../pages/SuperAdminPlatform").then(m => ({ default: m.SuperAdminPlatform || m.default })));
+const ConnectedOrganizationStructure = lazyWithRetry(() => import("./ConnectedOrganizationStructure"));
+const ConnectedFinanceLedger = lazyWithRetry(() => import("./ConnectedFinanceLedger"));
+const ConnectedForensicLogs = lazyWithRetry(() => import("./ConnectedForensicLogs"));
+const ConnectedPersonnel = lazyWithRetry(() => import("./ConnectedPersonnel"));
+const ConnectedSchedules = lazyWithRetry(() => import("./ConnectedSchedules"));
+const PerformanceIntelligenceCenter = lazyWithRetry(() => import("../pages/PerformanceIntelligenceCenter"));
+const ConnectedBusinessIntelligence = lazyWithRetry(() => import("./ConnectedBusinessIntelligence"));
+const SuperAdminPlatform = lazyWithRetry(() => import("../pages/SuperAdminPlatform"));
+const NotificationsCenter = lazyWithRetry(() => import("./NotificationsCenter"));
 
 export interface DashboardShellProps {
   initialTab?: string;
@@ -51,6 +54,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
     employees = [],
     ledgerTransactions = [],
     payrollRecords = [],
+    payrollCycles = [],
     attendanceRecords = [],
     forensicLogs = [],
     leaves = [],
@@ -74,6 +78,11 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
+  // Real-time Notifications Hook
+  const { unreadCount: realTimeUnreadCount } = useNotifications(
+    liveBusiness?.id
+  );
+
   // Pending leaves count for badge
   const pendingLeavesCount = useMemo(() => {
     return (leaves || []).filter((l: any) => l.status === "PENDING").length;
@@ -90,7 +99,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
         badgeCounts={{
           leaves: pendingLeavesCount,
-          notifications: events?.length || 0,
+          notifications: realTimeUnreadCount,
         }}
       />
 
@@ -104,7 +113,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
           onOpenMobileMenu={() => setIsMobileSidebarOpen((prev) => !prev)}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           onOpenNotifications={() => setIsNotificationsOpen(true)}
-          notificationCount={events?.length || 0}
+          notificationCount={realTimeUnreadCount}
           currentRole={currentRole}
           userSlot={
             <UserDropdown
@@ -117,16 +126,17 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
         {/* 3. Main Workspace Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-slate-950" id="finops-workspace-content">
-          <Suspense
-            fallback={
-              <div className="flex items-center justify-center min-h-[400px] text-xs text-slate-500 font-medium">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                  <span>Chargement du module ERP...</span>
+          <EnterpriseErrorBoundary key={normalizedActiveTab} sectionName="WORKSPACE_TAB">
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center min-h-[400px] text-xs text-slate-500 font-medium">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    <span>Chargement du module ERP...</span>
+                  </div>
                 </div>
-              </div>
-            }
-          >
+              }
+            >
             {(normalizedActiveTab === "platform" || normalizedActiveTab === "tenants" || normalizedActiveTab === "superadmin") && (
               <SuperAdminPlatform initialTab={initialSubTab === "PENDING" ? "pending" : "tenants"} />
             )}
@@ -180,7 +190,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 current_business_id={liveBusiness?.id || "BIZ_MAIN"}
                 employees={employees}
                 ledgerTransactions={ledgerTransactions}
-                payrollCycles={[]}
+                payrollCycles={payrollCycles}
                 payrollRecords={payrollRecords}
                 attendanceRecords={attendanceRecords}
                 onLockCycle={() => {}}
@@ -199,21 +209,30 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
             {normalizedActiveTab === "attendance" && (
               <AttendanceLedger
+                currentRole={currentRole}
+                currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
                 current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                currentBranchId={liveBranches[0]?.id || null}
+                isOffline={false}
                 employees={employees}
                 attendanceRecords={attendanceRecords}
                 branches={liveBranches}
                 departments={liveDepartments}
+                onAddEvent={() => {}}
+                onAddForensicLog={() => {}}
+                onUpdateAttendance={() => {}}
               />
             )}
 
             {normalizedActiveTab === "planning" && (
-              <AttendanceLedger
+              <ConnectedSchedules
+                currentRole={currentRole}
+                currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" } as any}
                 current_business_id={liveBusiness?.id || "BIZ_MAIN"}
-                employees={employees}
-                attendanceRecords={attendanceRecords}
                 branches={liveBranches}
                 departments={liveDepartments}
+                onAddEvent={() => {}}
+                onAddForensicLog={() => {}}
               />
             )}
 
@@ -282,6 +301,17 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <ConnectedForensicLogs />
             )}
 
+            {normalizedActiveTab === "notifications" && (
+              <NotificationsCenter
+                currentRole={currentRole}
+                currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
+                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                events={events}
+                readIds={[]}
+                setReadIds={() => {}}
+              />
+            )}
+
             {normalizedActiveTab === "settings" && (
               <BusinessAdministrationCenter
                 currentRole={currentRole}
@@ -324,7 +354,8 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <EnterpriseSetupWizard />
             )}
           </Suspense>
-        </main>
+        </EnterpriseErrorBoundary>
+      </main>
       </div>
 
       {/* 4. Quick Action Command Palette (⌘K) */}
@@ -337,17 +368,36 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
         onExecute={executeAction}
       />
 
-      {/* 5. Notification Center Drawer */}
-      <NotificationCenter
-        isOpen={isNotificationsOpen}
-        onClose={() => setIsNotificationsOpen(false)}
-        notifications={(events || []).map((e: any) => ({
-          id: e.id,
-          title: e.type || "Notification Système",
-          message: e.payload?.message || "Événement ERP enregistré",
-          timestamp: e.timestamp,
-        }))}
-      />
+      {/* 5. Notification Center Slide-Over Drawer */}
+      {isNotificationsOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200">
+          <div className="w-full max-w-lg h-full bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col relative z-10 overflow-hidden">
+            <div className="flex items-center justify-between p-4 bg-slate-950/80 border-b border-slate-800">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Centre de Notifications</span>
+              <button
+                type="button"
+                onClick={() => setIsNotificationsOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500">Chargement des notifications...</div>}>
+                <NotificationsCenter
+                  currentRole={currentRole}
+                  currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
+                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  events={events}
+                  readIds={[]}
+                  setReadIds={() => {}}
+                />
+              </Suspense>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

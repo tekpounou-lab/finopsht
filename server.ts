@@ -92,8 +92,8 @@ function getCleanErrorMessage(error: any): string {
 // Exponential backoff retry helper specifically designed to handle rate-limiting (429 / Quota Exhaustion) & 503 Service Unavailable / High Demand
 async function executeWithBackoff<T>(
   fn: (modelName?: string) => Promise<T>,
-  retries = 3,
-  delay = 1200,
+  retries = 2,
+  delay = 800,
   fallbackModels: string[] = []
 ): Promise<T> {
   const currentModel = fallbackModels[0];
@@ -127,10 +127,10 @@ async function executeWithBackoff<T>(
       errorMsg.includes("billing");
 
     if (isTransientError && !isSpendCap && retries > 0) {
-      console.warn(`[Gemini API Transient Retry] ${error.message || 'High demand / 503 / Rate limit'}. Retrying in ${delay}ms... (Remaining retries: ${retries})`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
       const nextFallbackModels = fallbackModels.length > 1 ? fallbackModels.slice(1) : fallbackModels;
-      return executeWithBackoff(fn, retries - 1, delay * 2, nextFallbackModels);
+      console.info(`[Gemini API] Retrying request with model '${nextFallbackModels[0] || 'gemini-2.5-flash'}'... (${retries} retries left)`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return executeWithBackoff(fn, retries - 1, Math.round(delay * 1.5), nextFallbackModels);
     }
     throw error;
   }
@@ -298,7 +298,7 @@ async function startServer() {
   });
 
   // Server-Side Request Sanitization & Rate Limiting Middleware
-  app.use("/api/*", (req, res, next) => {
+  app.use("/api", (req, res, next) => {
     const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
     
     // Check rate limit (120 reqs/min)
@@ -326,7 +326,7 @@ async function startServer() {
   });
 
   // Anti-CSRF Protection Middleware for State-Changing Requests
-  app.use("/api/*", (req, res, next) => {
+  app.use("/api", (req, res, next) => {
     const method = req.method.toUpperCase();
     const isStateChanging = method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
 
@@ -775,7 +775,7 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
           const response = await executeWithBackoff(
             (modelOverride) =>
               ai!.models.generateContent({
-                model: modelOverride || "gemini-3.7-flash",
+                model: modelOverride || "gemini-2.5-flash",
                 contents: attemptPrompt,
                 config: {
                   responseMimeType: "application/json",
@@ -783,9 +783,9 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
                   temperature: 0.2,
                 },
               }),
-            3,
-            1200,
-            ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+            2,
+            800,
+            ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
           );
 
           let responseText = response.text?.trim() || "{}";
@@ -866,9 +866,21 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
         } catch (error: any) {
           lastError = error;
           const errMsg = String(error.message || error).toLowerCase();
-          const isSpendCap = errMsg.includes("spending cap") || errMsg.includes("spend cap") || errMsg.includes("billing");
-          if (isSpendCap) {
-            console.warn(`[AI CFO Analysis] Monthly spending cap exceeded. Breaking loop to trigger heuristic fallback immediately.`);
+          const isSpendCapOr503 = 
+            errMsg.includes("spending cap") || 
+            errMsg.includes("spend cap") || 
+            errMsg.includes("billing") || 
+            errMsg.includes("quota") || 
+            errMsg.includes("exceeded") || 
+            errMsg.includes("resource_exhausted") || 
+            errMsg.includes("429") ||
+            errMsg.includes("503") ||
+            errMsg.includes("unavailable") ||
+            errMsg.includes("high demand") ||
+            errMsg.includes("overloaded");
+
+          if (isSpendCapOr503) {
+            console.warn(`[AI CFO Analysis] API Model 503/Quota/429/Demand limit reached. Breaking loop to trigger FinancialRatioEngine fallback immediately.`);
             break;
           }
           console.warn(`[AI CFO Analysis Attempt ${attempts} Failed]: ${error.message}`);
@@ -906,7 +918,8 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
 
     } catch (error: any) {
       const cleanMessage = getCleanErrorMessage(error);
-      const isSpendCap = cleanMessage.includes("spending cap") || cleanMessage.includes("spend cap") || cleanMessage.includes("RESOURCE_EXHAUSTED") || cleanMessage.includes("429");
+      const lowerClean = cleanMessage.toLowerCase();
+      const isSpendCap = lowerClean.includes("spending cap") || lowerClean.includes("spend cap") || lowerClean.includes("resource_exhausted") || lowerClean.includes("429") || lowerClean.includes("quota") || lowerClean.includes("exceeded") || lowerClean.includes("rate-limits");
       if (isSpendCap) {
         console.info("[AI CFO Service] API quota / monthly spending cap reached. Activating local deterministic FinancialRatioEngine fallback.");
       } else {
@@ -1017,7 +1030,7 @@ Schema:
       const response = await executeWithBackoff(
         (modelOverride) =>
           ai!.models.generateContent({
-            model: modelOverride || "gemini-3.7-flash",
+            model: modelOverride || "gemini-2.5-flash",
             contents: prompt,
             config: {
               responseMimeType: "application/json",
@@ -1034,9 +1047,9 @@ Schema:
               }
             }
           }),
-        3,
-        1200,
-        ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+        2,
+        800,
+        ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
       );
 
       const responseText = response.text?.trim() || "{}";
@@ -1049,7 +1062,8 @@ Schema:
       }
     } catch (error: any) {
       const cleanMessage = getCleanErrorMessage(error);
-      const isSpendCap = cleanMessage.includes("spending cap") || cleanMessage.includes("spend cap") || cleanMessage.includes("RESOURCE_EXHAUSTED") || cleanMessage.includes("429");
+      const lowerClean = cleanMessage.toLowerCase();
+      const isSpendCap = lowerClean.includes("spending cap") || lowerClean.includes("spend cap") || lowerClean.includes("resource_exhausted") || lowerClean.includes("429") || lowerClean.includes("quota") || lowerClean.includes("exceeded") || lowerClean.includes("rate-limits");
       if (isSpendCap) {
         console.info("[CFO Narrative Endpoint] Monthly AI quota or spending cap reached. Activating local heuristic fallback narrative.");
       } else {
@@ -1067,8 +1081,22 @@ Schema:
   });
 
   // Catch-all for API endpoints to ensure JSON response instead of HTML SPA fallback
-  app.use("/api/*", (req, res) => {
-    res.status(404).json({ error: `Endpoint ${req.originalUrl} not found` });
+  app.use("/api", (req, res) => {
+    res.status(404).json({ error: `Endpoint ${req.method} ${req.originalUrl} not found`, success: false });
+  });
+
+  // Global Express JSON Error Handler to guarantee JSON responses for all /api requests
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error(`[API Error Handler] ${req.method} ${req.originalUrl}:`, err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    const statusCode = err.status || err.statusCode || 500;
+    const cleanMsg = getCleanErrorMessage(err);
+    res.status(statusCode).json({
+      error: cleanMsg || "Internal Server Error",
+      success: false
+    });
   });
 
   // Serve static files and integrate Vite middlewares

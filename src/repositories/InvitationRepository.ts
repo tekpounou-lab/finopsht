@@ -13,6 +13,7 @@ import {
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { Invitation, Employee } from "../types";
 import { ForensicLogRepository } from "./ForensicLogRepository";
+import { NotificationEngine } from "../modules/workflow/NotificationEngine";
 
 export const InvitationRepository = {
   /**
@@ -202,6 +203,18 @@ export const InvitationRepository = {
       await ForensicLogRepository.writeForensicLog(log).catch(err =>
         console.warn("[InvitationRepository] Forensic log write warning:", err)
       );
+
+      if (targetBizId) {
+        await NotificationEngine.send({
+          businessId: targetBizId,
+          targetRoles: ["OWNER", "MANAGER"],
+          type: "HR",
+          severity: "INFO",
+          title: "Invitation Acceptée",
+          message: `${activeEmail} (${activeName}) a accepté l'invitation et rejoint l'entreprise.`,
+          module: "INVITATION"
+        }).catch(err => console.warn("[InvitationRepository] Notification send error:", err));
+      }
     } catch (error) {
       throw handleFirestoreError(error, OperationType.WRITE, `invitations/${invitationId}`);
     }

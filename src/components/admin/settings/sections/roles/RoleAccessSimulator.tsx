@@ -63,7 +63,10 @@ export const RoleAccessSimulator: React.FC<RoleAccessSimulatorProps> = ({
   const isModuleGranted = (moduleId: string): boolean => {
     if (normalizedSimulatedRole === "SUPER_ADMIN") return true;
     const modLower = moduleId.toLowerCase();
-    if (["forensic", "health", "system_health", "reliability", "resilience_dlq", "dlq", "recovery", "disaster_recovery"].includes(modLower)) {
+    if (modLower === "forensic") {
+      return ["SUPER_ADMIN", "OWNER", "ADMIN"].includes(normalizedSimulatedRole);
+    }
+    if (["health", "system_health", "reliability", "resilience_dlq", "dlq", "recovery", "disaster_recovery"].includes(modLower)) {
       return false;
     }
     if (normalizedSimulatedRole === "OWNER") return true;

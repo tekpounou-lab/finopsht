@@ -17,12 +17,12 @@ export default function BranchDepartmentSection() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
 
-  const filteredBranches = branches.filter(b => 
+  const filteredBranches = (branches || []).filter(b => 
     b.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     b.code?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredDepartments = departments.filter(d => 
+  const filteredDepartments = (departments || []).filter(d => 
     d.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     d.code?.toLowerCase().includes(searchQuery.toLowerCase())
   );

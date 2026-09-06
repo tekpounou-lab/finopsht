@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { safeFetchJson } from "../../../utils/safeFetch";
+import { FinancialRatioEngine } from "../../../services/cfo/FinancialRatioEngine";
 import { getLocalIP, generateSignature } from "../../../data";
 import { finopsEventOrchestrator } from "../../../services/finopsEventOrchestrator";
 import { Business, Branch, Employee, LedgerTransaction, AttendanceRecord, PayrollRecord, ForensicLog, Role } from "../../../types";
@@ -61,18 +62,18 @@ export function useBIAiAdvisor({
     };
     onAddForensicLog(forecastLog);
 
-    try {
-      const payload = {
-        business: currentBusiness,
-        branch: currentBranch || branches.find((b) => b.id === selectedBranchId) || null,
-        employees: filteredEmployees.slice(0, 500),
-        ledger: filteredTx.slice(0, 1000),
-        attendance: filteredAttendance.slice(0, 1000),
-        payroll: payrollRecords.slice(0, 500),
-        userQuestion: aiQuery || "Analyse la rentabilité opérationnelle globale, les contributions fiscales et l'optimisation des structures.",
-        snapshot,
-      };
+    const payload = {
+      business: currentBusiness,
+      branch: currentBranch || branches.find((b) => b.id === selectedBranchId) || null,
+      employees: filteredEmployees.slice(0, 500),
+      ledger: filteredTx.slice(0, 1000),
+      attendance: filteredAttendance.slice(0, 1000),
+      payroll: payrollRecords.slice(0, 500),
+      userQuestion: aiQuery || "Analyse la rentabilité opérationnelle globale, les contributions fiscales et l'optimisation des structures.",
+      snapshot,
+    };
 
+    try {
       const info = await safeFetchJson("/api/cfo/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,8 +83,9 @@ export function useBIAiAdvisor({
       setAiReport(info);
       finopsEventOrchestrator.emit("AI_CFO", currentBusiness.id, { action: "AI_CFO_ANALYSIS_COMPLETED" });
     } catch (err: any) {
-      console.error(err);
-      setAiReport(null);
+      console.warn("[useBIAiAdvisor] API report response unavailable, activating FinancialRatioEngine fallback:", err?.message || err);
+      const fallbackReport = FinancialRatioEngine.calculate(payload, err?.message || "Service momentanément indisponible");
+      setAiReport(fallbackReport);
       finopsEventOrchestrator.emit("AI_CFO", currentBusiness.id, { action: "AI_CFO_ANALYSIS_COMPLETED", offline: true });
     } finally {
       setAiLoading(false);

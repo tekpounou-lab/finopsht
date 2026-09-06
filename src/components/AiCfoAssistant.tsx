@@ -152,9 +152,9 @@ export default function AiCfoAssistant({
       en: "Back-Office CFO Synthesis"
     },
     indexLabel: {
-      fr: "Index : gemini-1.5-flash",
-      ht: "Modèl : gemini-1.5-flash",
-      en: "Engine: gemini-1.5-flash"
+      fr: "Index : gemini-2.5-flash",
+      ht: "Modèl : gemini-2.5-flash",
+      en: "Engine: gemini-2.5-flash"
     },
     directivesTitle: {
       fr: "Directives du Comité de Direction HTG",

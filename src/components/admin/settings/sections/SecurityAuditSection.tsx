@@ -1,18 +1,51 @@
-import React, { useState } from "react";
-import { Lock, ShieldCheck, Activity, Search, Filter, ShieldAlert, Eye, Terminal, Clock, User, Globe } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Lock, ShieldCheck, Activity, Search, Filter, ShieldAlert, Eye, Terminal, Clock, User, Globe, RefreshCw } from "lucide-react";
 import { useBusinessContext } from "../../../../contexts/BusinessContext";
+import { ForensicLogRepository } from "../../../../repositories/ForensicLogRepository";
+import { ForensicLog } from "../../../../types";
 
 export default function SecurityAuditSection() {
-  const { currentBusiness } = useBusinessContext();
+  const { currentBusiness, forensicLogs: ctxForensicLogs } = useBusinessContext();
   const [activeTab, setActiveTab] = useState<"POLICIES" | "AUDIT">("POLICIES");
+  const [logs, setLogs] = useState<ForensicLog[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Mock audit logs - In a real app, these come from a dedicated repository
-  const AUDIT_LOGS = [
-    { id: "1", action: "SETTINGS_UPDATE", user: "John Owner", module: "ADMIN", date: "2026-07-21 10:45", ip: "190.115.34.12", result: "SUCCESS" },
-    { id: "2", action: "PAYROLL_LOCK", user: "Sarah HR", module: "PAYROLL", date: "2026-07-21 09:12", ip: "190.115.34.14", result: "SUCCESS" },
-    { id: "3", action: "PERMISSION_DENIED", user: "Mark Emp", module: "FINANCE", date: "2026-07-21 08:30", ip: "190.115.34.12", result: "FAILURE" },
-    { id: "4", action: "BRANCH_CREATED", user: "John Owner", module: "ORG", date: "2026-07-20 16:20", ip: "190.115.34.12", result: "SUCCESS" },
-  ];
+  useEffect(() => {
+    let isMounted = true;
+    if (currentBusiness?.id) {
+      setIsLoading(true);
+      ForensicLogRepository.listByBusiness(currentBusiness.id, 50)
+        .then((res) => {
+          if (isMounted) {
+            setLogs(res.length > 0 ? res : (ctxForensicLogs || []));
+            setIsLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setLogs(ctxForensicLogs || []);
+            setIsLoading(false);
+          }
+        });
+    } else if (ctxForensicLogs && ctxForensicLogs.length > 0) {
+      setLogs(ctxForensicLogs);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [currentBusiness?.id, ctxForensicLogs]);
+
+  const filteredLogs = logs.filter(log => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (log.action && log.action.toLowerCase().includes(q)) ||
+      (log.userName && log.userName.toLowerCase().includes(q)) ||
+      (log.details && log.details.toLowerCase().includes(q)) ||
+      ((log as any).module && (log as any).module.toLowerCase().includes(q))
+    );
+  });
 
   return (
     <div className="space-y-6" id="security-section-root">
@@ -93,16 +126,17 @@ export default function SecurityAuditSection() {
               <div className="relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
                 <input 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Rechercher une action..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 pl-9 pr-3 text-[11px] text-slate-300 outline-none focus:border-cyan-500/30 transition-all"
                 />
               </div>
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-950 border border-slate-800 text-slate-400 text-[10px] font-bold rounded-lg hover:text-slate-200 transition-all">
-                <Filter className="w-3.5 h-3.5" />
-                FILTRER
-              </button>
             </div>
-            <p className="text-[10px] font-bold text-cyan-500/80 uppercase tracking-widest">Temps Réel : Actif</p>
+            <p className="text-[10px] font-bold text-cyan-500/80 uppercase tracking-widest flex items-center gap-2">
+              {isLoading && <RefreshCw className="w-3 h-3 animate-spin text-cyan-400" />}
+              Temps Réel : Actif
+            </p>
           </div>
 
           <div className="overflow-x-auto">
@@ -112,45 +146,50 @@ export default function SecurityAuditSection() {
                   <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Horodatage</th>
                   <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Acteur</th>
                   <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Action</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Module</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">IP Origin</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Résultat</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Signature / Hash</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-900">Détails</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-900 font-mono">
-                {AUDIT_LOGS.map(log => (
-                  <tr key={log.id} className="hover:bg-slate-900/30 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-3 h-3 text-slate-600" />
-                        <span className="text-[10px] text-slate-400">{log.date}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <User className="w-3 h-3 text-slate-600" />
-                        <span className="text-[10px] text-slate-300 font-bold">{log.user}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-[10px] font-bold text-cyan-500/80">{log.action}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-500 border border-slate-800">{log.module}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Globe className="w-3 h-3 text-slate-600" />
-                        <span className="text-[10px] text-slate-500">{log.ip}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${log.result === "SUCCESS" ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
-                        {log.result}
-                      </span>
+                {filteredLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-8 text-center text-xs text-slate-500">
+                      Aucun journal d'audit trouvé pour cette entreprise.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredLogs.map(log => (
+                    <tr key={log.id} className="hover:bg-slate-900/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3 h-3 text-slate-600" />
+                          <span className="text-[10px] text-slate-400">
+                            {log.timestamp ? new Date(log.timestamp).toLocaleString("fr-FR") : "N/A"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <User className="w-3 h-3 text-slate-600" />
+                          <span className="text-[10px] text-slate-300 font-bold">{log.userName || log.actorId || "SYSTEM"}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-[10px] font-bold text-cyan-500/80">{log.action}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800 font-mono truncate max-w-[120px] inline-block">
+                          {log.signature ? log.signature.substring(0, 16) + "..." : "UNSIGNED"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-[10px] text-slate-400 max-w-xs truncate block">
+                          {log.details || "-"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -158,9 +197,10 @@ export default function SecurityAuditSection() {
           <div className="p-4 border-t border-slate-900 bg-slate-950/50 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Terminal className="w-4 h-4 text-slate-600" />
-              <p className="text-[10px] text-slate-500">Affichage de 4 logs d'audit sur 1,248 enregistrés dans la source de vérité.</p>
+              <p className="text-[10px] text-slate-500">
+                Affichage de {filteredLogs.length} logs d'audit sur {logs.length} enregistrés dans la source de vérité.
+              </p>
             </div>
-            <button className="text-[10px] font-bold text-cyan-400 hover:underline">TÉLÉCHARGER LE RAPPORT COMPLET (CSV)</button>
           </div>
         </div>
       )}

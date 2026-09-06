@@ -40,6 +40,11 @@ export const AdminPendingBusinesses: React.FC<AdminPendingBusinessesProps> = ({ 
 
   // Subscribe to all pending businesses via repository
   useEffect(() => {
+    if (!user) {
+      setPendingList([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     console.debug("[AdminPendingBusinesses] Subscribing to listenAllPending on /pending_businesses with query filter: status == 'PENDING'");
     const unsubscribe = PendingBusinessRepository.listenAllPending((records) => {
@@ -51,7 +56,7 @@ export const AdminPendingBusinesses: React.FC<AdminPendingBusinessesProps> = ({ 
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [user]);
 
   const handleApprove = async (item: PendingBusiness) => {
     const adminUid = user?.uid;

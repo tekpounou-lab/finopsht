@@ -44,6 +44,7 @@ import {
   useBranches,
   useDepartments
 } from "../hooks/useRepositories";
+import { usePayrollCycle } from "../hooks/usePayrollCycle";
 
 // --- Enterprise Business Context State Machine ---
 export type BusinessRuntimeState = 'INITIALIZING' | 'LOADING' | 'READY' | 'REFRESHING' | 'ERROR';
@@ -63,6 +64,7 @@ export interface BusinessContextState {
   employees: any[];
   ledgerTransactions: any[];
   events: any[];
+  payrollCycles: any[];
   payrollRecords: any[];
   attendanceRecords: any[];
   forensicLogs: any[];
@@ -250,6 +252,7 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
   const employees = useEmployees(activeBusinessId);
   const ledgerTransactions = useLedgerTransactions(activeBusinessId);
   const events = useEvents(activeBusinessId);
+  const { payrollCycles = [] } = usePayrollCycle(activeBusinessId);
   const payrollRecords = usePayrollRecords(activeBusinessId);
   const attendanceRecords = useAttendanceRecords(activeBusinessId);
   const forensicLogs = useForensicLogs(activeBusinessId);
@@ -388,7 +391,12 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
     // Phase 2: Start Managed Synchronization (Mandatory for SSOT consistency)
     // CRITICAL: Ensure auth.currentUser is populated and business is active before starting sync
     const isAuthReady = !authLoading && !identityLoading && auth.currentUser;
-    const isBizActive = identity?.business?.status === "ACTIVE" || identity?.business?.status === "APPROVED" || identity?.onboardingStatus === "COMPLETED";
+    const isBizActive = 
+      identity?.identityStatus === "ACTIVE" ||
+      identity?.business?.status === "ACTIVE" || 
+      identity?.business?.status === "APPROVED" || 
+      identity?.onboardingStatus === "COMPLETED" ||
+      identity?.role === "SUPER_ADMIN";
     
     if (business_id && business_id !== "none" && state !== "INITIALIZING" && state !== "LOADING" && isAuthReady && isBizActive) {
       SynchronizationEngine.startSync(business_id);
@@ -555,6 +563,7 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
       employees,
       ledgerTransactions,
       events,
+      payrollCycles,
       payrollRecords,
       attendanceRecords,
       forensicLogs,
