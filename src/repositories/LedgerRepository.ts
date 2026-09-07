@@ -10,6 +10,7 @@ import { SnapshotRebuildService } from "../services/SnapshotRebuildService";
 import { applyDoubleEntryRules, DEFAULT_CHART_OF_ACCOUNTS, detectOrphanTransactions, COST_CENTER_DEFAULT } from "../services/AccountingEngine";
 import { durableQueueService } from "../services/queue/DurableQueueService";
 import { validateLedgerForeignKeys } from "../validations/integritySchemas";
+import { filterLedgerTransactions } from "../services/cfo/LedgerFilterEngine";
 
 export interface LedgerQueryOptions {
   startDate?: string;
@@ -136,44 +137,18 @@ export const LedgerRepository = {
         console.info("[LedgerRepository] Suggestion: No transactions found. Try resetting filters or checking business context.");
       }
 
-      let filtered = txs;
-
-      if (options.startDate && options.endDate) {
-        const start = new Date(options.startDate).getTime();
-        const end = new Date(options.endDate).getTime();
-
-        filtered = filtered.filter((tx) => {
-          const dateStr = tx.date || (tx as any).transaction_date || (tx as any).createdAt;
-          const date = new Date(dateStr).getTime();
-          return !isNaN(date) && date >= start && date <= end;
-        });
-      } else if (options.period && options.period !== 'ALL') {
-        filtered = filtered.filter((tx) => {
-          const dateStr = tx.date || (tx as any).transaction_date || (tx as any).createdAt || '';
-          return dateStr.startsWith(options.period!);
-        });
-      }
-
-      if (options.type && options.type.length > 0 && !options.type.includes('ALL')) {
-        const allowedTypes = Array.isArray(options.type) ? options.type : [options.type];
-        filtered = filtered.filter((tx) => allowedTypes.includes(tx.type));
-      }
-
-      if (options.status && options.status.length > 0 && !options.status.includes('ALL')) {
-        const allowedStatuses = Array.isArray(options.status) ? options.status : [options.status];
-        filtered = filtered.filter((tx) => allowedStatuses.includes((tx as any).status || 'POSTED'));
-      }
-
-      if (options.search && options.search.trim()) {
-        const queryTerm = options.search.toLowerCase().trim();
-        filtered = filtered.filter((tx) => 
-          (tx.description || '').toLowerCase().includes(queryTerm) ||
-          (tx.id || '').toLowerCase().includes(queryTerm) ||
-          String(tx.amount || '').includes(queryTerm)
-        );
-      }
-
-      return filtered;
+      return filterLedgerTransactions(txs, {
+        startDate: options.startDate,
+        endDate: options.endDate,
+        period: options.period,
+        branchId: Array.isArray(options.branchId) ? options.branchId : (options.branchId ? [options.branchId] : []),
+        departmentId: Array.isArray(options.departmentId) ? options.departmentId : (options.departmentId ? [options.departmentId] : []),
+        employeeId: Array.isArray(options.employeeId) ? options.employeeId : (options.employeeId ? [options.employeeId] : []),
+        type: Array.isArray(options.type) ? options.type : (options.type ? [options.type] : []),
+        category: options.category || 'ALL',
+        status: Array.isArray(options.status) ? (options.status[0] || 'ALL') : (options.status || 'ALL'),
+        search: options.search
+      }, { businessId });
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, path);
       return [];
@@ -462,6 +437,25 @@ export const LedgerRepository = {
               timestamp: now
             };
 
+            console.debug(`[Audit Step 1: Write Firestore] Writing chunk ${i + 1}/${chunks.length} (${chunk.length} items) to "ledger_transactions"`, {
+              collection: "ledger_transactions",
+              businessId,
+              chunkIndex: i,
+              chunkCount: chunk.length,
+              totalImportCount: txs.length,
+              firstDocument: chunk[0] ? {
+                id: chunk[0].id,
+                business_id: chunk[0].business_id,
+                date: chunk[0].date,
+                amount: chunk[0].amount,
+                amount_cents: chunk[0].amount_cents,
+                description: chunk[0].description,
+                type: chunk[0].type,
+                status: chunk[0].status
+              } : null
+            });
+            console.debug("[Firestore] Writing batch of", chunk.length, "documents. First doc:", chunk[0]);
+
             await MessageQueue.persistAndPublishWithBatch(
               businessId,
               (batch) => {
@@ -484,6 +478,7 @@ export const LedgerRepository = {
               },
               chunkEvent
             );
+            console.debug("[Firestore] Batch committed successfully. Docs written:", chunk.length);
           },
           { maxRetries: 3, baseDelayMs: 300, jitterStrategy: "FULL" },
           `LedgerRepository:importBatch:chunk_${i}`

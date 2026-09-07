@@ -39,6 +39,24 @@ export const UserProfileRepository = {
   },
 
   /**
+   * Updates email notification preferences for user
+   */
+  async setEmailNotificationsEnabled(uid: string, enabled: boolean): Promise<void> {
+    try {
+      const userRef = doc(db, "users", uid);
+      await setDoc(userRef, {
+        emailNotificationsEnabled: enabled,
+        "notificationPreferences.emailAlerts": enabled,
+        "notificationPreferences.emailNotificationsEnabled": enabled,
+        updatedAt: serverTimestamp(),
+        updated_at: serverTimestamp()
+      }, { merge: true });
+    } catch (error) {
+      throw handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
+    }
+  },
+
+  /**
    * Updates account_status and accountStatus on user profile
    */
   async updateAccountStatus(

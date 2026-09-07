@@ -64,20 +64,6 @@ export default function AttendanceLedger({
   const allowedRoles = ["OWNER", "DIRECTOR", "MANAGER", "SUPERVISOR", "SUPER_ADMIN"];
   const normalizedRole = currentRole ? currentRole.toUpperCase() : "";
 
-  if (!allowedRoles.includes(normalizedRole)) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
-        <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-4">
-          <ShieldX className="w-8 h-8" />
-        </div>
-        <h2 className="text-lg font-bold text-slate-100 mb-2">Accès Non Autorisé</h2>
-        <p className="text-sm text-slate-400 max-w-md">
-          Cette page est réservée uniquement aux Managers, Supervisors et Propriétaires d'entreprise.
-        </p>
-      </div>
-    );
-  }
-  
   // Optimistic Local State for Attendance Records
   const [localAttendanceRecords, setLocalAttendanceRecords] = useState<AttendanceRecord[]>(attendanceRecords || []);
 
@@ -923,6 +909,20 @@ export default function AttendanceLedger({
       signature: generateSignature({ action: "EXPORT", count: exportData.length })
     });
   };
+
+  if (!allowedRoles.includes(normalizedRole)) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
+        <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-4">
+          <ShieldX className="w-8 h-8" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-100 mb-2">Accès Non Autorisé</h2>
+        <p className="text-sm text-slate-400 max-w-md">
+          Cette page est réservée uniquement aux Managers, Supervisors et Propriétaires d'entreprise.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 font-sans animate-in fade-in duration-300 w-full">

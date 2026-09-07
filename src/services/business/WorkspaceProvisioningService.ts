@@ -144,9 +144,14 @@ export class WorkspaceProvisioningService {
       batch.set(doc(db, "subscriptions", businessId), {
         businessId: businessId,
         plan: "FREE_TIER",
-        status: "PENDING",
+        status: "ACTIVE",
         expiresAt: null,
-        seats: 5,
+        seats: 100,
+        allowedLimits: {
+          maxEmployees: 100,
+          maxTransactions: 10000,
+          featuresEnabled: ["attendance", "payroll", "hr", "accounting", "bi", "aiCfo"]
+        },
         updatedAt: now
       });
 

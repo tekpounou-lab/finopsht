@@ -29,6 +29,7 @@ export interface IdentitySnapshot {
   email: string;
   displayName?: string;
   photoURL?: string;
+  userProfile?: any;
   
   employee: Employee | null;
   business: Business | null;

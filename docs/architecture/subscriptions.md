@@ -38,12 +38,21 @@ The Subscriptions subsystem governs multi-tenant licensing, plan tiers, seating 
    Before writing a new `employees` document, `EmployeeRepository.assertSeatLimitNotExceeded` counts active employees in Firestore (`status != TERMINATED`).
 2. **Quota Exceeded Behavior**:
    If `activeCount + newCount > maxEmployees`, throws a `FinopsException` (code `SEAT_LIMIT_EXCEEDED`, status `403`) blocking creation.
-3. **Upgrades & Auto-Sync**:
-   When a Super Admin changes a tenant's plan in the "Plans & Licences" console:
-   - `Business.plan` is updated in `businesses/{businessId}`.
-   - `subscriptions/{businessId}` is synchronized via `SubscriptionRepository.syncSubscriptionWithPlan`.
-   - Feature flags in `businesses/{businessId}/settings/features` are updated to match the plan's default modules.
-   - `FeatureResolver.clearCache(businessId)` invalidates in-memory cache immediately.
+3. **Upgrades & Auto-Sync Workflow**:
+   - **Self-Service Upgrades (`OWNER` & `SUPER_ADMIN`)**:
+     Workspace Owners (`OWNER`) can initiate plan upgrades (e.g. from `STARTER` to `PROFESSIONAL`, `BUSINESS`, or `ENTERPRISE`) directly from the **Business Admin Center > Modules & Abonnement** section using `SubscriptionService.upgradePlan(businessId, newPlanId)`.
+   - **SSOT Synchronization**:
+     When an upgrade is confirmed:
+     1. `businesses/{businessId}`: `plan`, `subscription.plan`, `subscription.status`, `subscription.userLimit`, and `seats` are updated.
+     2. `subscriptions/{businessId}`: Contract state synchronized via `SubscriptionRepository.syncSubscriptionWithPlan`.
+     3. `business_settings/{businessId}`: Updated with active plan and status.
+     4. `businesses/{businessId}/settings/features`: Feature flags matrix synchronized with default plan capabilities via `FeatureRepository.syncFeaturesWithPlan`.
+   - **Cache Invalidation**:
+     In-memory and sessionStorage caches are invalidated immediately via `FeatureResolver.clearCache(businessId)` and `BusinessResolver.invalidateCache(businessId)`.
+   - **Forensic Audit Logging**:
+     Every plan modification generates a cryptographically signed, immutable record in `forensic_logs` via `ForensicLogRepository.createAndSignLog` with action `UPGRADE_SUBSCRIPTION_PLAN`.
+   - **Tenant Boundary Enforcement**:
+     Multi-tenancy constraints enforce that `OWNER` users can only upgrade their own active workspace (`business_id`). Cross-tenant modifications are strictly blocked. `SUPER_ADMIN` users maintain sovereign override capabilities across all workspaces.
 
 ---
 

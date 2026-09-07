@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { ParsedQuickBooksRow } from '../types/quickbooks';
+import { normalizeCsvDate } from '../../../utils/dateUtils';
 
 export interface ExtractedHeaderDateRange {
   startDate: string;
@@ -20,40 +21,7 @@ export class QuickBooksParserService {
    */
   private static parseDateToISO(dStr: string): string | null {
     if (!dStr) return null;
-    const cleanStr = dStr.trim();
-    
-    // YYYY-MM-DD
-    const isoMatch = cleanStr.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-    if (isoMatch) {
-      const y = isoMatch[1];
-      const m = isoMatch[2].padStart(2, '0');
-      const d = isoMatch[3].padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-
-    // DD/MM/YYYY or MM/DD/YYYY
-    const frMatch = cleanStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-    if (frMatch) {
-      const part1 = parseInt(frMatch[1], 10);
-      const part2 = parseInt(frMatch[2], 10);
-      let year = frMatch[3];
-      if (year.length === 2) year = "20" + year;
-
-      // In French QuickBooks reports (e.g., 01/08/2026 or 15/08/2026), part1 is day, part2 is month
-      let day = part1;
-      let month = part2;
-
-      // Swap if month > 12 (definitely DD/MM/YYYY) or standard French convention
-      if (month > 12 && day <= 12) {
-        const tmp = day;
-        day = month;
-        month = tmp;
-      }
-
-      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    }
-
-    return null;
+    return normalizeCsvDate(dStr);
   }
 
   /**

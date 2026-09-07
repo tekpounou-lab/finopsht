@@ -22,6 +22,7 @@ import { filterLedgerTransactions, calculateLedgerSummary, LedgerFilterContext }
 import { LedgerSeedService } from '../services/cfo/LedgerSeedService';
 import { detectOrphanTransactions, COST_CENTER_DEFAULT } from '../services/AccountingEngine';
 import { useFilters } from '../hooks/useFilters';
+import { EventBus } from '../modules/runtime/EventBus';
 
 const DEFAULT_GL_FILTERS: LedgerFilterParams = {
   type: ['ALL'],
@@ -74,8 +75,46 @@ export default function FinanceLedger({
     filters,
     setFilterGroup: setFilters,
     resetFilters: handleResetFilters,
-    setPeriod
+    setPeriod,
+    setDateRange
   } = useFilters<LedgerFilterParams>('gl', DEFAULT_GL_FILTERS);
+
+  // Compute overall min and max date across all available transactions for quick-filter alignment
+  const allTxDates = React.useMemo(() => {
+    if (!ledgerTransactions || ledgerTransactions.length === 0) return { min: '', max: '' };
+    const dates = ledgerTransactions
+      .map(t => t.date ? t.date.substring(0, 10) : '')
+      .filter(Boolean)
+      .sort();
+    return {
+      min: dates[0] || '',
+      max: dates[dates.length - 1] || ''
+    };
+  }, [ledgerTransactions]);
+
+  // Subscribe to EventBus for automatic filter alignment post GL import
+  useEffect(() => {
+    const unsubscribe = EventBus.subscribe('GL_IMPORT_COMPLETED', (event) => {
+      console.debug("[Audit Step 3: Event Listen] Événement reçu dans FinanceLedger", {
+        eventBusinessId: event.businessId,
+        currentBusinessId: current_business_id,
+        payload: event.payload
+      });
+
+      if (event.businessId === current_business_id) {
+        const payload = event.payload as any;
+        if (payload?.startDate && payload?.endDate) {
+          console.debug(`[Audit Step 3: State Update] Updating GL filter date range to startDate: ${payload.startDate}, endDate: ${payload.endDate}`);
+          setDateRange(payload.startDate, payload.endDate);
+          toast.success(
+            tText(`Filtres du Grand Livre ajustés automatiquement du ${payload.startDate} au ${payload.endDate} pour afficher les ${payload.importedCount || ''} écritures importées.`),
+            { duration: 7000 }
+          );
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [current_business_id, setDateRange, tText]);
 
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -129,6 +168,16 @@ export default function FinanceLedger({
 
   // Adjust filter period when selectedMonth changes explicitly
   useEffect(() => {
+    // Audit Step 5 Fix: Do not reset filters if period is 'CUSTOM' (set by date range filter or GL_IMPORT_COMPLETED)
+    if (filters.period === 'CUSTOM') {
+      console.debug("[Audit Step 5: Filter Preservation] Preserving CUSTOM date range filter", {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        period: filters.period
+      });
+      return;
+    }
+
     if (selectedMonth === 'ALL') {
       if (filters.period !== 'ALL') setPeriod('ALL');
     } else if (typeof selectedMonth === 'number') {
@@ -153,7 +202,7 @@ export default function FinanceLedger({
         setPeriod(selectedMonth.trim());
       }
     }
-  }, [selectedMonth, ledgerTransactions, current_business_id, setPeriod, filters.period]);
+  }, [selectedMonth, ledgerTransactions, current_business_id, setPeriod, filters.period, filters.startDate, filters.endDate]);
 
   // Filter transactions dynamically using SSOT LedgerFilterEngine
   const filterContext: LedgerFilterContext = {
@@ -168,11 +217,31 @@ export default function FinanceLedger({
   const filteredTransactions = filterLedgerTransactions(ledgerTransactions, filters, filterContext);
   const ledgerSummary = calculateLedgerSummary(filteredTransactions);
 
-  // Controlled Audit & Diagnostic Logging
+  // Audit Step 4: Controlled Audit & Diagnostic Logging
   useEffect(() => {
     if (!current_business_id) return;
-    console.info(`[FinanceLedger Diagnostic] Collection: "ledger_transactions" | Business ID: "${current_business_id}" | Raw Docs From Firestore: ${ledgerTransactions?.length || 0} | Filtered Count: ${filteredTransactions?.length || 0} | Active Filters:`, filters);
-  }, [current_business_id, ledgerTransactions?.length, filteredTransactions?.length, filters]);
+    console.debug("[Audit Step 4: Query & Filter] FinanceLedger state and Firestore transactions query result", {
+      collection: "ledger_transactions",
+      businessId: current_business_id,
+      rawFirestoreDocsCount: ledgerTransactions?.length || 0,
+      filteredCount: filteredTransactions?.length || 0,
+      activeFilters: filters,
+      firstRawDoc: ledgerTransactions?.[0] ? {
+        id: ledgerTransactions[0].id,
+        business_id: ledgerTransactions[0].business_id,
+        date: ledgerTransactions[0].date,
+        amount: ledgerTransactions[0].amount,
+        description: ledgerTransactions[0].description
+      } : null,
+      firstFilteredDoc: filteredTransactions?.[0] ? {
+        id: filteredTransactions[0].id,
+        business_id: filteredTransactions[0].business_id,
+        date: filteredTransactions[0].date,
+        amount: filteredTransactions[0].amount,
+        description: filteredTransactions[0].description
+      } : null
+    });
+  }, [current_business_id, ledgerTransactions, filteredTransactions, filters]);
 
   const handleSeedDemoData = async () => {
     setIsSeeding(true);
@@ -406,6 +475,18 @@ export default function FinanceLedger({
       // Update local state directly for optimism
       mappedTxs.forEach(tx => onAddTransaction(tx));
 
+      // Auto-adjust date filter range to cover all imported transactions
+      const importedDates = mappedTxs
+        .map(t => t.date ? t.date.substring(0, 10) : '')
+        .filter(Boolean)
+        .sort();
+
+      if (importedDates.length > 0) {
+        const minD = importedDates[0];
+        const maxD = importedDates[importedDates.length - 1];
+        setDateRange(minD, maxD);
+      }
+
     } catch (e: any) {
       toast.error(`Erreur critique lors de l'import: ${e.message}`);
     } finally {
@@ -513,6 +594,7 @@ export default function FinanceLedger({
         isOpen={showImport}
         onClose={() => setShowImport(false)}
         onImport={handleCsvImport}
+        onImportCompleted={({ startDate, endDate }) => setDateRange(startDate, endDate)}
         current_business_id={current_business_id}
         branches={branches}
         departments={departments}
@@ -578,17 +660,27 @@ export default function FinanceLedger({
               <Filter className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
                 {filters.period && filters.period !== 'ALL' 
-                  ? `Aucune transaction pour la période sélectionnée (${filters.period}). ${ledgerTransactions.length} transaction(s) existent dans d'autres périodes.`
-                  : `Aucune transaction ne correspond à vos filtres actuels sur un total de ${ledgerTransactions.length} enregistrement(s).`
+                  ? `Aucune transaction pour la période sélectionnée (${filters.period}). ${ledgerTransactions.length} transaction(s) existent en base (Période disponible : ${allTxDates.min || 'Inconnue'} au ${allTxDates.max || 'Inconnue'}).`
+                  : `Aucune transaction ne correspond à vos filtres actuels sur un total de ${ledgerTransactions.length} enregistrement(s) (Période disponible : ${allTxDates.min || 'Inconnue'} au ${allTxDates.max || 'Inconnue'}).`
                 }
               </span>
             </div>
-            <button
-              onClick={handleResetFilters}
-              className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 rounded-lg font-semibold whitespace-nowrap transition cursor-pointer"
-            >
-              Réinitialiser les filtres & Période
-            </button>
+            <div className="flex items-center gap-2">
+              {allTxDates.min && allTxDates.max && (
+                <button
+                  onClick={() => setDateRange(allTxDates.min, allTxDates.max)}
+                  className="px-3 py-1 bg-amber-500/30 hover:bg-amber-500/40 text-amber-100 border border-amber-500/50 rounded-lg font-semibold whitespace-nowrap transition cursor-pointer"
+                >
+                  Afficher la période ({allTxDates.min} → {allTxDates.max})
+                </button>
+              )}
+              <button
+                onClick={handleResetFilters}
+                className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 rounded-lg font-semibold whitespace-nowrap transition cursor-pointer"
+              >
+                Réinitialiser les filtres
+              </button>
+            </div>
           </div>
         )}
       </div>

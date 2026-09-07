@@ -26,7 +26,6 @@ export class EmployeeRepository {
   static async assertSeatLimitNotExceeded(businessId: string, additionalCount: number = 1): Promise<void> {
     const { SubscriptionRepository } = await import("./index");
     const sub = await SubscriptionRepository.getWorkspaceSubscription(businessId);
-    const seatsLimit = sub.allowedLimits?.maxEmployees ?? 10;
 
     const q = query(collection(db, "employees"), where("business_id", "==", businessId));
     const snap = await getDocs(q);
@@ -34,6 +33,24 @@ export class EmployeeRepository {
       const data = d.data();
       return data.status !== "TERMINATED" && data.status !== "ARCHIVED" && data.isActive !== false;
     }).length;
+
+    let seatsLimit = sub.allowedLimits?.maxEmployees ?? sub.seats ?? 100;
+
+    // Auto-adjust trial / free_tier onboarding limit if importing an initial or bulk dataset
+    if (sub.plan === "FREE_TIER" || sub.plan === "TRIAL" || sub.status === "TRIAL" || sub.status === "PENDING") {
+      if (currentActive + additionalCount > seatsLimit) {
+        seatsLimit = Math.max(seatsLimit, currentActive + additionalCount + 20);
+        await SubscriptionRepository.saveSubscription(businessId, {
+          ...sub,
+          allowedLimits: {
+            ...sub.allowedLimits,
+            maxEmployees: seatsLimit,
+            maxTransactions: sub.allowedLimits?.maxTransactions ?? 10000,
+            featuresEnabled: sub.allowedLimits?.featuresEnabled ?? ["attendance", "payroll", "hr", "accounting"]
+          }
+        });
+      }
+    }
 
     if (currentActive + additionalCount > seatsLimit) {
       throw new FinopsException(

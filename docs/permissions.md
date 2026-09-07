@@ -25,7 +25,8 @@ FINOPS ERP implements a multi-tier RBAC system managed by `PermissionService` (`
 | `manage_global_tax` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `force_unseal_payroll` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `delete_business` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| `manage_licensing` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `manage_licensing` | ✓ | ✓ (Own Tenant) | ✗ | ✗ | ✗ | ✗ |
+| `upgrade_plan` | ✓ | ✓ (Own Tenant) | ✗ | ✗ | ✗ | ✗ |
 | `view_forensic_logs` | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
 | `manage_payroll_cycles` | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
 | `seal_payroll_cycle` | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |

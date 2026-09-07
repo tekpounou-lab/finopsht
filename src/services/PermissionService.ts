@@ -218,8 +218,8 @@ class PermissionServiceClass {
   private businessId: string | null = null;
   
   // Subscription parameters
-  private subscriptionPlan: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE" = "STARTER";
-  private subscriptionStatus: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "NONE" = "ACTIVE";
+  private subscriptionPlan: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE" | "FREE_TIER" | string = "STARTER";
+  private subscriptionStatus: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "NONE" | "PENDING" | string = "ACTIVE";
 
   // Dynamic admin-configured role-to-module authorization matrix
   private roleModuleMatrix: Record<string, Record<string, boolean>> = DEFAULT_SYSTEM_ROLE_MODULE_MATRIX;
@@ -234,8 +234,8 @@ class PermissionServiceClass {
     role: string,
     permissions: string[],
     features: FeatureMatrix,
-    subscriptionPlan?: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE",
-    subscriptionStatus?: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "NONE",
+    subscriptionPlan?: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE" | "FREE_TIER" | string,
+    subscriptionStatus?: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "NONE" | "PENDING" | string,
     businessId?: string | null,
     roleModuleMatrix?: Record<string, Record<string, boolean>>
   ) {
@@ -701,6 +701,13 @@ class PermissionServiceClass {
         ? `L'utilisation actuelle (${currentCount}) dépasse la limite autorisée (${limit}) pour le forfait ${this.subscriptionPlan}. Veuillez passer à la version supérieure.`
         : undefined
     };
+  }
+
+  /**
+   * Returns current active business ID
+   */
+  public getBusinessId(): string | null {
+    return this.businessId;
   }
 
   /**

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { BusinessAdministrationRepository } from "../services/business/BusinessAdministrationRepository";
 import { BusinessSnapshotService } from "../services/business/BusinessSnapshotService";
+import { SubscriptionService } from "../services/billing/SubscriptionService";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import { Business, Branch, Department } from "../types";
 
@@ -10,8 +11,9 @@ export function useBusinessAdmin() {
   const [error, setError] = useState<string | null>(null);
 
   const refreshBusiness = useCallback(async () => {
-    // Implement refresh if needed, for now just a stub or reload
-    window.location.reload();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("finops_subscription_updated"));
+    }
   }, []);
 
   const businessId = currentBusiness?.id;
@@ -68,6 +70,22 @@ export function useBusinessAdmin() {
     await wrapAction(() => BusinessAdministrationRepository.updateFeatures(businessId, features));
   };
 
+  const upgradePlan = async (newPlanId: string) => {
+    if (!businessId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await SubscriptionService.upgradePlan(businessId, newPlanId);
+      await refreshBusiness();
+    } catch (err: any) {
+      console.error("[BusinessAdmin] upgradePlan failed:", err);
+      setError(err.message || "Échec de la mise à niveau du forfait.");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return {
     loading,
     error,
@@ -77,6 +95,7 @@ export function useBusinessAdmin() {
     saveDepartment,
     deleteDepartment,
     updateSettings,
-    updateFeatures
+    updateFeatures,
+    upgradePlan
   };
 }

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, Suspense, lazy } from "react";
+import { HelpCircle } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import { useI18n } from "../i18n";
@@ -15,6 +16,7 @@ import { useNotifications } from "../hooks/useNotifications";
 import { normalizeTab } from "./dashboard/hooks/useNavigation";
 import { Role, Business } from "../types";
 import EnterpriseErrorBoundary from "./ui/ErrorBoundary";
+import { EditProfileModal } from "./profile/EditProfileModal";
 
 // Subcomponents - Lazy loaded for performance & code splitting
 const AttendanceLedger = lazyWithRetry(() => import("../pages/AttendanceLedger"));
@@ -44,8 +46,39 @@ export interface DashboardShellProps {
 }
 
 export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProps = {}) {
-  const { user: authUser, role: authRole, logout } = useAuth();
+  const { user: authUser, identity, dbEmployee, dbUser, role: authRole, logout } = useAuth();
   const currentRole: Role = (authRole as Role) || "OWNER";
+
+  // Resolve full display name from SSOT identity context
+  const resolvedUserName = useMemo(() => {
+    if (identity?.displayName && identity.displayName.trim().length > 1) {
+      return identity.displayName.trim();
+    }
+    if (identity?.userProfile?.name && identity.userProfile.name.trim().length > 1) {
+      return identity.userProfile.name.trim();
+    }
+    if (identity?.employee?.name && identity.employee.name.trim().length > 1) {
+      return identity.employee.name.trim();
+    }
+    if (dbEmployee?.name && dbEmployee.name.trim().length > 1) {
+      return dbEmployee.name.trim();
+    }
+    if (dbUser?.name && dbUser.name.trim().length > 1) {
+      return dbUser.name.trim();
+    }
+    if (authUser?.displayName && authUser.displayName.trim().length > 1) {
+      return authUser.displayName.trim();
+    }
+    if (authUser?.email) {
+      const prefix = authUser.email.split("@")[0];
+      if (prefix) {
+        return prefix
+          .replace(/[._-]/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+    return "Administrateur";
+  }, [identity, dbEmployee, dbUser, authUser]);
 
   const {
     business: liveBusiness,
@@ -77,6 +110,8 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
   // Real-time Notifications Hook
   const { unreadCount: realTimeUnreadCount } = useNotifications(
@@ -117,9 +152,12 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
           currentRole={currentRole}
           userSlot={
             <UserDropdown
-              currentUser={{ name: authUser?.displayName || "Administrateur", email: authUser?.email || "" }}
+              currentUser={{ name: resolvedUserName, email: authUser?.email || identity?.email || "" }}
               currentRole={currentRole}
               onLogout={logout}
+              onNavigateToProfile={() => setIsEditProfileModalOpen(true)}
+              onNavigateToSupport={() => setIsHelpModalOpen(true)}
+              onNavigateToSettings={() => setActiveTab("settings")}
             />
           }
         />
@@ -387,13 +425,76 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500">Chargement des notifications...</div>}>
                 <NotificationsCenter
                   currentRole={currentRole}
-                  currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
+                  currentUser={{ name: resolvedUserName, id: authUser?.uid || "usr_1" }}
                   current_business_id={liveBusiness?.id || "BIZ_MAIN"}
                   events={events}
                   readIds={[]}
                   setReadIds={() => {}}
                 />
               </Suspense>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. User Profile Modal */}
+      {isEditProfileModalOpen && (
+        <EditProfileModal
+          isOpen={isEditProfileModalOpen}
+          onClose={() => setIsEditProfileModalOpen(false)}
+          currentUser={dbEmployee || (identity?.employee as any) || null}
+        />
+      )}
+
+      {/* 7. Support & Help Center Modal */}
+      {isHelpModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative z-10 w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-amber-400" />
+                <span>Centre d'Aide & Support FINOPS</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsHelpModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                title="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Besoin d'assistance technique, de conseils de paramétrage ou de formation sur vos modules FINOPS ERP ?
+            </p>
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 space-y-2 text-xs">
+              <div className="flex justify-between items-center text-slate-300">
+                <span className="font-medium text-slate-400">Support Technique:</span>
+                <span className="font-mono text-indigo-400">support@finops-erp.com</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-300">
+                <span className="font-medium text-slate-400">Délai SLA Réponse:</span>
+                <span className="text-emerald-400 font-semibold">&lt; 2 Heures (Haute Priorité)</span>
+              </div>
+            </div>
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsHelpModalOpen(false);
+                  setActiveTab("training");
+                }}
+                className="px-3 py-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-xl hover:bg-indigo-600/30 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Accéder aux Formations
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsHelpModalOpen(false)}
+                className="px-3 py-2 bg-slate-800 text-slate-200 rounded-xl hover:bg-slate-700 text-xs font-bold cursor-pointer transition-colors"
+              >
+                Fermer
+              </button>
             </div>
           </div>
         </div>

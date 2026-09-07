@@ -94,9 +94,14 @@ export class ServerProvisioningService {
         const subscription = {
           businessId: businessId,
           plan: "FREE_TIER",
-          status: "PENDING", // Subscription also pending
+          status: "ACTIVE",
           expiresAt: null,
-          seats: 5,
+          seats: 100,
+          allowedLimits: {
+            maxEmployees: 100,
+            maxTransactions: 10000,
+            featuresEnabled: ["attendance", "payroll", "hr", "accounting", "bi", "aiCfo"]
+          },
           updatedAt: now
         };
 

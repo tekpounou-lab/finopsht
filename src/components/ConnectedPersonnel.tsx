@@ -369,16 +369,12 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
             currentUserId={currentUser?.id}
             currentUserEmail={currentUser?.email}
             onAction={(action, emp) => {
-              if (action === 'profile') {
-                setSelectedEmployeeId(emp.id);
-                setFocusedEmployeeIdForProfile(emp.id);
-              } else if (action === 'payroll') {
+              if (action === 'payroll') {
                 setActiveTab('payroll');
               } else if (action === 'export_pdf') {
                 exportPayslipPdf(emp);
-              } else if (action === 'edit' || action === 'suspend' || action === 'reactivate') {
-                setSelectedEmployeeId(emp.id);
               }
+              setSelectedEmployeeId(emp.id);
             }}
           />
         </div>

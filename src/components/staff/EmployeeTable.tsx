@@ -416,7 +416,7 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({
                   "py-2 px-3 text-right sticky right-0 bg-slate-950/80 backdrop-blur-md shadow-[-10px_0_15px_-5px_rgba(0,0,0,0.3)] transition-colors overflow-visible",
                   openDropdownId === emp.id ? "z-40" : "z-10"
                 )}>
-                  <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className={cn("flex items-center justify-end gap-1.5 transition-opacity", openDropdownId === emp.id ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
                     <button 
                       onClick={() => onAction('profile', emp)}
                       className="p-1 rounded bg-slate-800/30 border border-slate-700/50 text-slate-400 hover:bg-cyan-900/30 hover:border-cyan-500/30 hover:text-cyan-400 transition-colors"

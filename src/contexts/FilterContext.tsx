@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { GenericFilterGroup, FilterNamespace, DEFAULT_NAMESPACE_FILTERS } from '../types/filters';
 
 export interface FilterContextType {
@@ -28,10 +28,32 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({
   children,
   initialFilters = {}
 }) => {
-  const [store, setStore] = useState<Record<string, GenericFilterGroup>>(() => ({
-    ...DEFAULT_NAMESPACE_FILTERS,
-    ...initialFilters
-  }));
+  const [store, setStore] = useState<Record<string, GenericFilterGroup>>(() => {
+    let saved: Record<string, GenericFilterGroup> = {};
+    try {
+      if (typeof window !== 'undefined') {
+        const item = localStorage.getItem('finops_filter_store');
+        if (item) saved = JSON.parse(item);
+      }
+    } catch (e) {
+      // ignore
+    }
+    return {
+      ...DEFAULT_NAMESPACE_FILTERS,
+      ...saved,
+      ...initialFilters
+    };
+  });
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('finops_filter_store', JSON.stringify(store));
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [store]);
 
   const [registeredDefaults, setRegisteredDefaults] = useState<Record<string, GenericFilterGroup>>(
     DEFAULT_NAMESPACE_FILTERS

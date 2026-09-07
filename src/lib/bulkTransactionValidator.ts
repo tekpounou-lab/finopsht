@@ -1,9 +1,10 @@
 import { ReferenceResolver } from "../services/ReferenceResolver";
 import { z } from "zod";
 import { Business, Branch, Department, Employee } from "../types";
+import { normalizeCsvDate } from "../utils/dateUtils";
 
 export const BulkTransactionSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
+  date: z.string().min(1, "Date is required").transform((val) => normalizeCsvDate(val)),
   type: z.enum(["INCOME", "EXPENSE", "ADVANCE", "TRANSFER", "REFUND", "CORRECTION"]),
   category: z.string().min(1, "Category is required"),
   description: z.string().min(1, "Description is required"),

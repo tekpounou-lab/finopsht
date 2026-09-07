@@ -31,11 +31,12 @@ export interface WorkspaceData {
 
 export interface SubscriptionData {
   business_id: string;
-  plan: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE";
-  status: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED";
+  plan: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE" | "FREE_TIER" | string;
+  status: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "PENDING" | string;
   trialEndsAt?: string;
-  expiresAt?: string;
+  expiresAt?: string | null;
   gracePeriodEndsAt?: string;
+  seats?: number;
   allowedLimits: {
     maxEmployees: number;
     maxTransactions: number;
@@ -409,9 +410,9 @@ export const SubscriptionRepository = {
             plan: data.plan || "TRIAL",
             status: data.status || "ACTIVE",
             allowedLimits: {
-              maxEmployees: data.allowedLimits?.maxEmployees ?? 10,
-              maxTransactions: data.allowedLimits?.maxTransactions ?? 1000,
-              featuresEnabled: data.allowedLimits?.featuresEnabled ?? ["attendance", "payroll", "hr", "accounting"]
+              maxEmployees: data.allowedLimits?.maxEmployees ?? (data.seats && data.seats > 0 ? data.seats : 100),
+              maxTransactions: data.allowedLimits?.maxTransactions ?? 10000,
+              featuresEnabled: data.allowedLimits?.featuresEnabled ?? ["attendance", "payroll", "hr", "accounting", "bi", "aiCfo"]
             }
           };
         }
@@ -433,8 +434,8 @@ export const SubscriptionRepository = {
       trialEndsAt: trialEnds.toISOString(),
       expiresAt: trialEnds.toISOString(),
       allowedLimits: {
-        maxEmployees: 10,
-        maxTransactions: 1000,
+        maxEmployees: 100,
+        maxTransactions: 10000,
         featuresEnabled: ["attendance", "payroll", "accounting", "hr", "bi", "aiCfo"]
       }
     };

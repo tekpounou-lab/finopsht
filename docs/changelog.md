@@ -1,5 +1,34 @@
 # FINOPS ERP — Architectural Changelog
 
+## [2.8.0] - 2026-09-06
+### Audited, Corrected & Documented (General Ledger / Grand Livre Comptable Module)
+- **General Ledger Full Forensic Audit**:
+  - Conducted complete audit across Firestore persistence (`ledger_transactions`), repository layers, CSV bulk import pipeline, filtering engine (`LedgerFilterEngine.ts`), and UI rendering (`FinanceLedger.tsx`).
+- **Date Range & Filter Unification (SSOT)**:
+  - Fixed UTC midnight date cutoff bug where transactions on the `endDate` boundary were accidentally filtered out.
+  - Standardized date extraction across all formats (ISO strings, `"YYYY-MM-DD"`, timestamps, and Firestore Timestamps) using `extractTxDateString`.
+  - Refactored `useLedgerTransactions` hook and `LedgerRepository.listByBusiness` to delegate filtering to `filterLedgerTransactions` in `LedgerFilterEngine.ts` (SSOT).
+  - Protected `CUSTOM` date range filters from being overwritten by month picker effects.
+- **Forensic Audit & Event Trail Instrumentation**:
+  - Verified atomic batch writing and forensic log generation in `forensic_logs` for both manual entries and bulk CSV imports.
+  - Maintained structured `console.debug` forensic logging across write preparation, event emission (`GL_IMPORT_COMPLETED`), event interception, and filter execution.
+- **Architectural Documentation**:
+  - Created `docs/architecture/LEDGER_MODULE.md` specifying data models, date normalization, query pipeline, security rules, and performance optimization.
+  - Updated `docs/architecture/BULK_IMPORT_LEDGER.md` with audit verification details.
+
+## [2.7.0] - 2026-09-06
+### Added & Corrected (Bulk Import Visibility & Ledger Date Synchronization)
+- **Automatic Date Filter Alignment**:
+  - `BulkTransactionImportDialog.tsx` extracts min and max dates from imported batch and publishes `GL_IMPORT_COMPLETED` on runtime `EventBus`.
+  - `FinanceLedger.tsx` automatically updates active date filters (`startDate` and `endDate`) upon receiving `GL_IMPORT_COMPLETED` or completing CSV import.
+- **Persistent Filter Store (`src/contexts/FilterContext.tsx`)**:
+  - Integrated `localStorage` persistence (`finops_filter_store`) for namespace filters (`gl`), preserving user date selections and active filter configurations across sessions.
+- **Contextual Zero-Records Banner (`FinanceLedger.tsx`)**:
+  - Enhanced the zero-records alert banner when filters yield 0 transactions while database records exist.
+  - Displays global available date bounds (`allTxDates.min` to `allTxDates.max`) and provides quick actions to switch the active period or reset filters.
+- **Architectural Documentation (`docs/architecture/BULK_IMPORT_LEDGER.md`)**:
+  - Created architectural specification detailing import payload lifecycle, date alignment, event contracts, and filter engine rules.
+
 ## [2.6.0] - 2026-09-01
 ### Added & Documented (Phase 3 — Typed EventBus Architecture, Automated Integrity Tests, & Data Model Specification)
 - **Typed EventBus & Message Schemas (`src/types/events.ts`)**:

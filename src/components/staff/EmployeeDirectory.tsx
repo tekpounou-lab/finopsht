@@ -10,6 +10,10 @@ import { EnterpriseIdentityOrchestrator } from '../../modules/identity/Enterpris
 import { EmployeeRepository } from '../../repositories/EmployeeRepository';
 import { SuspendConfirmationModal } from './SuspendConfirmationModal';
 import { ReactivateConfirmationModal } from './ReactivateConfirmationModal';
+import EmployeeTechnicalSheet from '../EmployeeTechnicalSheet';
+import EditEmployeeDialog from './EditEmployeeDialog';
+import { AssignBranchModal } from './AssignBranchModal';
+import { EmployeeBadgePreviewDialog } from './EmployeeBadgePreviewDialog';
 import { toast } from 'sonner';
 import EmployeeTable, { SortDirection, SortField } from './EmployeeTable';
 import { Search, Filter, X, SlidersHorizontal, Download, Columns, CheckCircle, FileText, QrCode, Scan, Camera, Volume2, VolumeX, ShieldCheck, Printer, Clock, AlertTriangle, Play, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -207,6 +211,12 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
   const [isKioskModalOpen, setIsKioskModalOpen] = useState(false);
   const [kioskPreSelectedId, setKioskPreSelectedId] = useState<string | undefined>(undefined);
+
+  // Modal Targets State
+  const [focusedEmployeeForProfile, setFocusedEmployeeForProfile] = useState<Employee | null>(null);
+  const [editTarget, setEditTarget] = useState<Employee | null>(null);
+  const [assignBranchTarget, setAssignBranchTarget] = useState<Employee | null>(null);
+  const [badgePreviewTarget, setBadgePreviewTarget] = useState<Employee | null>(null);
 
   // Use Real-time SRE hook for observability forensic logs
   const { data: realTimeAuditLogs } = useRealtimeSubscription<ForensicLog>(
@@ -557,6 +567,23 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       toast.error(error?.message || "Failed to reactivate employee");
     } finally {
       setReactivateTarget(null);
+    }
+  };
+
+  const handleConfirmRevoke = async (employeeToRevoke: Employee) => {
+    try {
+      await EmployeeRepository.updateEmployee(employeeToRevoke.id, {
+        status: "SUSPENDED",
+        isActive: false
+      }, {
+        uid: currentUserId || "system",
+        role: currentRole
+      });
+      setEmployees(prev => prev.map(e => e.id === employeeToRevoke.id ? { ...e, status: "SUSPENDED", isActive: false } : e));
+      toast.success(language === "fr" ? `${employeeToRevoke.name} a été révoqué/archivé avec succès.` : `${employeeToRevoke.name} revoked/archived successfully.`);
+    } catch (error: any) {
+      console.error("Error revoking employee:", error);
+      toast.error(error?.message || "Failed to revoke employee");
     }
   };
 
@@ -1053,16 +1080,20 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             sortDirection={sortDirection}
             onSort={toggleSort}
             onAction={(action, emp) => {
-              if (action === 'suspend') {
+              if (action === 'profile') {
+                 setFocusedEmployeeForProfile(emp);
+              } else if (action === 'edit') {
+                 setEditTarget(emp);
+              } else if (action === 'suspend') {
                  setSuspendTarget(emp);
               } else if (action === 'reactivate') {
                  setReactivateTarget(emp);
               } else if (action === 'assign_branch') {
-                 alert(language === "fr" ? "Fonctionnalité 'Assigner Succursale' à venir." : language === "ht" ? "Fonksyon 'Asiyen Sikisal' ap vini." : "Assign Branch feature coming soon.");
+                 setAssignBranchTarget(emp);
               } else if (action === 'badge') {
-                 setSelectedEmployeeId(emp.id);
-                 setQrActiveTab("generator");
-                 setIsQrDrawerOpen(true);
+                 setBadgePreviewTarget(emp);
+              } else if (action === 'revoke' || action === 'delete') {
+                 handleConfirmRevoke(emp);
               } else {
                  onAction?.(action, emp);
               }
@@ -1457,6 +1488,83 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         onConfirm={handleConfirmReactivate}
         onClose={() => setReactivateTarget(null)}
       />
+
+      {/* TECHNICAL PROFILE SHEET MODAL */}
+      {focusedEmployeeForProfile && (
+        <EmployeeTechnicalSheet
+          employee={focusedEmployeeForProfile}
+          attendanceRecords={attendanceRecords || []}
+          ledgerTransactions={[]}
+          branches={branches}
+          departments={departments}
+          language={(language === "ht" || language === "en") ? language : "fr"}
+          currentRole={currentRole as Role}
+          onClose={() => setFocusedEmployeeForProfile(null)}
+          onUpdateEmployee={(updated) => {
+            setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+            setFocusedEmployeeForProfile(updated);
+            toast.success(language === "fr" ? "Profil mis à jour" : "Profile updated");
+          }}
+        />
+      )}
+
+      {/* EDIT EMPLOYEE DIALOG MODAL */}
+      {editTarget && (
+        <EditEmployeeDialog
+          employee={editTarget}
+          branches={branches || []}
+          departments={departments || []}
+          isOpen={Boolean(editTarget)}
+          onClose={() => setEditTarget(null)}
+          onSave={async (updated) => {
+            try {
+              await EmployeeRepository.updateEmployee(updated.id, updated, {
+                uid: currentUserId || "system",
+                role: currentRole
+              });
+              setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+              toast.success(language === "fr" ? "Employé mis à jour avec succès." : "Employee updated successfully.");
+              setEditTarget(null);
+            } catch (err: any) {
+              toast.error(err?.message || "Erreur lors de la modification");
+            }
+          }}
+        />
+      )}
+
+      {/* ASSIGN BRANCH MODAL */}
+      {assignBranchTarget && (
+        <AssignBranchModal
+          isOpen={Boolean(assignBranchTarget)}
+          employee={assignBranchTarget}
+          branches={branches || []}
+          onClose={() => setAssignBranchTarget(null)}
+          onConfirm={async (emp, branchId) => {
+            try {
+              await EmployeeRepository.updateEmployee(emp.id, { branchId });
+              setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, branchId, branch_id: branchId } : e));
+              toast.success(language === "fr" ? "Succursale mise à jour avec succès." : "Branch updated successfully.");
+            } catch (err: any) {
+              toast.error(err?.message || "Erreur lors de la mise à jour de la succursale");
+            }
+          }}
+        />
+      )}
+
+      {/* BADGE PREVIEW DIALOG MODAL */}
+      {badgePreviewTarget && (
+        <EmployeeBadgePreviewDialog
+          isOpen={Boolean(badgePreviewTarget)}
+          onClose={() => setBadgePreviewTarget(null)}
+          employee={badgePreviewTarget}
+          businessName={currentBusiness?.name || "FINOPS ERP"}
+          branchName={branches?.find(b => b.id === badgePreviewTarget.branchId)?.name || "Succursale Centrale"}
+          departmentName={departments?.find(d => d.id === badgePreviewTarget.departmentId)?.name || "Non assigné"}
+          badgeToken={`BADGE_${badgePreviewTarget.id}`}
+          signature={`SIG_${badgePreviewTarget.id}`}
+          qrPayload={JSON.stringify({ id: badgePreviewTarget.id, name: badgePreviewTarget.name, role: badgePreviewTarget.role })}
+        />
+      )}
     </div>
   );
 };

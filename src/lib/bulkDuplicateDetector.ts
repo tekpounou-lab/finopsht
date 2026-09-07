@@ -1,4 +1,5 @@
 import { LedgerTransaction } from "../types";
+import { normalizeCsvDate } from "../utils/dateUtils";
 
 export interface AccountingPeriodInfo {
   startDate: string; // YYYY-MM-DD
@@ -56,21 +57,7 @@ export interface RowAnalysisItem {
  */
 export function normalizeDate(input: any): string {
   if (!input) return "";
-  const str = String(input).trim();
-  if (str.includes("T")) {
-    return str.split("T")[0];
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    return str;
-  }
-  if (/^\d{4}\/\d{2}\/\d{2}$/.test(str)) {
-    return str.replace(/\//g, "-");
-  }
-  const d = new Date(str);
-  if (!isNaN(d.getTime())) {
-    return d.toISOString().split("T")[0];
-  }
-  return str;
+  return normalizeCsvDate(input);
 }
 
 /**

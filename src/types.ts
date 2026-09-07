@@ -87,6 +87,14 @@ export interface UserProfile {
   status?: string;
   onboardingComplete?: boolean;
   onboarding_completed?: boolean;
+  emailNotificationsEnabled?: boolean;
+  notificationPreferences?: {
+    emailAlerts?: boolean;
+    emailNotificationsEnabled?: boolean;
+    securityAlerts?: boolean;
+    smsAlerts?: boolean;
+    [key: string]: any;
+  };
   createdAt?: any;
   updatedAt?: any;
   created_at?: any;
@@ -116,6 +124,14 @@ export interface Employee {
   commissionRate?: number;
   onboardingComplete?: boolean;
   isActive?: boolean;
+  emailNotificationsEnabled?: boolean;
+  notificationPreferences?: {
+    emailAlerts?: boolean;
+    emailNotificationsEnabled?: boolean;
+    securityAlerts?: boolean;
+    smsAlerts?: boolean;
+    [key: string]: any;
+  };
   hireDate?: string;
   branchName?: string;
   departmentName?: string;

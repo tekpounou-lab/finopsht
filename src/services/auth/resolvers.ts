@@ -301,8 +301,8 @@ export const PermissionResolver = {
     role: string | null,
     business_id: string | null,
     features: FeatureMatrix | null,
-    subscriptionPlan?: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE",
-    subscriptionStatus?: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "NONE"
+    subscriptionPlan?: "TRIAL" | "STARTER" | "PROFESSIONAL" | "BUSINESS" | "ENTERPRISE" | "FREE_TIER" | string,
+    subscriptionStatus?: "ACTIVE" | "EXPIRED" | "TRIAL" | "GRACE_PERIOD" | "BLOCKED" | "NONE" | "PENDING" | string
   ): Promise<SessionContext["permissions"]> {
     if (!role) {
       return {

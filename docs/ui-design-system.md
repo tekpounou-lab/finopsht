@@ -80,3 +80,50 @@ All localizations must adhere strictly to Haitian tax code, financial regulation
 | **Pointage** | Pointage Kiosk | Pwentaj Kiosk | Attendance Kiosk |
 | **Grand Livre** | Grand Livre ERP | Gran Liv ERP | Ledger ERP |
 
+---
+
+## 5. TopBar & User Menu Controls (`TopBar.tsx`, `UserDropdown.tsx`)
+
+The application header (`TopBar.tsx`) standardizes user identity, role context, business selection, quick actions (⌘K), and real-time notification alerts.
+
+### 5.1 Identity Resolution & Display
+- **Name Resolution Order**: User full name is retrieved from Single Source of Truth (SSOT) identity context: `identity.displayName` → `identity.userProfile.name` → `identity.employee.name` → `dbEmployee.name` → `dbUser.name` → `authUser.displayName` → Email prefix.
+- **Avatar Initials**: Auto-generated 2-letter uppercase initials using `getInitials(name)`.
+- **Role Label**: Human-friendly role display (e.g., *Propriétaire*, *Manager*, *Super Admin*).
+
+### 5.2 User Dropdown Menu Capabilities
+The dropdown menu (`UserDropdown.tsx`) provides standardized access to identity controls:
+1. **Identité Connectée**: Header displaying full user name, email, and active role badge.
+2. **Mon Profil**: Opens `EditProfileModal` to edit personal details, timezone, and avatars.
+3. **Paramètres Entreprise**: Navigates directly to the administrative settings workspace (`/dashboard` with tab `settings`).
+4. **Centre de Support & Aide**: Displays technical assistance contacts, SLA commitments (< 2h), and links to training modules.
+5. **Déconnexion**: Clears session caches (`EnterpriseIdentityOrchestrator`) and performs Firebase Auth sign-out.
+
+---
+
+## 6. Dynamic & Categorized Sidebar Navigation (`Sidebar.tsx`, `SidebarCategory.tsx`, `useSidebarState.ts`)
+
+The primary navigation sidebar provides a structured, multi-level categorized view of ERP modules with dynamic expansion, global collapse, RBAC filtering, and local persistence.
+
+### 6.1 Categorical Structure & Grouping
+Navigation items are grouped into 7 logical domain categories:
+- **Tableau de Bord** (`dashboard_group`): Vue d'ensemble.
+- **Gestion RH & Personnel** (`hr_group`): Structure Organisation, Effectifs & Personnel, Pointage & Présences, Planning & Horaires, Gestion des Congés.
+- **Finances & Comptabilité** (`finance_group`): Moteur de Paie, Grand Livre Comptable.
+- **Performance & CRM** (`intelligence_group`): Performance & CRM, Assistant IA CFO.
+- **Outils & Espace** (`tools_group`): Gestion Documentaire, Mon Espace Collaborateur.
+- **Administration & Sécurité** (`admin_group`): Administration, Audit & Sécurité.
+- **Plateforme & SRE** (`sre_group` - Super Admin): Organisations, Plans, Santé SRE, Flux DLQ, DRP.
+
+### 6.2 Key Features & Interactivity
+1. **Category Expansion & Contraction**: Each category header is collapsible with chevron indicators. Active sub-items automatically force category expansion if collapsed.
+2. **Global Collapse Mode**: Desktop users can toggle between Expanded (`w-64`) and Collapsed Icons-Only (`w-20`) views via the `PanelLeft` control button.
+3. **Hover Tooltips in Collapsed Mode**: When collapsed, hovering over an icon displays a floating tooltip with item label, category badge, and unread badge count.
+4. **RBAC Role Filtering**: Categories with zero authorized sub-items for the current role are automatically filtered out and hidden.
+5. **Badge Count Integration**: Badge counters (e.g., pending leave requests) remain visible on sub-item buttons and as floating badge indicators in collapsed mode.
+6. **State Persistence**: User preferences are saved in `localStorage`:
+   - `finops-sidebar-collapsed`: Boolean collapse mode.
+   - `finops-sidebar-expanded-categories`: JSON object tracking open/closed states for category IDs.
+
+
+

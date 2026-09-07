@@ -37,6 +37,9 @@ import { QuickBooksParserService, ExtractedHeaderDateRange } from '../../domains
 import { EmployeeResolutionEngine } from '../../domains/ledger/services/EmployeeResolutionEngine';
 import { ParsedQuickBooksRow, AssociateResolution, ResolutionStatus } from '../../domains/ledger/types/quickbooks';
 
+import { EventBus } from '../../modules/runtime/EventBus';
+import { normalizeCsvDate } from '../../utils/dateUtils';
+
 interface PendingMissingDepartment {
   code: string;
   name: string;
@@ -52,6 +55,7 @@ interface BulkTransactionImportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onImport: (transactions: Partial<LedgerTransaction>[]) => Promise<void>;
+  onImportCompleted?: (info: { startDate: string; endDate: string; count: number }) => void;
   current_business_id: string;
   branches: Branch[];
   departments: Department[];
@@ -62,7 +66,7 @@ interface BulkTransactionImportDialogProps {
 }
 
 const csvRowSchema = z.object({
-  date: z.string().min(1),
+  date: z.string().min(1).transform((val) => normalizeCsvDate(val)),
   type: z.enum(['INCOME', 'EXPENSE', 'ADVANCE', 'TRANSFER']),
   category: z.string().min(1),
   description: z.string().min(3),
@@ -77,6 +81,7 @@ export default function BulkTransactionImportDialog({
   isOpen,
   onClose,
   onImport,
+  onImportCompleted,
   current_business_id,
   branches,
   departments,
@@ -397,7 +402,13 @@ export default function BulkTransactionImportDialog({
               cleanRow[cleanedKey] = typeof val === 'string' ? val.trim() : val;
             });
 
+            const rawDateStr = cleanRow.date || cleanRow.transactionDate || cleanRow.transaction_date;
+            const normalizedDate = normalizeCsvDate(rawDateStr, accountingDate);
+            console.debug("[CSV Import] Raw date:", rawDateStr, "→ normalized:", normalizedDate);
+            console.debug("[CSV Import] Clean row before Zod mapping:", cleanRow);
+
             const parsed = csvRowSchema.parse(cleanRow);
+            console.debug("[Zod] Validated row:", parsed);
             const amount = parseFloat(parsed.amount);
             if (isNaN(amount) || amount <= 0) {
               throw new Error("Montant invalide (doit être un nombre positif)");
@@ -738,31 +749,7 @@ export default function BulkTransactionImportDialog({
       const batchId = `import_${Date.now()}`;
 
       const normalizeImportDate = (dateStr: string, fallbackDate: string): string => {
-        if (!dateStr) return new Date(fallbackDate).toISOString();
-        if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
-          const d = new Date(dateStr);
-          return !isNaN(d.getTime()) ? d.toISOString() : new Date(fallbackDate).toISOString();
-        }
-        const parts = dateStr.split(/[/-]/);
-        if (parts.length === 3) {
-          let year = parts[2];
-          if (year.length === 2) year = '20' + year;
-          let part1 = parseInt(parts[0], 10);
-          let part2 = parseInt(parts[1], 10);
-          let day = part1;
-          let month = part2;
-          if (month > 12 && day <= 12) {
-            day = part2;
-            month = part1;
-          }
-          const isoStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const parsed = new Date(isoStr);
-          if (!isNaN(parsed.getTime())) {
-            return parsed.toISOString();
-          }
-        }
-        const fallbackParsed = new Date(dateStr);
-        return !isNaN(fallbackParsed.getTime()) ? fallbackParsed.toISOString() : new Date(fallbackDate).toISOString();
+        return normalizeCsvDate(dateStr, fallbackDate);
       };
 
       const txsToImport: Partial<LedgerTransaction>[] = rowsToImport.map(p => {
@@ -817,6 +804,23 @@ export default function BulkTransactionImportDialog({
           pendingLinks
         ).catch(err => console.warn("Failed batched linking dept to employee:", err));
       }
+
+      // Forensic Audit Step 1: Instrument Data Writing Preparation
+      console.debug("[Audit Step 1: Prepare] Prepared transactions for import", {
+        collection: "ledger_transactions",
+        totalCount: txsToImport.length,
+        businessId: current_business_id,
+        firstDoc: txsToImport[0] ? {
+          business_id: txsToImport[0].business_id,
+          date: txsToImport[0].date,
+          amount: txsToImport[0].amount,
+          amount_cents: txsToImport[0].amount_cents,
+          description: txsToImport[0].description,
+          branch_id: txsToImport[0].branch_id,
+          department_id: txsToImport[0].department_id
+        } : null,
+        isDateValid: Boolean(txsToImport[0]?.date && !isNaN(new Date(txsToImport[0].date).getTime()))
+      });
 
       // Execute sequenced batch import (400 ops/batch) with forensic audit logging
       await onImport(txsToImport);
@@ -885,6 +889,53 @@ export default function BulkTransactionImportDialog({
         });
       } catch (evtErr) {
         console.warn("Orchestrator layer tracking notice:", evtErr);
+      }
+
+      // Extract date bounds of imported transactions & publish GL_IMPORT_COMPLETED event
+      const dateStrings = txsToImport
+        .map(t => t.date ? t.date.substring(0, 10) : '')
+        .filter(Boolean)
+        .sort();
+      const minImportDate = dateStrings.length > 0 ? dateStrings[0] : '';
+      const maxImportDate = dateStrings.length > 0 ? dateStrings[dateStrings.length - 1] : '';
+
+      if (minImportDate && maxImportDate) {
+        // Forensic Audit Step 2: Instrument Event Emission
+        console.debug(`[Audit Step 2: Event Emit] Événement GL_IMPORT_COMPLETED émis avec startDate: ${minImportDate}, endDate: ${maxImportDate}`, {
+          correlationId: `corr_imp_${batchId}`,
+          businessId: current_business_id,
+          importedCount: txsToImport.length,
+          startDate: minImportDate,
+          endDate: maxImportDate
+        });
+
+        try {
+          EventBus.publish(EventBus.createEvent({
+            correlationId: `corr_imp_${batchId}`,
+            businessId: current_business_id,
+            module: "FINANCIAL_LEDGER",
+            aggregate: "LedgerTransaction",
+            type: "GL_IMPORT_COMPLETED",
+            source: "BulkTransactionImportDialog",
+            payload: {
+              businessId: current_business_id,
+              importedCount: txsToImport.length,
+              startDate: minImportDate,
+              endDate: maxImportDate,
+              periodLabel: duplicateAnalysis?.accountingPeriod.periodLabel || `${minImportDate} au ${maxImportDate}`
+            }
+          }));
+        } catch (busErr) {
+          console.warn("[BulkTransactionImportDialog] EventBus publish warning:", busErr);
+        }
+
+        if (onImportCompleted) {
+          onImportCompleted({
+            startDate: minImportDate,
+            endDate: maxImportDate,
+            count: txsToImport.length
+          });
+        }
       }
 
       if (userDecision === 'SKIP_DUPLICATES') {

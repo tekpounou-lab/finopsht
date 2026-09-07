@@ -4,6 +4,7 @@ import { useRealtimeSubscription } from './useRealtimeSubscription';
 import { useFilters } from './useFilters';
 import { LedgerQueryOptions } from '../repositories/LedgerRepository';
 import { LedgerFilterParams } from '../components/ledger/types';
+import { filterLedgerTransactions, extractTxDateString } from '../services/cfo/LedgerFilterEngine';
 
 export interface UseLedgerTransactionsOptions extends LedgerQueryOptions {
   useStoreFilters?: boolean;
@@ -35,87 +36,26 @@ export function useLedgerTransactions(
   return useMemo(() => {
     if (!data || data.length === 0) return [];
 
-    let result = [...data].sort((a, b) => {
-      const dateA = a.date || (a as any).transaction_date || (a as any).createdAt || '';
-      const dateB = b.date || (b as any).transaction_date || (b as any).createdAt || '';
-      return String(dateB).localeCompare(String(dateA));
+    const sortedData = [...data].sort((a, b) => {
+      const dateA = extractTxDateString(a.date || (a as any).transaction_date || (a as any).transactionDate || (a as any).createdAt || (a as any).created_at);
+      const dateB = extractTxDateString(b.date || (b as any).transaction_date || (b as any).transactionDate || (b as any).createdAt || (b as any).created_at);
+      return dateB.localeCompare(dateA);
     });
 
     // If options explicitly provide filters or useStoreFilters is requested
     const effectiveFilters = options?.useStoreFilters ? storeFilters : options;
 
+    console.debug("[Ledger Query] Filters:", { businessId: business_id, effectiveFilters, useStoreFilters: options?.useStoreFilters });
+    console.debug("[Ledger Query] Retrieved", sortedData.length, "documents from Firestore. First doc:", sortedData[0]);
+
     if (!effectiveFilters) {
-      return result;
+      return sortedData;
     }
 
-    const {
-      startDate,
-      endDate,
-      period,
-      branchId,
-      departmentId,
-      employeeId,
-      type,
-      category,
-      status,
-      search
-    } = effectiveFilters as any;
-
-    if (startDate && endDate) {
-      const start = new Date(startDate).getTime();
-      const end = new Date(endDate).getTime();
-      result = result.filter((tx) => {
-        const dateStr = tx.date || (tx as any).transaction_date || (tx as any).createdAt;
-        const date = new Date(dateStr).getTime();
-        return !isNaN(date) && date >= start && date <= end;
-      });
-    } else if (period && period !== 'ALL') {
-      result = result.filter((tx) => {
-        const dateStr = tx.date || (tx as any).transaction_date || (tx as any).createdAt || '';
-        return dateStr.startsWith(period);
-      });
-    }
-
-    if (type && type.length > 0 && !type.includes('ALL')) {
-      const allowed = Array.isArray(type) ? type : [type];
-      result = result.filter((tx) => allowed.includes(tx.type));
-    }
-
-    if (branchId && branchId.length > 0 && !branchId.includes('ALL')) {
-      const allowed = Array.isArray(branchId) ? branchId : [branchId];
-      result = result.filter((tx) => allowed.includes(tx.branch_id || ''));
-    }
-
-    if (departmentId && departmentId.length > 0 && !departmentId.includes('ALL')) {
-      const allowed = Array.isArray(departmentId) ? departmentId : [departmentId];
-      result = result.filter((tx) => allowed.includes(tx.department_id || ''));
-    }
-
-    if (employeeId && employeeId.length > 0 && !employeeId.includes('ALL')) {
-      const allowed = Array.isArray(employeeId) ? employeeId : [employeeId];
-      result = result.filter((tx) => allowed.includes(tx.employee_id || (tx as any).employeeId || ''));
-    }
-
-    if (category && category !== 'ALL') {
-      result = result.filter((tx) => tx.category === category);
-    }
-
-    if (status && status.length > 0 && !status.includes('ALL')) {
-      const allowed = Array.isArray(status) ? status : [status];
-      result = result.filter((tx) => allowed.includes((tx as any).status || 'POSTED'));
-    }
-
-    if (search && search.trim()) {
-      const queryTerm = search.toLowerCase().trim();
-      result = result.filter((tx) =>
-        (tx.description || '').toLowerCase().includes(queryTerm) ||
-        (tx.id || '').toLowerCase().includes(queryTerm) ||
-        String(tx.amount || '').includes(queryTerm)
-      );
-    }
-
-    return result;
-  }, [data, options, storeFilters]);
+    return filterLedgerTransactions(sortedData, effectiveFilters as LedgerFilterParams, {
+      businessId: business_id
+    });
+  }, [data, options, storeFilters, business_id]);
 }
 
 export default useLedgerTransactions;
