@@ -67,6 +67,17 @@ export function resolveTaxRatesForDate(
     return defaults;
   }
 
+  // If taxes are disabled at the business config level, zero out all tax rates
+  if (config.enableTaxes === false || (config as any).enabled === false) {
+    return {
+      cnssRateEmployee: 0,
+      cnssRateEmployer: 0,
+      cnsRateEmployee: 0,
+      cnsRateEmployer: 0,
+      survivalFloorHTG: typeof config.survivalFloorHTG === "number" ? config.survivalFloorHTG : defaults.survivalFloorHTG,
+    };
+  }
+
   // Fallback if no history is defined or history is empty
   if (!config.history || !Array.isArray(config.history) || config.history.length === 0) {
     return {

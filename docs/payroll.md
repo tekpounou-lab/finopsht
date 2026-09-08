@@ -11,38 +11,43 @@ The FINOPS ERP Payroll Engine handles automated calculation, legal tax complianc
 ## 1. Core Payroll Processing Pipeline
 
 ```
-[ Active Period Selected ]
+[ Cycle Creation / Selection ] ───(Automatic Naming + Deduplication)
           │
           ▼
-[ Pessimistic Lock Activated ] ──(Freezes timecards & adjustments)
+[ Draft Parameter Adjustments ] ──(Edit dates, exclude staff, toggle ONA/OFATMA, soft-delete draft)
           │
           ▼
-[ Calculation Engine Run ] ────(Base + Overtime 1.5x/2x + Bonuses - Tax/Advances)
+[ Calculation Engine Run ] ──────(FIXED/COMMISSION/HYBRID + Overtime + Bonuses - Absences/Advances - Dynamic ONA/OFATMA)
           │
           ▼
-[ Survival Floor Protection ] ─(Ensures net pay >= 15,000 HTG minimum)
+[ Survival Floor Protection ] ───(Ensures net pay >= 15,000 HTG minimum)
           │
           ▼
-[ Dry-Run Validation ] ────────(Forensic verification pass)
+[ Dry-Run Validation ] ──────────(Forensic verification pass + Debug Tracing)
           │
           ▼
-[ Cycle Sealed & Posted ] ─────(SHA-256 seal generated + Ledger journal posted)
+[ Cycle Sealed & Posted ] ───────(SHA-256 seal generated + Ledger journal posted)
 ```
 
 ---
 
-## 2. Tax Calculation Formulas
+## 2. Calculation & Deduction Formulas
 
 - **Gross Pay**:
-  $$\text{Gross} = \text{Base Salary} + (\text{Hourly Rate} \times 1.5 \times \text{OT150}) + (\text{Hourly Rate} \times 2.0 \times \text{OT200}) + \text{Bonuses}$$
-- **ONA Withholding (CNSS)**:
-  $$\text{Employee ONA} = \text{Gross} \times 0.06$$
-  $$\text{Employer ONA} = \text{Gross} \times 0.06$$
-- **OFATMA Withholding (CNS)**:
-  $$\text{Employee OFATMA} = \text{Gross} \times 0.02$$
-  $$\text{Employer OFATMA} = \text{Gross} \times 0.03$$
+  $$\text{Gross} = \text{Base Salary} + \text{Commissions} + \text{Overtime (1.5x/2.0x)} + \text{Bonuses} - \text{Penalties}$$
+- **Penalties (`PENALTY`)**:
+  - Absences: If worked hours $< 94\text{h}$ (in a $96\text{h}$ quinzaine), $\text{Absence Penalty} = (96 - \text{Worked Hours}) \times \text{Hourly Rate}$.
+  - Tardiness: Multiplied according to policy rate multiplier or fixed per-incident late fee.
+  - Total penalties are deducted from Gross Pay and tracked in `penalty`, `penalties`, and `absencePenalties`.
+- **Statutory Taxes & Dynamic Toggle (`enableTaxes`)**:
+  - When `enableTaxes` or `isTaxesEnabled` is `false`, tax deductions are strictly $0\text{ HTG}$ across ONA and OFATMA (`GOV FEES` = 0).
+  - When enabled:
+    - ONA: $\text{Employee} = \text{Gross} \times 0.06$, $\text{Employer} = \text{Gross} \times 0.06$
+    - OFATMA: $\text{Employee} = \text{Gross} \times 0.02$, $\text{Employer} = \text{Gross} \times 0.03$
+- **Salary Advance Recovery (`advances` / `debts_deduction_cents`)**:
+  - Unreimbursed active advances from `salary_advances` or ledger advance records are automatically recovered up to their installment schedule and deducted directly from the Net Pay.
 - **Survival Floor Protection**:
-  If calculated $\text{Net Pay} < 15,000 \text{ HTG}$ and $\text{Gross} \ge 15,000 \text{ HTG}$, Net Pay is adjusted to the survival floor threshold ($15,000 \text{ HTG}$).
+  - If calculated $\text{Net Pay} < 15,000 \text{ HTG}$ and $\text{Gross} \ge 15,000 \text{ HTG}$, Net Pay is adjusted to the survival floor threshold ($15,000 \text{ HTG}$), followed by debt recoveries.
 
 ---
 

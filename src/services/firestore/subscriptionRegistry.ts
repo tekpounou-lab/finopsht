@@ -1,7 +1,7 @@
 import { Query, DocumentReference, onSnapshot } from "firebase/firestore";
 import { updateHealthListeners } from "../health/firestoreHealth";
 import { PerformanceService } from "../performance/PerformanceService";
-import { isRetriableFirestoreError, calculateBackoffDelay } from "./firestoreRetry";
+import { isRetriableFirestoreError, calculateBackoffDelay, isQuotaExceededError } from "./firestoreRetry";
 import { LogSanitizer } from "../security/LogSanitizer";
 import { logger } from "../observability/Logger";
 import { RateLimiter } from "../security/RateLimiter";
@@ -86,6 +86,20 @@ class SubscriptionRegistry {
         },
         (error: any) => {
           if (state.isClosed) return;
+
+          // Check if quota exceeded - retain cache and prevent infinite reconnection loops
+          if (isQuotaExceededError(error)) {
+            logger.warn(
+              `[FirestoreSubscriptionRegistry] Quota limit reached on stream "${LogSanitizer.sanitizeString(key)}". Retaining local cached snapshot to ensure operational continuity.`
+            );
+            if (state.lastSnapshot) {
+              const cached = state.lastSnapshot;
+              state.callbacks.forEach((cb) => {
+                try { cb(cached); } catch (_) {}
+              });
+            }
+            return;
+          }
 
           // Check if error is transient / overload
           if (isRetriableFirestoreError(error)) {

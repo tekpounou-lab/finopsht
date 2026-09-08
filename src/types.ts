@@ -212,18 +212,23 @@ export interface PayrollCycle {
   cycleName: string; // e.g. "Quinzaine 1 - Mai 2026"
   cycleType?: "REGULAR_FIRST_HALF" | "REGULAR_SECOND_HALF" | "BONUS";
   effectiveAccountingDate?: string; // Financial effective posting date (e.g. YYYY-MM-15 or YYYY-MM-LASTDAY)
-  label?: "Q1" | "Q2";
+  label?: string;
   month?: number;
   year?: number;
   startDate: string;
   endDate: string;
   start_date?: string;
   end_date?: string;
-  status: "DRAFT" | "VALIDATED" | "LOCKED" | "PAID" | "REOPEN_REQUESTED" | "REOPEN_APPROVED";
+  status: "DRAFT" | "CALCULATED" | "VALIDATED" | "LOCKED" | "PAID" | "SEALED" | "REOPEN_REQUESTED" | "REOPEN_APPROVED";
+  sealedAt?: string;
+  sealedBy?: string;
+  sealSignature?: string;
   reopenReason?: string;
   reopenRequestedBy?: string;
   reopenRequestedAt?: any;
   generated_by?: string;
+  calculatedBy?: string;
+  calculatedAt?: any;
   validatedBy?: string;
   validatedAt?: any;
   disbursedAt?: string;
@@ -231,6 +236,17 @@ export interface PayrollCycle {
   created_at?: any;
   updated_at?: any;
   excludedEmployeeIds?: string[];
+  employeeIds?: string[];
+  isReversed?: boolean;
+  reversalOfCycleId?: string;
+  reversalCycleId?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+  reversalReason?: string;
+  total_gross_cents?: number;
+  total_net_cents?: number;
+  total_deductions_cents?: number;
+  recordsCount?: number;
 }
 
 export interface PayrollRecord {
@@ -244,6 +260,14 @@ export interface PayrollRecord {
   branch_id?: string;
   department_id?: string;
   pay_profile?: "FIXED" | "COMMISSION" | "HYBRID";
+  baseSalary?: number;
+  salesHtg?: number;
+  workedHours?: number;
+  overtimeHours?: number;
+  overtimePayout?: number;
+  penalties?: number;
+  primes?: number;
+  survivalFloorApplied?: boolean;
   globalPerformanceScore?: number;
   attendanceScore?: number;
   productivityRatio?: number;
@@ -273,15 +297,26 @@ export interface PayrollRecord {
   cnsDeduction: number; // 2% CNS
   commissions: number;
   advancesTreated: number; // Ledger advances subtracted
+  advances?: number;
+  penalty?: number;
+  absencePenalties?: number;
+  enableTaxes?: boolean;
   netPaid: number; // Integer: Gross + Commissions - deductions - advances
-  status: "PENDING" | "APPROVED" | "PAID" | "DRAFT" | "VALIDATED" | "LOCKED" | "CORRECTED";
+  status: "PENDING" | "APPROVED" | "PAID" | "DRAFT" | "VALIDATED" | "LOCKED" | "CORRECTED" | "SEALED";
   hashSignature: string; // Crypto or simple signature trace
   protectionRuleEnforced?: boolean;
   performance_bonus_cents?: number;
   custom_override_bonus_cents?: number;
   custom_override_commission_cents?: number;
   generated_at?: any;
+  created_at?: any;
   updated_at?: any;
+  period_start?: string;
+  period_end?: string;
+  startDate?: string;
+  endDate?: string;
+  deleted?: boolean;
+  notes?: string;
 }
 
 export interface LedgerTransaction {

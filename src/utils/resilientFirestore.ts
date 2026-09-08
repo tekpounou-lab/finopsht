@@ -56,6 +56,24 @@ export function isPermissionError(err: any): boolean {
   );
 }
 
+export function isQuotaExceededError(err: any): boolean {
+  if (!err) return false;
+  const msg = (typeof err === "string" ? err : err?.message || String(err)).toLowerCase();
+  const code = (err?.code || "").toLowerCase();
+  const name = (err?.name || "").toLowerCase();
+
+  return (
+    code.includes("resource-exhausted") ||
+    msg.includes("quota limit exceeded") ||
+    msg.includes("quota exceeded") ||
+    msg.includes("free daily read units") ||
+    msg.includes("quota metrics") ||
+    msg.includes("free tier database") ||
+    msg.includes("resource_exhausted") ||
+    name.includes("resource-exhausted")
+  );
+}
+
 /**
  * Calculates exponential backoff delay with full jitter (decorrelated jitter algorithm).
  */
@@ -259,6 +277,12 @@ export async function resilientGetDoc(
         return snap;
       } catch (err: any) {
         lastError = err;
+        if (isQuotaExceededError(err)) {
+          if (isDebugEnabled) {
+            console.warn(`[resilientGetDoc] Quota limit exceeded for ${path}. Switching to cache fallback immediately.`);
+          }
+          break; // Daily quota cap reached; do not loop retries
+        }
         const isPerm = isPermissionError(err);
         if (isPerm) {
           if (auth.currentUser && isDebugEnabled) {
@@ -389,6 +413,12 @@ export async function resilientGetDocs(
         return snap;
       } catch (err: any) {
         lastError = err;
+        if (isQuotaExceededError(err)) {
+          if (isDebugEnabled) {
+            console.warn(`[resilientGetDocs] Quota limit exceeded for query ${key || ""}. Switching to cache fallback immediately.`);
+          }
+          break; // Daily quota cap reached; do not loop retries
+        }
         const isPerm = isPermissionError(err);
         if (isPerm) {
           if (auth.currentUser && isDebugEnabled) {

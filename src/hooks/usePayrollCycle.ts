@@ -9,13 +9,13 @@ export function usePayrollCycle(businessId?: string) {
     { 
       enabled: Boolean(businessId), 
       businessId,
-      orderByField: "endDate",
-      orderDirection: "desc"
     }
   );
 
   const payrollCycles = useMemo(() => {
-    return [...rawCycles].sort((a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime());
+    return [...rawCycles]
+      .filter((c) => !(c as any).deleted && (c as any).deleted !== "true")
+      .sort((a, b) => new Date(b.startDate || b.endDate || 0).getTime() - new Date(a.startDate || a.endDate || 0).getTime());
   }, [rawCycles]);
 
   return {

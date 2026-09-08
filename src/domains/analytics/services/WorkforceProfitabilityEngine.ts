@@ -38,11 +38,25 @@ export class WorkforceProfitabilityEngine {
     endDate?: string,
     businessSettings?: any
   ): WorkforceProfitabilitySnapshot {
-    const isSocialTaxEnabled = businessSettings?.payroll?.taxes?.enabled !== undefined
-      ? Boolean(businessSettings.payroll.taxes.enabled)
-      : (businessSettings?.payroll?.enable_social_taxes !== undefined
-          ? Boolean(businessSettings.payroll.enable_social_taxes)
-          : false);
+    const isSocialTaxEnabled = businessSettings?.payroll_policies?.enableTaxes !== undefined
+      ? Boolean(businessSettings.payroll_policies.enableTaxes)
+      : (businessSettings?.payrollPolicies?.enableTaxes !== undefined
+          ? Boolean(businessSettings.payrollPolicies.enableTaxes)
+          : (businessSettings?.tax_config?.enableTaxes !== undefined
+              ? Boolean(businessSettings.tax_config.enableTaxes)
+              : (businessSettings?.taxConfig?.enableTaxes !== undefined
+                  ? Boolean(businessSettings.taxConfig.enableTaxes)
+                  : (businessSettings?.payroll?.taxes?.enabled !== undefined
+                      ? Boolean(businessSettings.payroll.taxes.enabled)
+                      : (businessSettings?.payroll?.enable_social_taxes !== undefined
+                          ? Boolean(businessSettings.payroll.enable_social_taxes)
+                          : (businessSettings?.payroll?.enableTaxes !== undefined
+                              ? Boolean(businessSettings.payroll.enableTaxes)
+                              : (businessSettings?.enable_social_taxes !== undefined
+                                  ? Boolean(businessSettings.enable_social_taxes)
+                                  : (businessSettings?.enableTaxes !== undefined
+                                      ? Boolean(businessSettings.enableTaxes)
+                                      : false))))))));
 
     const matchesBusiness = (item: any) => {
       if (!businessId) return true;
@@ -97,20 +111,33 @@ export class WorkforceProfitabilityEngine {
           (t.employeeId === emp.id || (t as any).employee_id === emp.id) &&
           t.status !== "REVERSED"
       );
-      const empPayroll = payrollRecords.find((p) => p.employeeId === emp.id || (p as any).employee_id === emp.id);
+      const empPayrolls = payrollRecords.filter((p) => p.employeeId === emp.id || (p as any).employee_id === emp.id);
 
-      const hasActivity = empAttendance.length > 0 || empTxs.length > 0 || empPayroll !== undefined;
+      const hasActivity = empAttendance.length > 0 || empTxs.length > 0 || empPayrolls.length > 0;
 
-      // Financial Calculation
-      const monthlySalary = empPayroll
-        ? (empPayroll.grossSalary || ((empPayroll as any).gross_salary_cents ? (empPayroll as any).gross_salary_cents / 100 : emp.salaryBaseHtg || emp.baseSalary || 0))
-        : (empAttendance.length > 0 ? (emp.salaryBaseHtg || emp.baseSalary || 0) : 0);
-      const employerContributions = isSocialTaxEnabled && empPayroll
-        ? ((empPayroll.cnss_employer_cents || 0) + (empPayroll.ofatma_employer_cents || 0)) / 100
-        : 0;
-      const commissions = empPayroll?.commissions || 
-        empTxs.filter((t) => t.type === "COMPENSATION" || t.type === "BONUS").reduce((s, t) => s + t.amount, 0);
-      const benefitsCost = Math.round(commissions + ((empPayroll as any)?.allowances_cents ? (empPayroll as any).allowances_cents / 100 : 0));
+      // Financial Calculation - Sum across all payroll records in period
+      let monthlySalary = 0;
+      let employerContributions = 0;
+      let commissions = 0;
+      let allowances = 0;
+
+      if (empPayrolls.length > 0) {
+        empPayrolls.forEach((p) => {
+          monthlySalary += (p.grossSalary || ((p as any).gross_salary_cents ? (p as any).gross_salary_cents / 100 : 0));
+          if (isSocialTaxEnabled) {
+            employerContributions += ((p.cnss_employer_cents || 0) + (p.ofatma_employer_cents || 0)) / 100;
+          }
+          commissions += (p.commissions || ((p as any).commission_cents ? (p as any).commission_cents / 100 : 0));
+          allowances += ((p as any)?.allowances_cents ? (p as any).allowances_cents / 100 : 0);
+        });
+      } else if (empAttendance.length > 0) {
+        monthlySalary = emp.salaryBaseHtg || emp.baseSalary || 0;
+      }
+
+      if (commissions === 0) {
+        commissions = empTxs.filter((t) => t.type === "COMPENSATION" || t.type === "BONUS").reduce((s, t) => s + t.amount, 0);
+      }
+      const benefitsCost = Math.round(commissions + allowances);
       const totalEmploymentCost = Math.round(monthlySalary + employerContributions + benefitsCost);
 
       const avgCostPerDay = calculatedExpectedDays > 0 ? Math.round(totalEmploymentCost / calculatedExpectedDays) : 0;
@@ -123,12 +150,39 @@ export class WorkforceProfitabilityEngine {
       const lateArrivals = empAttendance.filter((a) => a.status === "LATE").length;
       const unauthorizedAbsences = empAttendance.filter((a) => a.status === "ABSENT").length;
       const leaveDays = empAttendance.filter((a) => (a.status as string) === "LEAVE" || (a.status as string) === "VACATION").length;
+      const getAttHours = (a: AttendanceRecord | any): number => {
+        if (!a) return 0;
+        if (typeof a.realHours === "number" && !isNaN(a.realHours) && a.realHours > 0) return a.realHours;
+        if (typeof a.hoursWorked === "number" && !isNaN(a.hoursWorked) && a.hoursWorked > 0) return a.hoursWorked;
+        if (typeof a.hours_worked === "number" && !isNaN(a.hours_worked) && a.hours_worked > 0) return a.hours_worked;
+        if (typeof a.totalHours === "number" && !isNaN(a.totalHours) && a.totalHours > 0) return a.totalHours;
+        if (typeof a.workedHours === "number" && !isNaN(a.workedHours) && a.workedHours > 0) return a.workedHours;
+        if (typeof a.totalMinutes === "number" && !isNaN(a.totalMinutes) && a.totalMinutes > 0) return Number((a.totalMinutes / 60).toFixed(2));
+        
+        if (a.checkIn && a.checkOut && typeof a.checkIn === "string" && typeof a.checkOut === "string") {
+          const [h1, m1] = a.checkIn.split(":").map(Number);
+          const [h2, m2] = a.checkOut.split(":").map(Number);
+          if (!isNaN(h1) && !isNaN(h2)) {
+            const mins1 = h1 * 60 + (m1 || 0);
+            const mins2 = h2 * 60 + (m2 || 0);
+            if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+          }
+        }
+
+        const st = String(a.status || "").toUpperCase();
+        if (st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID") {
+          if (typeof a.plannedHours === "number" && a.plannedHours > 0) return a.plannedHours;
+          return 8;
+        }
+
+        return 0;
+      };
       const workedHours = empAttendance.reduce((sum, a) => {
         const status = a.status as string;
         if (status === "ABSENT" || status === "LEAVE" || status === "VACATION") return sum;
-        return sum + (a.realHours || (a.plannedHours || 8));
+        return sum + getAttHours(a);
       }, 0);
-      const overtimeHours = empAttendance.reduce((sum, a) => sum + Math.max(0, (a.realHours || 0) - (a.plannedHours || 8)), 0);
+      const overtimeHours = empAttendance.reduce((sum, a) => sum + Math.max(0, getAttHours(a) - (a.plannedHours || 8)), 0);
 
       const attendanceRate = expectedHours > 0 ? Math.min(100, Math.round((workedHours / expectedHours) * 100)) : 0;
       const absenceRate = totalExpectedDays > 0 ? Math.min(100, Math.round((unauthorizedAbsences / totalExpectedDays) * 100)) : 0;

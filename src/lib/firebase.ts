@@ -152,8 +152,15 @@ export function logFirestoreError(error: unknown, operationType: OperationType, 
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const rawMsg = error instanceof Error ? error.message : String(error);
+  const isQuota =
+    rawMsg.includes("Quota limit exceeded") ||
+    rawMsg.includes("RESOURCE_EXHAUSTED") ||
+    rawMsg.includes("quota") ||
+    rawMsg.includes("Quota exceeded");
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: rawMsg,
     authInfo: {
       userId: LogSanitizer.maskUid(auth.currentUser?.uid),
       email: LogSanitizer.maskEmail(auth.currentUser?.email),
@@ -168,8 +175,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path: path ? LogSanitizer.sanitizeString(path) : null
   };
+
+  if (isQuota) {
+    logger.warn('Firestore Quota Limit Reached:', errInfo);
+    throw new Error(`Quota limite Firestore atteint pour cette journée (Free tier database read/write limit).`);
+  }
+
   logger.error('Firestore Error Captured:', errInfo);
-  throw new Error(JSON.stringify(errInfo));
+  throw new Error(rawMsg || "Une erreur Firestore s'est produite.");
 }
 
 // Global safe database accessor helpers

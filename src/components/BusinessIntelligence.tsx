@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useI18n } from "../i18n";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import {
@@ -21,6 +21,7 @@ import { getLocalIP, generateSignature } from "../data";
 import { AnalyticsHealth, ExecutiveIntelligenceCenter } from "../domains/analytics";
 import { PredictiveIntelligenceCenter } from "../domains/analytics/components/PredictiveIntelligenceCenter";
 import { WorkforceIntelligenceFramework } from "../domains/analytics/components/WorkforceIntelligenceFramework";
+import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
 
 import { useBIUIState } from "./bi/hooks/useBIUIState";
 import { useBIDataAggregation } from "./bi/hooks/useBIDataAggregation";
@@ -85,6 +86,38 @@ export default function BusinessIntelligence({
     currentBranch,
     currentRole,
   });
+
+  const { setFilters: setExecutiveFilters } = useExecutiveFilters();
+
+  // Harmonize ExecutiveFilterContext whenever UI filters update
+  useEffect(() => {
+    setExecutiveFilters((prev) => {
+      if (
+        prev.branchId === uiState.selectedBranchId &&
+        prev.departmentId === uiState.selectedDeptId &&
+        prev.transactionType === uiState.selectedTxType &&
+        prev.startDate === uiState.startDate &&
+        prev.endDate === uiState.endDate
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        branchId: uiState.selectedBranchId,
+        departmentId: uiState.selectedDeptId,
+        transactionType: uiState.selectedTxType,
+        startDate: uiState.startDate,
+        endDate: uiState.endDate,
+      };
+    });
+  }, [
+    uiState.selectedBranchId,
+    uiState.selectedDeptId,
+    uiState.selectedTxType,
+    uiState.startDate,
+    uiState.endDate,
+    setExecutiveFilters,
+  ]);
 
   const [selectedDeptForExpenseModal, setSelectedDeptForExpenseModal] = useState<EnrichedDepartmentMetric | null>(null);
 

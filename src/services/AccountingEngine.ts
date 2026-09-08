@@ -1,4 +1,4 @@
-import { LedgerTransaction, Branch, Department, Employee } from "../types";
+import { LedgerTransaction, Branch, Department, Employee, PayrollCycle, PayrollRecord } from "../types";
 import { Invoice } from "../types/crm";
 import {
   TransactionImportRow,
@@ -289,6 +289,349 @@ export const createInvoiceJournal = (
 };
 
 /**
+ * Creates balanced double-entry general ledger transactions and journal entry for a SEALED payroll cycle.
+ * Accounts:
+ *   - Débit: 5100 - Payroll Expense (5100_PAYROLL_EXPENSE)
+ *   - Crédit: 2100 - ONA Payable (2100_ONA_TAXES_PAYABLE)
+ *   - Crédit: 2110 - OFATMA Payable (2110_OFATMA_TAXES_PAYABLE)
+ *   - Crédit: 1300 - Employee Advances (1300_EMPLOYEE_ADVANCES) [if advances recovered]
+ *   - Crédit: 1010 - Bank (1010_BANK) [Net Paid to Employees]
+ */
+export const createPayrollJournalEntry = (
+  cycle: PayrollCycle,
+  records: PayrollRecord[],
+  businessId: string,
+  actor?: { uid?: string; id?: string; email?: string; name?: string }
+): { transactions: LedgerTransaction[]; journalEntry: JournalEntry } => {
+  const now = new Date().toISOString();
+  const txDate = cycle.effectiveAccountingDate || cycle.endDate || now.split("T")[0];
+  const cycleLabel = cycle.cycleName || cycle.label || cycle.id;
+  const txIdBase = `tx_pay_${cycle.id}`;
+
+  let totalGrossCents = 0;
+  let totalOnaCents = 0;
+  let totalOfatmaCents = 0;
+  let totalAdvancesCents = 0;
+  let totalNetCents = 0;
+
+  records.forEach((r) => {
+    const grossC = r.gross_salary_cents ?? Math.round((r.grossSalary || 0) * 100);
+    const onaC = r.cnss_employee_cents ?? Math.round((r.cnssDeduction || 0) * 100);
+    const ofatmaC = r.cns_employee_cents ?? Math.round((r.cnsDeduction || 0) * 100);
+    const advC = r.debts_deduction_cents ?? Math.round((r.advancesTreated || 0) * 100);
+    const netC = r.net_salary_cents ?? Math.round((r.netPaid || 0) * 100);
+
+    totalGrossCents += grossC;
+    totalOnaCents += onaC;
+    totalOfatmaCents += ofatmaC;
+    totalAdvancesCents += advC;
+    totalNetCents += netC;
+  });
+
+  const transactions: LedgerTransaction[] = [];
+  const actorId = actor?.uid || actor?.id || "SYSTEM";
+
+  // Leg 1: Net Salaries Payout (Debit 5100_PAYROLL_EXPENSE, Credit 1010_BANK)
+  if (totalNetCents > 0) {
+    const netHtg = totalNetCents / 100;
+    transactions.push({
+      id: `${txIdBase}_net`,
+      business_id: businessId,
+      branchId: "MAIN",
+      type: "PAYROLL",
+      amount: netHtg,
+      amount_cents: totalNetCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Virement Salaires Nets (Banque)`,
+      category: "PAYROLL",
+      signerId: actorId,
+      currency: "HTG",
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5100_PAYROLL_EXPENSE",
+      credit_account: "1010_BANK",
+      debit: netHtg,
+      credit: netHtg,
+      debit_cents: totalNetCents,
+      credit_cents: totalNetCents,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "NET_PAYOUT",
+        accountDebit: "5100 - Payroll Expense",
+        accountCredit: "1010 - Bank"
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  // Leg 2: ONA Payable (Debit 5100_PAYROLL_EXPENSE, Credit 2100_ONA_TAXES_PAYABLE)
+  if (totalOnaCents > 0) {
+    const onaHtg = totalOnaCents / 100;
+    transactions.push({
+      id: `${txIdBase}_ona`,
+      business_id: businessId,
+      branchId: "MAIN",
+      type: "PAYROLL",
+      amount: onaHtg,
+      amount_cents: totalOnaCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Retenues Sociales ONA (6%) à Décaisser`,
+      category: "TAX",
+      signerId: actorId,
+      currency: "HTG",
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5100_PAYROLL_EXPENSE",
+      credit_account: "2100_ONA_TAXES_PAYABLE",
+      debit: onaHtg,
+      credit: onaHtg,
+      debit_cents: totalOnaCents,
+      credit_cents: totalOnaCents,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "ONA_TAX",
+        accountDebit: "5100 - Payroll Expense",
+        accountCredit: "2100 - ONA Payable"
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  // Leg 3: OFATMA Payable (Debit 5100_PAYROLL_EXPENSE, Credit 2110_OFATMA_TAXES_PAYABLE)
+  if (totalOfatmaCents > 0) {
+    const ofatmaHtg = totalOfatmaCents / 100;
+    transactions.push({
+      id: `${txIdBase}_ofatma`,
+      business_id: businessId,
+      branchId: "MAIN",
+      type: "PAYROLL",
+      amount: ofatmaHtg,
+      amount_cents: totalOfatmaCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Retenues Risques OFATMA (2%) à Décaisser`,
+      category: "TAX",
+      signerId: actorId,
+      currency: "HTG",
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5100_PAYROLL_EXPENSE",
+      credit_account: "2110_OFATMA_TAXES_PAYABLE",
+      debit: ofatmaHtg,
+      credit: ofatmaHtg,
+      debit_cents: totalOfatmaCents,
+      credit_cents: totalOfatmaCents,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "OFATMA_TAX",
+        accountDebit: "5100 - Payroll Expense",
+        accountCredit: "2110 - OFATMA Payable"
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  // Leg 4: Advances Recovery (Debit 5100_PAYROLL_EXPENSE, Credit 1300_EMPLOYEE_ADVANCES)
+  if (totalAdvancesCents > 0) {
+    const advHtg = totalAdvancesCents / 100;
+    transactions.push({
+      id: `${txIdBase}_adv`,
+      business_id: businessId,
+      branchId: "MAIN",
+      type: "PAYROLL",
+      amount: advHtg,
+      amount_cents: totalAdvancesCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Recouvrement Avances sur Salaires`,
+      category: "ADVANCE",
+      signerId: actorId,
+      currency: "HTG",
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5100_PAYROLL_EXPENSE",
+      credit_account: "1300_EMPLOYEE_ADVANCES",
+      debit: advHtg,
+      credit: advHtg,
+      debit_cents: totalAdvancesCents,
+      credit_cents: totalAdvancesCents,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "ADVANCE_RECOVERY",
+        accountDebit: "5100 - Payroll Expense",
+        accountCredit: "1300 - Employee Advances"
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  const totalCreditSumCents = totalNetCents + totalOnaCents + totalOfatmaCents + totalAdvancesCents;
+  const adjustedGrossCents = Math.max(totalGrossCents, totalCreditSumCents);
+
+  const journalLines: any[] = [
+    {
+      accountId: "5100_PAYROLL_EXPENSE",
+      accountCode: "5100",
+      accountName: "5100 - Payroll Expense",
+      debitCents: adjustedGrossCents,
+      creditCents: 0,
+      description: `Masse Salariale Brute - ${cycleLabel}`
+    },
+    ...(totalOnaCents > 0
+      ? [
+          {
+            accountId: "2100_ONA_TAXES_PAYABLE",
+            accountCode: "2100",
+            accountName: "2100 - ONA Payable",
+            debitCents: 0,
+            creditCents: totalOnaCents,
+            description: `Cotisations ONA Salariés (6%) - ${cycleLabel}`
+          }
+        ]
+      : []),
+    ...(totalOfatmaCents > 0
+      ? [
+          {
+            accountId: "2110_OFATMA_TAXES_PAYABLE",
+            accountCode: "2110",
+            accountName: "2110 - OFATMA Payable",
+            debitCents: 0,
+            creditCents: totalOfatmaCents,
+            description: `Cotisations OFATMA Salariés (2%) - ${cycleLabel}`
+          }
+        ]
+      : []),
+    ...(totalAdvancesCents > 0
+      ? [
+          {
+            accountId: "1300_EMPLOYEE_ADVANCES",
+            accountCode: "1300",
+            accountName: "1300 - Employee Advances",
+            debitCents: 0,
+            creditCents: totalAdvancesCents,
+            description: `Recouvrement Avances sur Salaires - ${cycleLabel}`
+          }
+        ]
+      : []),
+    ...(totalNetCents > 0
+      ? [
+          {
+            accountId: "1010_BANK",
+            accountCode: "1010",
+            accountName: "1010 - Bank",
+            debitCents: 0,
+            creditCents: totalNetCents,
+            description: `Règlement Net Salaires aux Collaborateurs - ${cycleLabel}`
+          }
+        ]
+      : [])
+  ];
+
+  const journalEntry: JournalEntry = {
+    id: `je_pay_${cycle.id}`,
+    businessId,
+    date: txDate,
+    reference: cycleLabel,
+    source: "PAYROLL",
+    sourceId: cycle.id,
+    description: `Écriture Comptable de Clôture Paie (SEALED) - ${cycleLabel}`,
+    currency: "HTG",
+    lines: journalLines,
+    totalDebitCents: adjustedGrossCents,
+    totalCreditCents: totalCreditSumCents,
+    isBalanced: adjustedGrossCents === totalCreditSumCents,
+    isLocked: true,
+    createdBy: actorId,
+    createdAt: now
+  };
+
+  return { transactions, journalEntry };
+};
+
+// Alias for generic calls
+export const createJournalEntry = createPayrollJournalEntry;
+
+/**
+ * Creates an inverse (reversal / contre-passation) balanced journal entry for a SEALED payroll cycle.
+ * Inverts debits and credits across all transaction legs (5100, 1010, 2100, 2110, 1300).
+ */
+export const createPayrollReversalJournalEntry = (
+  cycle: PayrollCycle,
+  records: PayrollRecord[],
+  businessId: string,
+  actor?: { uid?: string; id?: string; email?: string; name?: string },
+  reason?: string
+): { transactions: LedgerTransaction[]; journalEntry: JournalEntry } => {
+  const original = createPayrollJournalEntry(cycle, records, businessId, actor);
+  const now = new Date().toISOString();
+  const txDate = now.split("T")[0];
+  const cycleLabel = cycle.cycleName || cycle.label || cycle.id;
+  const actorId = actor?.uid || actor?.id || "SYSTEM";
+
+  // Reverse every ledger transaction by swapping debit and credit accounts
+  const reversalTransactions: LedgerTransaction[] = original.transactions.map((tx) => ({
+    ...tx,
+    id: `tx_rev_${tx.id}`,
+    date: txDate,
+    description: `[CONTRE-PASSATION] ${tx.description}`,
+    debit_account: tx.credit_account,
+    credit_account: tx.debit_account,
+    metadata: {
+      ...tx.metadata,
+      reversalOfTxId: tx.id,
+      reversalOfCycleId: cycle.id,
+      isReversal: true,
+      reversalReason: reason || "Annulation et contre-passation du cycle de paie scellé",
+      reversedBy: actorId
+    },
+    created_at: now,
+    updated_at: now
+  }));
+
+  // Reversal journal lines: swap debitCents and creditCents
+  const reversalLines = original.journalEntry.lines.map((line) => ({
+    ...line,
+    debitCents: line.creditCents,
+    creditCents: line.debitCents,
+    description: `[CONTRE-PASSATION] ${line.description}`
+  }));
+
+  const reversalJournalEntry: JournalEntry = {
+    id: `je_rev_pay_${cycle.id}_${Date.now()}`,
+    businessId,
+    date: txDate,
+    reference: `REV-${cycleLabel}`,
+    source: "PAYROLL",
+    sourceId: cycle.id,
+    description: `Contre-Passation de Clôture Paie - ${cycleLabel}`,
+    currency: "HTG",
+    lines: reversalLines,
+    totalDebitCents: original.journalEntry.totalCreditCents,
+    totalCreditCents: original.journalEntry.totalDebitCents,
+    isBalanced: true,
+    isLocked: true,
+    createdBy: actorId,
+    createdAt: now
+  };
+
+  return { transactions: reversalTransactions, journalEntry: reversalJournalEntry };
+};
+
+/**
  * Validates, maps, and deduplicates imported transaction rows (CSV/Excel)
  */
 export const importTransactions = (
@@ -511,6 +854,9 @@ export const AccountingEngine = {
   validateDoubleEntry,
   applyDoubleEntryRules,
   createInvoiceJournal,
+  createPayrollJournalEntry,
+  createPayrollReversalJournalEntry,
+  createJournalEntry,
   importTransactions,
   performLedgerAudit,
   reconcileBankStatement,

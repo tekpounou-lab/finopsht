@@ -85,7 +85,7 @@ export class DashboardQueryService {
         const metrics: DashboardMetricsDTO = {
           activeEmployeesCount: empsSnap.docs.filter((d) => isOperationalEmployee(d.data())).length,
           pendingLeavesCount: leavesSnap.size,
-          recentCyclesCount: cyclesSnap.size,
+          recentCyclesCount: cyclesSnap.docs.filter((d) => !(d.data() as any).deleted && (d.data() as any).deleted !== "true").length,
           pendingInvitationsCount: invitesSnap.size
         };
 

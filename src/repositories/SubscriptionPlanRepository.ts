@@ -250,7 +250,6 @@ export class SubscriptionPlanRepository {
       return plans;
     } catch (error) {
       console.warn("[SubscriptionPlanRepository] Error fetching subscription_plans, fallback to defaults:", error);
-      handleFirestoreError(error, OperationType.LIST, this.collectionName);
       return DEFAULT_SUBSCRIPTION_PLANS;
     }
   }

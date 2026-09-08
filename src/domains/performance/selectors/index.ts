@@ -162,6 +162,19 @@ export function selectFilteredDataSet(
 }
 
 /**
+ * Extracts numeric transaction amount
+ */
+const getTxAmount = (tx: any): number => {
+  if (typeof tx.amount === "number" && !isNaN(tx.amount)) return tx.amount;
+  if (typeof tx.amount_cents === "number" && !isNaN(tx.amount_cents)) return tx.amount_cents / 100;
+  if (typeof tx.amountCents === "number" && !isNaN(tx.amountCents)) return tx.amountCents / 100;
+  if (typeof tx.total === "number" && !isNaN(tx.total)) return tx.total;
+  if (typeof tx.debit === "number" && tx.debit > 0) return tx.debit;
+  if (typeof tx.credit === "number" && tx.credit > 0) return tx.credit;
+  return 0;
+};
+
+/**
  * Calculates simplified overview metrics (Mode simplifié)
  */
 export function selectSimplifiedMetrics(
@@ -176,7 +189,7 @@ export function selectSimplifiedMetrics(
   let totalExpenses = 0;
 
   transactions.forEach((tx) => {
-    const amt = tx.amount !== undefined ? tx.amount : (tx.amount_cents ? tx.amount_cents / 100 : 0);
+    const amt = getTxAmount(tx);
     if (tx.type === "INCOME") {
       totalRevenue += amt;
     } else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") {
@@ -190,17 +203,17 @@ export function selectSimplifiedMetrics(
   let overtimeHoursTotal = 0;
 
   if (payrollRecords.length > 0) {
-    payrollRecords.forEach((p) => {
-      const net = p.netPay || (p.net_pay_cents ? p.net_pay_cents / 100 : 0);
-      const gross = p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || net;
+    payrollRecords.forEach((p: any) => {
+      const net = p.netPay || (p.net_pay_cents ? p.net_pay_cents / 100 : 0) || (p.net_salary_cents ? p.net_salary_cents / 100 : 0);
+      const gross = p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || net;
       totalPayroll += gross;
-      totalCommissions += p.commissionAmount || p.commissionsHTG || 0;
+      totalCommissions += p.commissionAmount || p.commissionsHTG || (p.commission_cents ? p.commission_cents / 100 : 0) || 0;
       overtimeHoursTotal += (p.overtimeHours150 || 0) + (p.overtimeHours200 || 0);
     });
   } else {
     // Derive from employee base salaries if no payroll records generated yet
-    employees.forEach((emp) => {
-      const base = emp.baseSalary || emp.salary || 0;
+    employees.forEach((emp: any) => {
+      const base = emp.baseSalary || emp.salary || (emp.base_salary_cents ? emp.base_salary_cents / 100 : 0) || 0;
       totalPayroll += base;
     });
   }
@@ -212,13 +225,13 @@ export function selectSimplifiedMetrics(
   const turnoverRate = employees.length > 0 ? Math.round((inactiveEmployees.length / employees.length) * 100) : 0;
 
   // Attendance Rate
-  let attendanceRate = 95; // Default high baseline if no negative records
+  let attendanceRate = 95;
   let averageHoursWorked = 8.0;
 
   if (attendanceRecords.length > 0) {
     const presentCount = attendanceRecords.filter((a) => a.status === "PRESENT" || a.status === "ON_DUTY" || !a.status).length;
     attendanceRate = Math.round((presentCount / attendanceRecords.length) * 100);
-    const totalHours = attendanceRecords.reduce((acc, curr) => acc + (curr.hoursWorked || curr.totalHours || 8), 0);
+    const totalHours = attendanceRecords.reduce((acc: number, curr: any) => acc + (curr.realHours || curr.hoursWorked || curr.hours_worked || curr.totalHours || 8), 0);
     averageHoursWorked = Math.round((totalHours / attendanceRecords.length) * 10) / 10;
   }
 
@@ -306,7 +319,7 @@ export function selectExpertMetrics(
   transactions.forEach((tx) => {
     const deptId = tx.departmentId || tx.department_id || "unassigned";
     if (deptAgg[deptId]) {
-      const amt = tx.amount !== undefined ? tx.amount : (tx.amount_cents ? tx.amount_cents / 100 : 0);
+      const amt = getTxAmount(tx);
       if (tx.type === "INCOME") deptAgg[deptId].revenue += amt;
       else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") deptAgg[deptId].expenses += amt;
     }
@@ -362,7 +375,7 @@ export function selectExpertMetrics(
   transactions.forEach((tx) => {
     const bId = tx.branchId || tx.branch_id || "main_hq";
     if (branchAgg[bId]) {
-      const amt = tx.amount !== undefined ? tx.amount : (tx.amount_cents ? tx.amount_cents / 100 : 0);
+      const amt = getTxAmount(tx);
       if (tx.type === "INCOME") branchAgg[bId].revenue += amt;
     }
   });
@@ -391,7 +404,7 @@ export function selectExpertMetrics(
         expenses: 0,
       };
     }
-    const amt = tx.amount !== undefined ? tx.amount : (tx.amount_cents ? tx.amount_cents / 100 : 0);
+    const amt = getTxAmount(tx);
     if (tx.type === "INCOME") dateMap[d].revenue += amt;
     else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") dateMap[d].expenses += amt;
   });

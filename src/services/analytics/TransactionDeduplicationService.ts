@@ -1,6 +1,11 @@
 // src/services/analytics/TransactionDeduplicationService.ts
 import { LedgerTransaction } from "../../types";
 import { AnalyticsProcessedRepository } from "../../repositories/AnalyticsProcessedRepository";
+import { isQuotaExceededError } from "../../utils/resilientFirestore";
+
+// In-memory session set of processed fingerprints to ensure continuous duplicate prevention
+// even when Firestore read operations hit daily quota limits.
+const sessionProcessedFingerprints = new Set<string>();
 
 export function sha256Sync(str: string): string {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57, h3 = 0xfae12012, h4 = 0x07a125b9;
@@ -45,10 +50,11 @@ export class TransactionDeduplicationService {
    * Checks if a transaction signature has already been processed.
    */
   public static async isTransactionDuplicate(businessId: string, fingerprint: string): Promise<boolean> {
-    // Check if any processed transaction has this fingerprint
-    // For simplicity, we can load processed transaction signatures or maintain a lookup
-    // Since isProcessed is usually mapped by ID, let's query the analytics_processed_transactions
-    // collection to see if any doc contains this fingerprint.
+    const key = `${businessId}_${fingerprint}`;
+    if (sessionProcessedFingerprints.has(key)) {
+      return true;
+    }
+
     const path = "analytics_processed_transactions";
     try {
       const { db } = await import("../../lib/firebase");
@@ -60,10 +66,18 @@ export class TransactionDeduplicationService {
         limit(1)
       );
       const snap = await getDocs(q);
-      return !snap.empty;
-    } catch (e) {
-      console.error("[TransactionDeduplicationService] Duplicate check failed:", e);
-      return false;
+      const exists = !snap.empty;
+      if (exists) {
+        sessionProcessedFingerprints.add(key);
+      }
+      return exists;
+    } catch (e: any) {
+      if (isQuotaExceededError(e)) {
+        console.warn("[TransactionDeduplicationService] Quota limit exceeded for Firestore reads. Falling back to local session cache.");
+        return sessionProcessedFingerprints.has(key);
+      }
+      console.warn("[TransactionDeduplicationService] Duplicate check notice:", e?.message || e);
+      return sessionProcessedFingerprints.has(key);
     }
   }
 
@@ -75,7 +89,17 @@ export class TransactionDeduplicationService {
     transactionId: string, 
     fingerprint: string
   ): Promise<void> {
-    await AnalyticsProcessedRepository.markProcessed(businessId, transactionId, fingerprint);
+    const key = `${businessId}_${fingerprint}`;
+    sessionProcessedFingerprints.add(key);
+    try {
+      await AnalyticsProcessedRepository.markProcessed(businessId, transactionId, fingerprint);
+    } catch (e: any) {
+      if (isQuotaExceededError(e)) {
+        console.warn("[TransactionDeduplicationService] Quota limit exceeded on markTransactionProcessed. Recorded locally in session cache.");
+        return;
+      }
+      console.warn("[TransactionDeduplicationService] markProcessed warning:", e?.message || e);
+    }
   }
 
   /**
@@ -86,6 +110,14 @@ export class TransactionDeduplicationService {
     startDate: string, 
     endDate: string
   ): Promise<string[]> {
-    return AnalyticsProcessedRepository.getProcessedByDateRange(businessId, startDate, endDate);
+    try {
+      return await AnalyticsProcessedRepository.getProcessedByDateRange(businessId, startDate, endDate);
+    } catch (e: any) {
+      if (isQuotaExceededError(e)) {
+        console.warn("[TransactionDeduplicationService] Quota limit exceeded on getProcessedTransactions. Returning empty array.");
+        return [];
+      }
+      return [];
+    }
   }
 }

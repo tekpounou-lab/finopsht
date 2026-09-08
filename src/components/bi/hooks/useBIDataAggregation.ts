@@ -3,6 +3,7 @@ import { Employee, LedgerTransaction, PayrollRecord, AttendanceRecord, Branch, D
 import { useBusinessContext } from "../../../contexts/BusinessContext";
 import { CurrencyRateRepository } from "../../../repositories/CurrencyRateRepository";
 import { useAnalytics } from "../../../domains/analytics/context/AnalyticsContext";
+import { AnalyticsEngine } from "../../../domains/analytics/services/AnalyticsEngine";
 import { RankMetricType } from "./useBIUIState";
 import { EnrichedDepartmentMetric, EnrichedBranchMetric, EmployeeScorecard, PayrollAggregates } from "../types";
 import { filterOperationalEmployees } from "../../../services/workforce/EmployeeEligibilityService";
@@ -35,8 +36,8 @@ export function useBIDataAggregation({
   ledgerTransactions,
   payrollRecords,
   attendanceRecords,
-  branches: _branches,
-  departments: _departments,
+  branches = [],
+  departments = [],
   selectedBranchId,
   selectedDeptId,
   selectedTxType = "ALL",
@@ -53,14 +54,44 @@ export function useBIDataAggregation({
   const [usdToHtgRate, setUsdToHtgRate] = useState<number>(135.0);
 
   const isSocialTaxEnabled = useMemo(() => {
+    if (businessSettings?.payroll_policies?.enableTaxes !== undefined) {
+      return Boolean(businessSettings.payroll_policies.enableTaxes);
+    }
+    if (businessSettings?.payrollPolicies?.enableTaxes !== undefined) {
+      return Boolean(businessSettings.payrollPolicies.enableTaxes);
+    }
+    if (businessSettings?.tax_config?.enableTaxes !== undefined) {
+      return Boolean(businessSettings.tax_config.enableTaxes);
+    }
+    if (businessSettings?.taxConfig?.enableTaxes !== undefined) {
+      return Boolean(businessSettings.taxConfig.enableTaxes);
+    }
     if (businessSettings?.payroll?.taxes?.enabled !== undefined) {
       return Boolean(businessSettings.payroll.taxes.enabled);
     }
     if (businessSettings?.payroll?.enable_social_taxes !== undefined) {
       return Boolean(businessSettings.payroll.enable_social_taxes);
     }
+    if (businessSettings?.payroll?.enableTaxes !== undefined) {
+      return Boolean(businessSettings.payroll.enableTaxes);
+    }
+    if (businessSettings?.enable_social_taxes !== undefined) {
+      return Boolean(businessSettings.enable_social_taxes);
+    }
+    if (businessSettings?.enableTaxes !== undefined) {
+      return Boolean(businessSettings.enableTaxes);
+    }
+    if ((currentBusiness as any)?.settings?.payroll_policies?.enableTaxes !== undefined) {
+      return Boolean((currentBusiness as any).settings.payroll_policies.enableTaxes);
+    }
+    if ((currentBusiness as any)?.settings?.payroll?.taxes?.enabled !== undefined) {
+      return Boolean((currentBusiness as any).settings.payroll.taxes.enabled);
+    }
+    if ((currentBusiness as any)?.settings?.payroll?.enable_social_taxes !== undefined) {
+      return Boolean((currentBusiness as any).settings.payroll.enable_social_taxes);
+    }
     return false;
-  }, [businessSettings]);
+  }, [businessSettings, currentBusiness]);
 
   useEffect(() => {
     let active = true;
@@ -112,19 +143,147 @@ export function useBIDataAggregation({
     });
   }, [ledgerTransactions, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedTxType, startDate, endDate]);
 
+  const empBranchMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (employees || []).forEach((e) => {
+      if (e.id) {
+        map.set(e.id, e.branchId || (e as any).branch_id || "");
+      }
+    });
+    return map;
+  }, [employees]);
+
+  const empDeptMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (employees || []).forEach((e) => {
+      if (e.id) {
+        map.set(e.id, e.departmentId || (e as any).department_id || "");
+      }
+    });
+    return map;
+  }, [employees]);
+
+  const normalizeDateStr = (rawDate: any): string => {
+    if (!rawDate) return "";
+    let str = "";
+    if (typeof rawDate === "string") {
+      str = rawDate.trim().split("T")[0];
+    } else if (typeof rawDate === "number") {
+      str = new Date(rawDate).toISOString().split("T")[0];
+    } else if (rawDate instanceof Date) {
+      str = rawDate.toISOString().split("T")[0];
+    } else if (rawDate?.toDate && typeof rawDate.toDate === "function") {
+      str = rawDate.toDate().toISOString().split("T")[0];
+    } else if (rawDate?.seconds) {
+      str = new Date(rawDate.seconds * 1000).toISOString().split("T")[0];
+    } else {
+      str = String(rawDate).split("T")[0];
+    }
+
+    if (!str) return "";
+
+    if (str.includes("/")) {
+      const parts = str.split("/");
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+        } else {
+          return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+        }
+      }
+    } else if (str.includes("-")) {
+      const parts = str.split("-");
+      if (parts.length === 3) {
+        if (parts[0].length !== 4 && parts[2].length === 4) {
+          return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+        }
+      }
+    }
+    return str;
+  };
+
+  const getAttendanceDate = (a: any): string => {
+    if (!a) return "";
+    const raw = a.date || a.date_str || a.dateStr || a.work_date || a.checkInDate || a.checkIn?.deviceDate || a.created_at || a.timestamp || a.checkIn?.timestamp;
+    return normalizeDateStr(raw);
+  };
+
+  const getHours = (a: any): number => {
+    if (!a) return 0;
+    if (typeof a.realHours === "number" && !isNaN(a.realHours) && a.realHours > 0) return a.realHours;
+    if (typeof a.hoursWorked === "number" && !isNaN(a.hoursWorked) && a.hoursWorked > 0) return a.hoursWorked;
+    if (typeof a.hours_worked === "number" && !isNaN(a.hours_worked) && a.hours_worked > 0) return a.hours_worked;
+    if (typeof a.totalHours === "number" && !isNaN(a.totalHours) && a.totalHours > 0) return a.totalHours;
+    if (typeof a.workedHours === "number" && !isNaN(a.workedHours) && a.workedHours > 0) return a.workedHours;
+    if (typeof a.totalMinutes === "number" && !isNaN(a.totalMinutes) && a.totalMinutes > 0) return Number((a.totalMinutes / 60).toFixed(2));
+    
+    if (a.checkIn && a.checkOut && typeof a.checkIn === "string" && typeof a.checkOut === "string") {
+      const [h1, m1] = a.checkIn.split(":").map(Number);
+      const [h2, m2] = a.checkOut.split(":").map(Number);
+      if (!isNaN(h1) && !isNaN(h2)) {
+        const mins1 = h1 * 60 + (m1 || 0);
+        const mins2 = h2 * 60 + (m2 || 0);
+        if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+      }
+    }
+
+    const st = String(a.status || "").toUpperCase();
+    if (st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID") {
+      if (typeof a.plannedHours === "number" && a.plannedHours > 0) return a.plannedHours;
+      return 8;
+    }
+
+    return 0;
+  };
+
   const filteredAttendance = useMemo(() => {
     if (!currentBusiness?.id) return [];
     return attendanceRecords.filter((rec) => {
-      if (rec.business_id !== currentBusiness.id) return false;
-      if (selectedBranchId !== "ALL" && rec.branchId !== selectedBranchId) return false;
+      const recBizId = rec.business_id || (rec as any).businessId;
+      if (recBizId && recBizId !== currentBusiness.id) return false;
+      
+      const rBranch = rec.branchId || (rec as any).branch_id || (rec.employeeId ? empBranchMap.get(rec.employeeId) : undefined);
+      if (selectedBranchId !== "ALL" && rBranch && rBranch !== selectedBranchId) return false;
+      
+      const rDept = rec.departmentId || (rec as any).department_id || (rec.employeeId ? empDeptMap.get(rec.employeeId) : undefined);
+      if (selectedDeptId !== "ALL" && rDept && rDept !== selectedDeptId) return false;
+
       if (selectedAttendanceStatus !== "ALL" && rec.status !== selectedAttendanceStatus) return false;
-      if (rec.date) {
-        if (startDate && rec.date < startDate) return false;
-        if (endDate && rec.date > endDate) return false;
+      
+      const dateStr = getAttendanceDate(rec);
+      if (dateStr) {
+        if (startDate && dateStr < startDate) return false;
+        if (endDate && dateStr > endDate) return false;
       }
       return true;
     });
-  }, [attendanceRecords, currentBusiness?.id, selectedBranchId, selectedAttendanceStatus, startDate, endDate]);
+  }, [attendanceRecords, currentBusiness?.id, selectedBranchId, selectedDeptId, empDeptMap, empBranchMap, selectedAttendanceStatus, startDate, endDate]);
+
+  const filteredPayrolls = useMemo(() => {
+    if (!currentBusiness?.id) return [];
+    return (payrollRecords || []).filter((rec) => {
+      if (rec.business_id && rec.business_id !== currentBusiness.id) return false;
+      if (rec.isExcluded) return false;
+      const emp = (employees || []).find((e) => e.id === (rec.employee_id || rec.employeeId));
+      const rBranch = rec.branch_id || (rec as any).branchId || emp?.branchId || (emp as any)?.branch_id;
+      const rDept = rec.department_id || (rec as any).departmentId || emp?.departmentId || (emp as any)?.department_id;
+      if (selectedBranchId !== "ALL" && rBranch && rBranch !== selectedBranchId) return false;
+      if (selectedDeptId !== "ALL" && rDept && rDept !== selectedDeptId) return false;
+
+      // Period matching - check work period overlap with filter bounds
+      const pStart = rec.period_start || (rec as any).startDate || (rec as any).periodStart || (rec as any).generated_at || (rec as any).paymentDate || rec.created_at || (rec as any).createdAt;
+      const pEnd = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || (rec as any).effectiveAccountingDate || pStart;
+      if (startDate && endDate) {
+        if (!pStart && !pEnd) return false;
+        const startStr = normalizeDateStr(pStart || pEnd);
+        const endStr = normalizeDateStr(pEnd || pStart);
+        if (!startStr || !endStr || endStr < startDate || startStr > endDate) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, startDate, endDate]);
 
   const formatCurrencyValue = (valInHtg: number) => {
     if (selectedCurrency === "USD") {
@@ -161,90 +320,238 @@ export function useBIDataAggregation({
     filteredEmployeesCount: filteredEmployees.length,
     filteredTxCount: filteredTx.length,
     filteredAttendanceCount: filteredAttendance.length,
+    filteredPayrollsCount: filteredPayrolls.length,
   });
+
+  const getTxAmount = (t: any): number => {
+    if (typeof t.amount === "number" && !isNaN(t.amount)) return t.amount;
+    if (typeof t.amount_cents === "number" && !isNaN(t.amount_cents)) return t.amount_cents / 100;
+    if (typeof t.amountCents === "number" && !isNaN(t.amountCents)) return t.amountCents / 100;
+    if (typeof t.total === "number" && !isNaN(t.total)) return t.total;
+    if (typeof t.debit === "number" && t.debit > 0) return t.debit;
+    if (typeof t.credit === "number" && t.credit > 0) return t.credit;
+    return 0;
+  };
+
+  // Payroll Aggregates calculated early as a source of truth
+  const payrollAggregates: PayrollAggregates = useMemo(() => {
+    const records = filteredPayrolls;
+    const totalGross = records.reduce((sum, p: any) => sum + (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || (p.baseSalary || 0)), 0);
+    const totalCommissions = records.reduce((sum, p: any) => sum + (p.commissions || (p.commission_cents ? p.commission_cents / 100 : 0) || p.commissionsHTG || 0), 0);
+    
+    let totalCnss = 0;
+    let totalCns = 0;
+    let employerCharges = 0;
+
+    if (isSocialTaxEnabled) {
+      const recordedCnss = records.reduce((sum, p: any) => {
+        const emp = (p.cnss_employee_cents ? p.cnss_employee_cents / 100 : 0) || (p.cnssDeduction || 0) || (p.onaEmployee || 0);
+        const er = (p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || (p.onaEmployer || 0);
+        return sum + emp + er;
+      }, 0);
+
+      const recordedCns = records.reduce((sum, p: any) => {
+        const emp = (p.cns_employee_cents ? p.cns_employee_cents / 100 : 0) || (p.cnsDeduction || 0) || (p.ofatmaEmployee || 0);
+        const er = (p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (p.ofatmaEmployer || 0);
+        return sum + emp + er;
+      }, 0);
+
+      const recordedEmployerCharges = records.reduce((sum, p: any) => {
+        const erCnss = (p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || (p.onaEmployer || 0);
+        const erCns = (p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (p.ofatmaEmployer || 0);
+        return sum + erCnss + erCns;
+      }, 0);
+
+      totalCnss = recordedCnss;
+      totalCns = recordedCns;
+      employerCharges = recordedEmployerCharges;
+    }
+
+    const baseCost = isFiltered || !biSnapshot ? totalGross : (biSnapshot.payrollCost?.currentValue || totalGross);
+    const baseComm = isFiltered || !biSnapshot ? totalCommissions : (biSnapshot.commissionsPaid?.currentValue || totalCommissions);
+    const totalCost = isFiltered || !biSnapshot ? (totalGross + employerCharges) : (biSnapshot.payrollCost?.currentValue || (totalGross + employerCharges));
+
+    return {
+      payrollPaid: Math.round(baseCost),
+      commissionsPaid: Math.round(baseComm),
+      cnssContributions: Math.round(totalCnss),
+      cnsContributions: Math.round(totalCns),
+      employerChargesSocials: Math.round(employerCharges),
+      totalEmploymentCost: Math.round(totalCost),
+    };
+  }, [biSnapshot, filteredPayrolls, isSocialTaxEnabled, isFiltered]);
 
   const totalRevenue = useMemo(() => {
     if (isFiltered || !biSnapshot) {
-      return filteredTx.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0);
+      return filteredTx
+        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+        .reduce((s, t) => s + getTxAmount(t), 0);
     }
     return biSnapshot?.revenue?.currentValue || 0;
   }, [isFiltered, biSnapshot?.revenue?.currentValue, filteredTx]);
 
   const totalExpenses = useMemo(() => {
     if (isFiltered || !biSnapshot) {
-      return filteredTx.filter((t) => t.type === "EXPENSE" || t.type === "PAYROLL").reduce((s, t) => s + t.amount, 0);
+      const directExp = filteredTx
+        .filter((t) => {
+          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+          if (t.type === "PAYROLL") return true;
+          if (t.type === "EXPENSE") {
+            if (t.metadata?.payrollCycleId || (t as any).metadata?.payroll_cycle_id) return false;
+            return true;
+          }
+          return false;
+        })
+        .reduce((s, t) => s + getTxAmount(t), 0);
+
+      const hasPayrollTx = filteredTx.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
+      const payrollExp = hasPayrollTx ? 0 : payrollAggregates.totalEmploymentCost;
+      return directExp + payrollExp;
     }
     return biSnapshot?.expenses?.currentValue || 0;
-  }, [isFiltered, biSnapshot?.expenses?.currentValue, filteredTx]);
+  }, [isFiltered, biSnapshot?.expenses?.currentValue, filteredTx, payrollAggregates.totalEmploymentCost]);
 
   const netProfit = totalRevenue - totalExpenses;
   const profitMarginPercentage = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
   const financialStressScore = totalRevenue > 0 ? Math.min(100, Math.max(0, (totalExpenses / totalRevenue) * 100)) : 100;
   const totalAdvancesPending = biSnapshot?.advanceExposure?.currentValue || 0;
-  const activeEmployeesCount = isFiltered ? filteredEmployees.length : (biSnapshot?.activeStaff?.currentValue || filteredEmployees.length || 0);
+  const activePresentEmpIds = useMemo(() => {
+    return new Set(
+      filteredAttendance
+        .filter((a) => a.status !== "ABSENT" || getHours(a) > 0)
+        .map((a) => a.employeeId || (a as any).employee_id)
+        .filter(Boolean)
+    );
+  }, [filteredAttendance]);
+
+  const activeEmployeesCount = isFiltered ? activePresentEmpIds.size : (biSnapshot?.activeStaff?.currentValue ?? activePresentEmpIds.size);
 
   const attendanceAggregates = useMemo(() => {
-    if (isFiltered && filteredAttendance.length > 0) {
-      const present = filteredAttendance.filter((a) => a.status !== "ABSENT").length;
-      const late = filteredAttendance.filter((a) => a.status === "LATE").length;
-      const absent = filteredAttendance.filter((a) => a.status === "ABSENT").length;
-      const tot = filteredAttendance.length;
-      const totalH = filteredAttendance.reduce((acc, a) => acc + (a.realHours ?? a.plannedHours ?? 8), 0);
+    if (filteredAttendance.length > 0) {
+      const staffCount = filteredEmployees.length > 0 ? filteredEmployees.length : (employees.length > 0 ? employees.length : 1);
+      const expectedHoursPerEmployee = (startDate && endDate) 
+        ? AnalyticsEngine.getExpectedWorkingHours(startDate, endDate)
+        : 160;
+      const expectedTotalHours = staffCount * expectedHoursPerEmployee;
+
+      const totalWorkedHours = filteredAttendance.reduce((acc, a) => acc + getHours(a), 0);
+      const lates = filteredAttendance.filter((a) => a.status === "LATE").length;
+      const absents = filteredAttendance.filter((a) => a.status === "ABSENT").length;
+      const totalRecords = filteredAttendance.length;
+
+      let attRate = 0;
+      if (expectedTotalHours > 0 && totalWorkedHours > 0) {
+        attRate = Math.min(100, Math.max(0, Math.round((totalWorkedHours / expectedTotalHours) * 100)));
+      } else if (totalRecords > 0) {
+        const presentCount = filteredAttendance.filter((a) => a.status !== "ABSENT").length;
+        attRate = Math.round((presentCount / Math.max(totalRecords, staffCount)) * 100);
+      }
+
+      const explicitAbsenceRate = totalRecords > 0 ? Math.round((absents / totalRecords) * 100) : 0;
+      const hoursDeficitAbsenceRate = Math.max(0, 100 - attRate);
+      const computedAbsenceRate = Math.max(0, Math.min(100, Math.max(explicitAbsenceRate, hoursDeficitAbsenceRate)));
+      const latenessRate = totalRecords > 0 ? Math.max(0, Math.min(100, Math.round((lates / totalRecords) * 100))) : 0;
+      const avgHours = totalRecords > 0 ? Math.round((totalWorkedHours / totalRecords) * 10) / 10 : 0;
+
       return {
-        attendanceRate: Math.round((present / tot) * 100),
-        latenessRate: Math.round((late / tot) * 100),
-        absenceRate: Math.round((absent / tot) * 100),
-        avgHours: Math.round((totalH / tot) * 10) / 10,
+        attendanceRate: attRate,
+        latenessRate,
+        absenceRate: computedAbsenceRate,
+        avgHours,
         overrides: 0,
       };
     }
-    if (!biSnapshot) return { attendanceRate: 95, latenessRate: 3, absenceRate: 2, avgHours: 8, overrides: 0 };
+
+    if (filteredEmployees.length > 0 && (startDate || endDate || selectedBranchId !== "ALL" || selectedDeptId !== "ALL")) {
+      return {
+        attendanceRate: 0,
+        latenessRate: 0,
+        absenceRate: 100,
+        avgHours: 0,
+        overrides: 0,
+      };
+    }
+
+    if (!biSnapshot?.attendanceRate) {
+      return { attendanceRate: 0, latenessRate: 0, absenceRate: 100, avgHours: 0, overrides: 0 };
+    }
+
     return {
-      attendanceRate: biSnapshot.attendanceRate.currentValue,
-      latenessRate: biSnapshot.latenessRate.currentValue,
-      absenceRate: biSnapshot.absenceRate.currentValue,
-      avgHours: biSnapshot.avgHoursWorked.currentValue,
+      attendanceRate: biSnapshot.attendanceRate.currentValue ?? 0,
+      latenessRate: biSnapshot.latenessRate?.currentValue ?? 0,
+      absenceRate: biSnapshot.absenceRate?.currentValue ?? 0,
+      avgHours: biSnapshot.avgHoursWorked?.currentValue ?? 0,
       overrides: 0,
     };
-  }, [isFiltered, filteredAttendance, biSnapshot]);
-
-  // Payroll Aggregates
-  const payrollAggregates: PayrollAggregates = useMemo(() => {
-    if (!biSnapshot) return { payrollPaid: 0, commissionsPaid: 0, cnssContributions: 0, cnsContributions: 0, employerChargesSocials: 0, totalEmploymentCost: 0 };
-    
-    const records = payrollRecords || [];
-    const totalCnss = isSocialTaxEnabled
-      ? records.reduce((sum, p) => sum + (((p.cnss_employee_cents || 0) + (p.cnss_employer_cents || 0)) / 100 || (p.cnssDeduction || 0)), 0)
-      : 0;
-    const totalCns = isSocialTaxEnabled
-      ? records.reduce((sum, p) => sum + (((p.cns_employee_cents || 0) + (p.ofatma_employer_cents || 0)) / 100 || (p.cnsDeduction || 0)), 0)
-      : 0;
-    const employerCharges = isSocialTaxEnabled
-      ? records.reduce((sum, p) => sum + (((p.cnss_employer_cents || 0) + (p.ofatma_employer_cents || 0)) / 100), 0)
-      : 0;
-
-    return {
-      payrollPaid: biSnapshot.payrollCost.currentValue,
-      commissionsPaid: biSnapshot.commissionsPaid.currentValue,
-      cnssContributions: Math.round(totalCnss + totalCns),
-      cnsContributions: Math.round(totalCns),
-      employerChargesSocials: Math.round(employerCharges),
-      totalEmploymentCost: biSnapshot.payrollCost.currentValue,
-    };
-  }, [biSnapshot, payrollRecords, isSocialTaxEnabled]);
+  }, [filteredAttendance, filteredEmployees.length, employees.length, startDate, endDate, selectedBranchId, selectedDeptId, biSnapshot]);
 
   // Branch Performance Details
-  const branchMetrics: EnrichedBranchMetric[] = (biSnapshot?.branchPerformance || []).map((b) => ({
-    branchId: b.branchId,
-    branchName: b.branchName,
-    employeeCount: b.employeeCount,
-    revenue: b.revenue,
-    expenses: b.expenses,
-    profit: b.profit,
-    margin: b.margin,
-    attendanceRate: b.attendanceRate,
-    efficiencyScore: b.efficiencyScore,
-  }));
+  const branchMetrics: EnrichedBranchMetric[] = useMemo(() => {
+    if (!isFiltered && biSnapshot?.branchPerformance && biSnapshot.branchPerformance.length > 0) {
+      return biSnapshot.branchPerformance.map((b) => ({
+        branchId: b.branchId,
+        branchName: b.branchName,
+        employeeCount: b.employeeCount,
+        revenue: b.revenue,
+        expenses: b.expenses,
+        profit: b.profit,
+        margin: b.margin,
+        attendanceRate: b.attendanceRate,
+        efficiencyScore: b.efficiencyScore,
+      }));
+    }
+
+    const targetBranches = branches.filter((b) => !currentBusiness?.id || b.business_id === currentBusiness.id);
+    return targetBranches.map((br) => {
+      const bEmps = filteredEmployees.filter((e) => e.branchId === br.id || (e as any).branch_id === br.id);
+      const bTxs = filteredTx.filter((t) => t.branchId === br.id || (t as any).branch_id === br.id);
+      const bAtt = filteredAttendance.filter((a) => a.branchId === br.id || (a as any).branch_id === br.id);
+
+      const rev = bTxs
+        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+        .reduce((sum, t) => sum + getTxAmount(t), 0);
+
+      const directExp = bTxs
+        .filter((t) => {
+          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+          if (t.type === "PAYROLL") return true;
+          if (t.type === "EXPENSE") {
+            if (t.metadata?.payrollCycleId || (t as any).metadata?.payroll_cycle_id) return false;
+            return true;
+          }
+          return false;
+        })
+        .reduce((sum, t) => sum + getTxAmount(t), 0);
+
+      const hasBPayrollTx = bTxs.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
+      const bPayrolls = filteredPayrolls.filter((p) => {
+        const emp = (employees || []).find((e) => e.id === (p.employeeId || p.employee_id));
+        return (p.branch_id || (p as any).branchId || emp?.branchId || (emp as any)?.branch_id) === br.id;
+      });
+      const bPayrollCost = bPayrolls.reduce(
+        (sum, p: any) => sum + (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || (p.baseSalary || 0)),
+        0
+      );
+      const exp = directExp + (hasBPayrollTx ? 0 : bPayrollCost);
+
+      const profit = rev - exp;
+      const margin = rev > 0 ? Math.round((profit / rev) * 100) : 0;
+      const presentCount = bAtt.filter((a) => a.status !== "ABSENT").length;
+      const attendanceRate = bAtt.length > 0 ? Math.round((presentCount / bAtt.length) * 100) : 0;
+
+      return {
+        branchId: br.id,
+        branchName: br.name,
+        employeeCount: bEmps.length,
+        revenue: rev,
+        expenses: exp,
+        profit,
+        margin,
+        attendanceRate,
+        efficiencyScore: margin > 15 ? 90 : 75,
+      };
+    });
+  }, [isFiltered, biSnapshot?.branchPerformance, branches, currentBusiness?.id, filteredEmployees, filteredTx, filteredAttendance, filteredPayrolls, employees]);
 
   const chartBranchData = useMemo(() => {
     return branchMetrics.map((bm) => {
@@ -292,43 +599,82 @@ export function useBIDataAggregation({
 
   const enrichedDepartmentMetrics: EnrichedDepartmentMetric[] = useMemo(() => {
     if (!currentBusiness?.id) return [];
-    return departmentMetrics.map((dm: any) => {
-      const deptEmployees = employees.filter(
-        (e) => e.departmentId === dm.departmentId || (e as any).department_id === dm.departmentId
+    const targetDepts = departments.filter((d) => !currentBusiness?.id || d.business_id === currentBusiness.id);
+
+    return targetDepts.map((dm: any) => {
+      const deptEmployees = filteredEmployees.filter(
+        (e) => e.departmentId === dm.id || (e as any).department_id === dm.id
       );
       const deptEmpIds = new Set(deptEmployees.map((e) => e.id));
 
-      const deptTxs = ledgerTransactions.filter((t) => {
-        if (t.business_id !== currentBusiness.id) return false;
-        if (selectedBranchId !== "ALL" && t.branchId !== selectedBranchId && (t as any).branch_id !== selectedBranchId) return false;
-        if (t.date) {
-          const txDate = t.date.split("T")[0];
-          if (startDate && txDate < startDate) return false;
-          if (endDate && txDate > endDate) return false;
-        }
+      const deptTxs = filteredTx.filter((t) => {
         return (
-          t.departmentId === dm.departmentId ||
-          (t as any).department_id === dm.departmentId ||
+          t.departmentId === dm.id ||
+          (t as any).department_id === dm.id ||
           (t.employeeId && deptEmpIds.has(t.employeeId)) ||
           ((t as any).employee_id && deptEmpIds.has((t as any).employee_id))
         );
       });
 
-      const revenue = deptTxs.filter((t) => t.type === "INCOME").reduce((s, t) => s + t.amount, 0);
-      const expenses = deptTxs.filter((t) => t.type === "EXPENSE" || t.type === "PAYROLL").reduce((s, t) => s + t.amount, 0);
-      const margin = revenue > 0 ? ((revenue - expenses) / revenue) * 100 : 0;
-      const avgHours = dm.avgHours || 8;
-      const productivityScore = dm.productivityScore || 85;
+      const revenue = deptTxs
+        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+        .reduce((s, t) => s + getTxAmount(t), 0);
+
+      const directExp = deptTxs
+        .filter((t) => {
+          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+          if (t.type === "PAYROLL") return true;
+          if (t.type === "EXPENSE") {
+            if (t.metadata?.payrollCycleId || (t as any).metadata?.payroll_cycle_id) return false;
+            return true;
+          }
+          return false;
+        })
+        .reduce((s, t) => s + getTxAmount(t), 0);
+
+      const hasDeptPayrollTx = deptTxs.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
+      const deptPayrolls = filteredPayrolls.filter((p) => {
+        const emp = (employees || []).find((e) => e.id === (p.employeeId || p.employee_id));
+        return (
+          (p.department_id || (p as any).departmentId || emp?.departmentId || (emp as any)?.department_id) === dm.id ||
+          (p.employee_id && deptEmpIds.has(p.employee_id)) ||
+          (p.employeeId && deptEmpIds.has(p.employeeId))
+        );
+      });
+      const deptPayrollCost = deptPayrolls.reduce(
+        (sum, p: any) => sum + (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || (p.baseSalary || 0)),
+        0
+      );
+      const expenses = directExp + (hasDeptPayrollTx ? 0 : deptPayrollCost);
+      const margin = revenue > 0 ? Math.round(((revenue - expenses) / revenue) * 100) : 0;
+
+      const deptAtt = filteredAttendance.filter((a) => {
+        const emp = (employees || []).find((e) => e.id === (a.employeeId || (a as any).employee_id));
+        return (
+          (a.departmentId || (a as any).department_id || emp?.departmentId || (emp as any)?.department_id) === dm.id ||
+          (a.employeeId && deptEmpIds.has(a.employeeId)) ||
+          ((a as any).employee_id && deptEmpIds.has((a as any).employee_id))
+        );
+      });
+      const deptHours = deptAtt.reduce((sum, a) => {
+        if (typeof a.realHours === "number" && !isNaN(a.realHours) && a.realHours >= 0) return sum + a.realHours;
+        if (typeof (a as any).hoursWorked === "number" && !isNaN((a as any).hoursWorked) && (a as any).hoursWorked >= 0) return sum + (a as any).hoursWorked;
+        return sum;
+      }, 0);
+      const avgHours = deptAtt.length > 0 ? Math.round((deptHours / deptAtt.length) * 10) / 10 : 0;
+      const deptPresent = deptAtt.filter((a) => a.status !== "ABSENT").length;
+      const attendanceRate = deptAtt.length > 0 ? Math.round((deptPresent / deptAtt.length) * 100) : 0;
+      const productivityScore = attendanceRate > 0 ? Math.round(attendanceRate * 0.8 + (margin > 10 ? 20 : 10)) : 0;
 
       return {
-        departmentId: dm.departmentId,
-        departmentName: dm.departmentName,
-        name: dm.departmentName,
-        employeeCount: dm.employeeCount,
-        totalStaff: dm.employeeCount,
+        departmentId: dm.id,
+        departmentName: dm.name,
+        name: dm.name,
+        employeeCount: deptEmployees.length,
+        totalStaff: deptEmployees.length,
         averageHours: avgHours,
         avgHours: avgHours,
-        attendanceRate: dm.attendanceRate || 90,
+        attendanceRate: attendanceRate,
         productivityScore: productivityScore,
         revenue,
         expenses,
@@ -337,7 +683,7 @@ export function useBIDataAggregation({
         formattedExpenses: formatCurrencyValue(expenses),
       };
     });
-  }, [departmentMetrics, employees, ledgerTransactions, currentBusiness?.id, selectedBranchId, startDate, endDate, formatCurrencyValue]);
+  }, [departments, filteredEmployees, filteredTx, filteredPayrolls, employees, currentBusiness?.id, formatCurrencyValue]);
 
   // Ranked Employees
   const effectiveRankMetric = rankBy || employeeRankMetric || "productivity";
@@ -352,35 +698,107 @@ export function useBIDataAggregation({
 
   // Cashflow Timeline
   const cashflowTimeline = useMemo(() => {
-    const hist = (biSnapshot as any)?.historicalCashflow;
-    if (!hist || !Array.isArray(hist)) return [];
-    return hist.map((t: any) => ({
-      date: t.date,
-      Revenus: t.revenue,
-      Dépenses: t.expenses,
-      Net: t.net,
-    }));
-  }, [biSnapshot]);
+    if (!isFiltered && (biSnapshot as any)?.historicalCashflow?.length) {
+      return (biSnapshot as any).historicalCashflow.map((t: any) => ({
+        date: t.date,
+        Revenus: t.revenue,
+        Dépenses: t.expenses,
+        Net: t.net,
+      }));
+    }
+
+    const dateMap: Record<string, { date: string; Revenus: number; Dépenses: number; Net: number }> = {};
+    filteredTx.forEach((tx) => {
+      const d = tx.date ? tx.date.split("T")[0] : "";
+      if (!d) return;
+      if (!dateMap[d]) {
+        dateMap[d] = { date: d, Revenus: 0, Dépenses: 0, Net: 0 };
+      }
+      const amt = getTxAmount(tx);
+      if (tx.type === "INCOME" && tx.status !== "REVERSED" && (tx.status as any) !== "VOID") {
+        dateMap[d].Revenus += amt;
+      } else if (
+        tx.status !== "REVERSED" &&
+        (tx.status as any) !== "VOID" &&
+        (tx.status as any) !== "CANCELLED"
+      ) {
+        if (tx.type === "PAYROLL") {
+          dateMap[d].Dépenses += amt;
+        } else if (tx.type === "EXPENSE" && !tx.metadata?.payrollCycleId && !(tx as any).metadata?.payroll_cycle_id) {
+          dateMap[d].Dépenses += amt;
+        }
+      }
+    });
+
+    const hasPayrollTx = filteredTx.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
+    if (!hasPayrollTx && filteredPayrolls.length > 0) {
+      filteredPayrolls.forEach((p: any) => {
+        const d = (p.period_end || p.endDate || p.effectiveAccountingDate || p.period_start || p.startDate || p.generated_at || "").split("T")[0];
+        if (d) {
+          if (!dateMap[d]) {
+            dateMap[d] = { date: d, Revenus: 0, Dépenses: 0, Net: 0 };
+          }
+          const pCost = (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || (p.baseSalary || 0));
+          dateMap[d].Dépenses += pCost;
+        }
+      });
+    }
+
+    const items = Object.values(dateMap)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((item) => ({
+        ...item,
+        Net: item.Revenus - item.Dépenses,
+      }));
+
+    if (items.length > 0) return items;
+    return (biSnapshot as any)?.historicalCashflow || [];
+  }, [isFiltered, biSnapshot, filteredTx, filteredPayrolls]);
 
   // Expense Categories
   const expenseCategoryChartData = useMemo(() => {
-    return biSnapshot?.expenseBreakdown && biSnapshot.expenseBreakdown.length > 0
-      ? biSnapshot.expenseBreakdown
-      : [{ name: "Aucune Dépense", value: 1 }];
-  }, [biSnapshot]);
+    if (!isFiltered && biSnapshot?.expenseBreakdown && biSnapshot.expenseBreakdown.length > 0) {
+      return biSnapshot.expenseBreakdown;
+    }
+
+    const catMap: Record<string, number> = {};
+    filteredTx.forEach((tx) => {
+      if (tx.status === "REVERSED" || (tx.status as any) === "VOID" || (tx.status as any) === "CANCELLED") return;
+      if (tx.type === "PAYROLL") {
+        catMap["Salaires & Masse Salariale"] = (catMap["Salaires & Masse Salariale"] || 0) + getTxAmount(tx);
+      } else if (tx.type === "EXPENSE") {
+        if (tx.metadata?.payrollCycleId || (tx as any).metadata?.payroll_cycle_id) return;
+        const cat = tx.category || tx.description || "Autres Dépenses";
+        catMap[cat] = (catMap[cat] || 0) + getTxAmount(tx);
+      }
+    });
+
+    if (payrollAggregates.totalEmploymentCost > 0 && !catMap["Salaires & Masse Salariale"]) {
+      catMap["Salaires & Masse Salariale"] = payrollAggregates.totalEmploymentCost;
+    }
+
+    const entries = Object.entries(catMap).map(([name, value]) => ({
+      name,
+      value: Math.round(value),
+    }));
+
+    return entries.length > 0 ? entries : [{ name: "Aucune Dépense", value: 1 }];
+  }, [isFiltered, biSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost]);
 
   // Dashboard Chart Data
   const dashboardChartData = useMemo(() => {
     if (!currentBusiness?.id) return [];
-    const txs = ledgerTransactions.filter(
-      (tx) => tx.business_id === currentBusiness.id && tx.status !== "REVERSED"
+    const sourceTxs = isFiltered ? filteredTx : ledgerTransactions;
+    const txs = sourceTxs.filter(
+      (tx) => (tx.business_id === currentBusiness.id || (tx as any).businessId === currentBusiness.id) && tx.status !== "REVERSED"
     );
 
-    const sortedTxs = [...txs].sort((a, b) => a.date.localeCompare(b.date));
+    const sortedTxs = [...txs].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
     const dateMap: Record<string, { date: string; revenue: number; expenses: number; net: number }> = {};
 
     sortedTxs.forEach((tx) => {
-      const dateStr = tx.date;
+      const dateStr = tx.date || "";
+      if (!dateStr) return;
       let formattedDate = dateStr;
       try {
         const d = new Date(dateStr);
@@ -401,13 +819,15 @@ export function useBIDataAggregation({
         };
       }
 
+      const amount = getTxAmount(tx);
+
       if (tx.type === "INCOME") {
-        dateMap[dateStr].revenue += tx.amount;
+        dateMap[dateStr].revenue += amount;
       } else if (tx.type === "PAYROLL") {
-        dateMap[dateStr].expenses += tx.amount;
+        dateMap[dateStr].expenses += amount;
       } else if (tx.type === "EXPENSE") {
         if (!tx.metadata?.payrollCycleId) {
-          dateMap[dateStr].expenses += tx.amount;
+          dateMap[dateStr].expenses += amount;
         }
       }
     });
@@ -421,7 +841,7 @@ export function useBIDataAggregation({
       });
 
     return list.slice(-10);
-  }, [ledgerTransactions, currentBusiness?.id, language]);
+  }, [ledgerTransactions, filteredTx, isFiltered, currentBusiness?.id, language]);
 
   return {
     biSnapshot,

@@ -57,7 +57,9 @@ export default function PerformanceAndCommissionsTab({
           orderBy("start_date", "desc")
         );
         const snap = await getDocs(q);
-        const cycles = snap.docs.map(d => ({ id: d.id, ...d.data() } as PayrollCycle));
+        const cycles = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as PayrollCycle))
+          .filter(c => !(c as any).deleted && (c as any).deleted !== "true");
         
         // Ensure activeCycle is in the list if it's a live un-persisted one
         if (!cycles.find(c => c.id === activeCycle.id)) {

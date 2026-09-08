@@ -32,10 +32,12 @@ export class PayrollQueryService {
 
         const q = query(collection(db, "payroll_cycles"), ...constraints);
         const snap = await getDocs(q);
-        const cycles = snap.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data()
-        }));
+        const cycles = snap.docs
+          .map((docSnap) => ({
+            id: docSnap.id,
+            ...docSnap.data()
+          }))
+          .filter((c: any) => !c.deleted && c.deleted !== "true");
 
         if (options.year) {
           return cycles.filter((c: any) => {

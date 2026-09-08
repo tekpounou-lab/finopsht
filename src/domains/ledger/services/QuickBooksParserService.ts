@@ -19,9 +19,9 @@ export class QuickBooksParserService {
   /**
    * Helper to parse a date string (DD/MM/YYYY or YYYY-MM-DD or MM/DD/YYYY) to ISO YYYY-MM-DD
    */
-  private static parseDateToISO(dStr: string): string | null {
+  private static parseDateToISO(dStr: string, preferDayFirst?: boolean): string | null {
     if (!dStr) return null;
-    return normalizeCsvDate(dStr);
+    return normalizeCsvDate(dStr, undefined, preferDayFirst);
   }
 
   /**
@@ -81,9 +81,13 @@ export class QuickBooksParserService {
         const dateRegex = /(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/g;
         const matches = lineStr.match(dateRegex);
         if (matches && matches.length > 0) {
+          const hasDayFirst = matches.some((m) => {
+            const p = m.split(/[/-]/);
+            return parseInt(p[0], 10) > 12;
+          });
           const parsedIsoDates: string[] = [];
           for (const m of matches) {
-            const iso = QuickBooksParserService.parseDateToISO(m);
+            const iso = QuickBooksParserService.parseDateToISO(m, hasDayFirst);
             if (iso) parsedIsoDates.push(iso);
           }
 

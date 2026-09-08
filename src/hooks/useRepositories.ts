@@ -164,7 +164,9 @@ export function usePayrollRecords(business_id: string | undefined) {
       deps: [identity?.user_uid]
     }
   );
-  return data;
+  return useMemo(() => {
+    return (data || []).filter((r) => !(r as any).deleted && (r as any).deleted !== "true");
+  }, [data]);
 }
 
 export function useEvents(business_id: string | undefined) {

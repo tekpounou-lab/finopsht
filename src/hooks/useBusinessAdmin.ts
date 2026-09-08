@@ -4,6 +4,7 @@ import { BusinessSnapshotService } from "../services/business/BusinessSnapshotSe
 import { SubscriptionService } from "../services/billing/SubscriptionService";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import { Business, Branch, Department } from "../types";
+import { isQuotaExceededError } from "../utils/resilientFirestore";
 
 export function useBusinessAdmin() {
   const { currentBusiness } = useBusinessContext();
@@ -23,14 +24,24 @@ export function useBusinessAdmin() {
     setError(null);
     try {
       await action();
-      // After any admin action, we should rebuild the snapshot to ensure all modules are synced
+      // After any admin action, attempt to refresh snapshot/modules.
+      // Make this non-fatal so ancillary snapshot sync does not fail the primary admin action.
       if (businessId) {
-        await BusinessSnapshotService.buildSnapshot(businessId);
-        await refreshBusiness();
+        try {
+          await BusinessSnapshotService.buildSnapshot(businessId);
+          await refreshBusiness();
+        } catch (snapshotErr: any) {
+          console.warn("[BusinessAdmin] Non-critical snapshot refresh error:", snapshotErr);
+        }
       }
     } catch (err: any) {
       console.error("[BusinessAdmin] Action failed:", err);
-      setError(err.message || "Une erreur est survenue lors de l'opération.");
+      const isQuota = isQuotaExceededError(err);
+      setError(
+        isQuota
+          ? "Quota Firestore journalier atteint (Free tier read/write limit). Réessayez après réinitialisation ou passez au forfait payant."
+          : (err.message || "Une erreur est survenue lors de l'opération.")
+      );
       throw err;
     } finally {
       setLoading(false);

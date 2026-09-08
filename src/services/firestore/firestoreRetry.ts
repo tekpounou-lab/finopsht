@@ -22,11 +22,34 @@ const DEFAULT_OPTIONS: Required<Omit<RetryOptions, "onRetry">> = {
   tag: "FirestoreRetry",
 };
 
+export function isQuotaExceededError(error: any): boolean {
+  if (!error) return false;
+  const message = (typeof error === "string" ? error : error?.message || String(error)).toLowerCase();
+  const code = (error?.code || "").toLowerCase();
+  const name = (error?.name || "").toLowerCase();
+
+  return (
+    code.includes("resource-exhausted") ||
+    message.includes("quota limit exceeded") ||
+    message.includes("quota exceeded") ||
+    message.includes("free daily read units") ||
+    message.includes("quota metrics") ||
+    message.includes("free tier database") ||
+    message.includes("resource_exhausted") ||
+    name.includes("resource-exhausted")
+  );
+}
+
 /**
  * Determines whether a given Firestore error is transient and safe to retry.
  */
 export function isRetriableFirestoreError(error: any): boolean {
   if (!error) return false;
+
+  // Unrecoverable daily quota caps should NOT be retried immediately
+  if (isQuotaExceededError(error)) {
+    return false;
+  }
 
   const message = (typeof error === "string" ? error : error?.message || "").toLowerCase();
   const code = (error?.code || "").toLowerCase();
@@ -36,12 +59,8 @@ export function isRetriableFirestoreError(error: any): boolean {
   if (
     message.includes("overload") ||
     message.includes("retry with backoff") ||
-    message.includes("resource-exhausted") ||
-    message.includes("resource_exhausted") ||
-    message.includes("quota exceeded") ||
     message.includes("rate limit") ||
     message.includes("too many requests") ||
-    code.includes("resource-exhausted") ||
     code.includes("429")
   ) {
     return true;

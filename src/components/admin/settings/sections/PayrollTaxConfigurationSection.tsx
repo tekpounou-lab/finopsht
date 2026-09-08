@@ -17,6 +17,7 @@ import { useBusinessContext } from "../../../../contexts/BusinessContext";
 import { useBusinessAdmin } from "../../../../hooks/useBusinessAdmin";
 import { useAuth } from "../../../../hooks/useAuth";
 import { IdentityRepository } from "../../../../repositories";
+import { BusinessAdministrationRepository } from "../../../../repositories/BusinessAdministrationRepository";
 import { collection, query, where, getDocs, orderBy, limit } from "firebase/firestore";
 import { db } from "../../../../lib/firebase";
 
@@ -246,6 +247,18 @@ export default function PayrollTaxConfigurationSection() {
         ...businessSettings,
         payroll: updatedPayroll
       });
+
+      // Update BusinessAdministrationRepository tax config to invalidate cache and emit events
+      await BusinessAdministrationRepository.updateTaxConfiguration(
+        currentBusiness.id,
+        {
+          cnssRateEmployee: (employeeRate || 0) / 100,
+          cnssRateEmployer: (employerRate || 0) / 100,
+          cnsRateEmployee: activeEmpTaxPercentage > 0 ? (activeEmpTaxPercentage / 100) : 0,
+          cnsRateEmployer: activeEmployerTaxPercentage > 0 ? (activeEmployerTaxPercentage / 100) : 0,
+        },
+        dbUser?.uid || user?.uid || "admin"
+      );
 
       // Create Audit Log Entry
       await IdentityRepository.createAuditLog({

@@ -346,24 +346,49 @@ export const BISimplifiedView: React.FC<BISimplifiedViewProps> = ({
         </div>
 
         {/* Team Attendance */}
-        <div className="glass p-5 rounded-2xl border-l-4 border-indigo-500 flex flex-col justify-between min-h-[140px] md:h-[150px]">
+        <div
+          id="simple-kpi-attendance-card"
+          className={`glass p-5 rounded-2xl border-l-4 flex flex-col justify-between min-h-[140px] md:h-[150px] ${
+            attendanceAggregates.attendanceRate >= 90
+              ? "border-emerald-500"
+              : attendanceAggregates.attendanceRate >= 70
+              ? "border-indigo-500"
+              : "border-amber-500"
+          }`}
+        >
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">
                 {language === "ht" ? "Prezans Ekip 👥" : "Présence Équipe 👥"}
               </span>
-              <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 text-[10px] font-bold">
+              <span
+                className={`p-1.5 rounded-lg text-[10px] font-bold ${
+                  attendanceAggregates.attendanceRate >= 90
+                    ? "bg-emerald-500/10 text-emerald-400"
+                    : attendanceAggregates.attendanceRate >= 70
+                    ? "bg-indigo-500/10 text-indigo-400"
+                    : "bg-amber-500/10 text-amber-400"
+                }`}
+              >
                 {language === "ht" ? "Pousantaj Prezans" : "Taux de présence"}
               </span>
             </div>
-            <h4 className="font-mono text-xl font-black text-indigo-400 mt-3 truncate">
+            <h4
+              className={`font-mono text-xl font-black mt-3 truncate ${
+                attendanceAggregates.attendanceRate >= 90
+                  ? "text-emerald-400"
+                  : attendanceAggregates.attendanceRate >= 70
+                  ? "text-indigo-400"
+                  : "text-amber-400"
+              }`}
+            >
               {attendanceAggregates.attendanceRate.toFixed(1)}%
             </h4>
           </div>
           <p className="text-[10.5px] text-slate-400 leading-relaxed mt-2 border-t border-slate-850/60 pt-2">
             {language === "ht"
-              ? "Mwayèn prezans anplwaye yo. Si li pre 100%, ekip ou a trè motive !"
-              : "Taux moyen d'assiduité. Un chiffre proche de 100% est excellent !"}
+              ? "Mwayèn prezans reyèl anplwaye yo konpare ak orè travay prevwa yo."
+              : "Taux moyen d'assiduité réelle calculé sur le volume d'heures et shifts prévus."}
           </p>
         </div>
       </div>

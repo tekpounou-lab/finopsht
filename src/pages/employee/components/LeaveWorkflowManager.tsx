@@ -25,6 +25,7 @@ import { AttendanceIntegrationService, AbsenceEvent } from "../../../services/wo
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../../../lib/firebase";
 import { realtimeManager } from "../../../services/firestore/realtimeManager";
+import { isQuotaExceededError } from "../../../utils/resilientFirestore";
 import { LeaveRequestModal } from "./LeaveRequestModal";
 import { AnimatePresence } from "motion/react";
 
@@ -84,7 +85,11 @@ export const LeaveWorkflowManager: React.FC<LeaveWorkflowManagerProps> = ({
         setOvertimes(list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       },
       (error) => {
-        console.error("Overtime subscription failed:", error);
+        if (isQuotaExceededError(error)) {
+          console.warn("[LeaveWorkflowManager] Overtime subscription paused (Quota limit exceeded). Using local/cached data.");
+        } else {
+          console.warn("Overtime subscription notice:", error);
+        }
       }
     );
 
@@ -102,7 +107,11 @@ export const LeaveWorkflowManager: React.FC<LeaveWorkflowManagerProps> = ({
         setAbsenceEvents(list.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       },
       (error) => {
-        console.error("Absences subscription failed:", error);
+        if (isQuotaExceededError(error)) {
+          console.warn("[LeaveWorkflowManager] Absences subscription paused (Quota limit exceeded). Using local/cached data.");
+        } else {
+          console.warn("Absences subscription notice:", error);
+        }
       }
     );
 

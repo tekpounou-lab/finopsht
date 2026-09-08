@@ -394,17 +394,25 @@ export const PermissionRepository = {
   }
 };
 
+// In-memory fallback stores for offline resilience, test environments, and quota exhaustion
+const inMemorySubscriptionStore = new Map<string, SubscriptionData>();
+const inMemoryFeaturesStore = new Map<string, FeatureMatrix>();
+
 /**
  * SubscriptionRepository checks and keeps track of business tenant plans
  */
 export const SubscriptionRepository = {
   async getWorkspaceSubscription(business_id: string): Promise<SubscriptionData> {
+    if (inMemorySubscriptionStore.has(business_id)) {
+      return inMemorySubscriptionStore.get(business_id)!;
+    }
+
     if (business_id && auth.currentUser) {
       try {
         const snap = await getDoc(doc(db, "subscriptions", business_id));
         if (snap.exists()) {
           const data = snap.data() as SubscriptionData;
-          return {
+          const subData: SubscriptionData = {
             ...data,
             business_id,
             plan: data.plan || "TRIAL",
@@ -415,6 +423,8 @@ export const SubscriptionRepository = {
               featuresEnabled: data.allowedLimits?.featuresEnabled ?? ["attendance", "payroll", "hr", "accounting", "bi", "aiCfo"]
             }
           };
+          inMemorySubscriptionStore.set(business_id, subData);
+          return subData;
         }
       } catch (error: any) {
         if (auth.currentUser) {
@@ -439,6 +449,7 @@ export const SubscriptionRepository = {
         featuresEnabled: ["attendance", "payroll", "accounting", "hr", "bi", "aiCfo"]
       }
     };
+    inMemorySubscriptionStore.set(business_id, defaultSub);
 
     try {
       if (business_id) {
@@ -458,7 +469,7 @@ export const SubscriptionRepository = {
         }));
       }
     } catch (e) {
-      console.error("[SubscriptionRepository] Error saving default subscription", e);
+      console.warn("[SubscriptionRepository] Notice: could not persist default subscription to Firestore:", e);
     }
 
     return defaultSub;
@@ -473,18 +484,35 @@ export const SubscriptionRepository = {
       } as SubscriptionData));
     } catch (error) {
       console.warn("[SubscriptionRepository] Error fetching all subscriptions:", error);
-      return [];
+      return Array.from(inMemorySubscriptionStore.values());
     }
   },
 
   async saveSubscription(business_id: string, subscriptionData: Partial<SubscriptionData>): Promise<void> {
     if (!business_id) return;
-    const docRef = doc(db, "subscriptions", business_id);
-    await setDoc(docRef, {
+    const existing = inMemorySubscriptionStore.get(business_id) || {
+      business_id,
+      plan: "TRIAL",
+      status: "ACTIVE",
+      allowedLimits: { maxEmployees: 100, maxTransactions: 10000, featuresEnabled: [] }
+    };
+    const merged: SubscriptionData = {
+      ...existing,
       ...subscriptionData,
       business_id,
-      updatedAt: serverTimestamp()
-    }, { merge: true });
+    } as SubscriptionData;
+    inMemorySubscriptionStore.set(business_id, merged);
+
+    try {
+      const docRef = doc(db, "subscriptions", business_id);
+      await setDoc(docRef, {
+        ...subscriptionData,
+        business_id,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      console.warn("[SubscriptionRepository] Could not persist subscription to Firestore (offline/permission fallback):", err);
+    }
 
     EventBus.publish(EventBus.createEvent({
       correlationId: `sub_updated_${business_id}_${Date.now()}`,
@@ -541,21 +569,31 @@ export const FeatureRepository = {
 
     if (!business_id) return standardFeatures;
 
+    if (inMemoryFeaturesStore.has(business_id)) {
+      return inMemoryFeaturesStore.get(business_id)!;
+    }
+
     try {
       // Modern path: businesses/{business_id}/settings/features
       const settingsSnap = await getDoc(doc(db, "businesses", business_id, "settings", "features"));
       if (settingsSnap.exists() && settingsSnap.data()?.features) {
-        return { ...standardFeatures, ...settingsSnap.data().features };
+        const merged = { ...standardFeatures, ...settingsSnap.data().features };
+        inMemoryFeaturesStore.set(business_id, merged);
+        return merged;
       }
 
       // Legacy path: features/{business_id}
       const snap = await getDoc(doc(db, "features", business_id));
       if (snap.exists()) {
-        return { ...standardFeatures, ...snap.data() } as FeatureMatrix;
+        const merged = { ...standardFeatures, ...snap.data() } as FeatureMatrix;
+        inMemoryFeaturesStore.set(business_id, merged);
+        return merged;
       }
     } catch (error) {
       console.warn("[FeatureRepository] Error loading features, using default subscription modules:", error);
     }
+
+    inMemoryFeaturesStore.set(business_id, standardFeatures);
 
     // Save defaults if missing
     try {
@@ -567,6 +605,20 @@ export const FeatureRepository = {
 
   async saveFeatures(business_id: string, features: Partial<FeatureMatrix> | Record<string, boolean>): Promise<void> {
     if (!business_id) return;
+    const standardFeatures: FeatureMatrix = {
+      attendance: true,
+      payroll: true,
+      accounting: true,
+      pos: false,
+      hr: true,
+      crm: false,
+      bi: true,
+      aiCfo: true
+    };
+    const current = inMemoryFeaturesStore.get(business_id) || standardFeatures;
+    const merged = { ...current, ...features } as FeatureMatrix;
+    inMemoryFeaturesStore.set(business_id, merged);
+
     const settingsRef = doc(db, "businesses", business_id, "settings", "features");
     const legacyRef = doc(db, "features", business_id);
 
@@ -576,10 +628,14 @@ export const FeatureRepository = {
       updatedAt: serverTimestamp()
     };
 
-    await Promise.all([
-      setDoc(settingsRef, payload, { merge: true }),
-      setDoc(legacyRef, features, { merge: true })
-    ]);
+    try {
+      await Promise.all([
+        setDoc(settingsRef, payload, { merge: true }),
+        setDoc(legacyRef, features, { merge: true })
+      ]);
+    } catch (err) {
+      console.warn("[FeatureRepository] Could not persist features to Firestore (offline/permission fallback):", err);
+    }
 
     // Clear FeatureResolver cache dynamically
     const { FeatureResolver } = await import("../services/FeatureResolver");

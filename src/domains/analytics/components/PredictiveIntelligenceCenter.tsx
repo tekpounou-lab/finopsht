@@ -277,101 +277,100 @@ export const PredictiveIntelligenceCenter: React.FC = () => {
   const [anomalies, setAnomalies] = useState<SimulatedAnomaly[]>([]);
 
   useEffect(() => {
-    // Generate realistic database anomalies
     const list: SimulatedAnomaly[] = [];
 
-    // Duplicated transaction check
-    const sortedTx = [...transactions].sort((a,b) => b.amount - a.amount);
-    let duplicateFound = false;
+    // 1. Duplicated transaction check in ledger
+    const sortedTx = [...transactions].sort((a, b) => b.amount - a.amount);
     for (let i = 0; i < sortedTx.length - 1; i++) {
-      if (sortedTx[i].amount === sortedTx[i+1].amount && Math.abs(new Date(sortedTx[i].date).getTime() - new Date(sortedTx[i+1].date).getTime()) < 8600 * 2) {
+      if (
+        sortedTx[i].amount > 0 &&
+        sortedTx[i].amount === sortedTx[i + 1].amount &&
+        Math.abs(new Date(sortedTx[i].date).getTime() - new Date(sortedTx[i + 1].date).getTime()) < 86400000 * 2
+      ) {
         list.push({
           id: `an_dup_${i}`,
           type: "DOUBLE_TRANSACTION",
-          description: isFr 
-            ? `Deux transactions d'un montant identique de (${sortedTx[i].amount.toLocaleString()} HTG) détectées dans un intervalle de 48 heures. Suspicion de double saisie accidentelle.`
-            : `De tranzaksyon ki gen menm kantite lajan sa nan mwens pase de jou.`,
+          description: isFr
+            ? `Deux transactions d'un montant identique de (${sortedTx[i].amount.toLocaleString()} HTG) détectées dans un intervalle de 48 heures (${sortedTx[i].description || "Transaction"}). Suspicion de double saisie.`
+            : `De tranzaksyon ki gen menm kantite lajan sa (${sortedTx[i].amount.toLocaleString()} HTG) nan mwens pase 48 èdtan.`,
           severity: "HIGH",
           source: "Grand Livre / Ledger",
           isAudited: false,
-          date: sortedTx[i].date
+          date: sortedTx[i].date.split("T")[0]
         });
-        duplicateFound = true;
         break;
       }
     }
 
-    if (!duplicateFound) {
+    // 2. Off-hours or weekend transactions
+    const weekendTx = transactions.find(t => {
+      if (!t.date) return false;
+      const day = new Date(t.date).getDay();
+      return (day === 0 || day === 6) && t.amount > 5000;
+    });
+    if (weekendTx) {
       list.push({
-        id: "an_dup_default",
-        type: "DOUBLE_TRANSACTION",
-        description: isFr 
-          ? "Achat suspect d'équipements de bureau enregistré à double (15,000 HTG) à 4h d'intervalle le 15 Mai."
-          : "Sispisyon de fwa menm acha biwo (15,000 HTG) ki fèt menm jou.",
-        severity: "LOW",
-        source: "Grand Livre / Ledger",
+        id: `an_weekend_${weekendTx.id}`,
+        type: "OFF_HOURS_EXPENSE",
+        description: isFr
+          ? `Mouvement financier de ${weekendTx.amount.toLocaleString()} HTG enregistré un week-end (${weekendTx.description || "Dépense"}). Non conforme aux horaires standards.`
+          : `Lajan ki deplase nan wikenn (${weekendTx.amount.toLocaleString()} HTG).`,
+        severity: "HIGH",
+        source: "Trésorerie / Cashbox",
         isAudited: false,
-        date: "2026-05-15"
+        date: weekendTx.date.split("T")[0]
       });
     }
 
-    // Weekend Transaction on Ledger
-    list.push({
-      id: "an_weekend",
-      type: "OFF_HOURS_EXPENSE",
-      description: isFr 
-        ? "Retrait de fonds ou dépense d'exploitation enregistrée un dimanche à 23h45. Motif : 'Achat urgent carburant'. Non conforme aux politiques standard."
-        : "Lajan ki soti nan kès la yon dimanch byen ta nan lannwit pou gaz.",
-      severity: "HIGH",
-      source: "Trésorerie / Cashbox",
-      isAudited: false,
-      date: "2026-05-24"
-    });
-
-    // Contract discrepancy
+    // 3. Contract discrepancy (salary missing or non-positive)
     const invalidContracts = contracts.filter(c => c.status === "active" && (!c.salaryBaseHtg || c.salaryBaseHtg <= 0));
     if (invalidContracts.length > 0) {
       list.push({
         id: "an_contract_salary",
         type: "INVALID_BASE_SALARY",
         description: isFr
-          ? `Anomalie RH : ${invalidContracts.length} contrat(s) actif(s) affiche(nt) un salaire de base nul ou négatif. Risque d'erreur de calcul légal.`
-          : `Kontra ki aktif men ki pa gen salè debaz deklare.`,
+          ? `Anomalie RH : ${invalidContracts.length} contrat(s) actif(s) affiche(nt) un salaire de base non renseigné ou nul. Risque d'irrégularité de paie.`
+          : `Gen ${invalidContracts.length} kontra aktif ki pa gen salè debaz deklare.`,
         severity: "HIGH",
         source: "Gestion des Contrats",
         isAudited: false,
-        date: "2026-05-01"
+        date: new Date().toISOString().split("T")[0]
       });
     }
 
-    // Timesheet discrepancy
-    list.push({
-      id: "an_attendance_discrepancy",
-      type: "TIMESHEET_OVERRUN",
-      description: isFr
-        ? "Paiement d'heures supplémentaires de nuit (+14h) pour un collaborateur sans scan de sortie correspondant dans le registre d'assiduité."
-        : "Peman èdtan anplis san prèv scan soti nan machin lan.",
-      severity: "HIGH",
-      source: "Registre Horodatage / Timesheets",
-      isAudited: false,
-      date: "2026-05-12"
-    });
+    // 4. Timesheet / system anomalies from snapshot
+    if (snapshot?.anomalies && snapshot.anomalies.length > 0) {
+      snapshot.anomalies.slice(0, 3).forEach((an, idx) => {
+        list.push({
+          id: `an_snap_${idx}`,
+          type: "SYSTEM_ANOMALY",
+          description: an.description,
+          severity: an.severity,
+          source: an.txId ? "Grand Livre / Ledger" : an.employeeId ? "Ressources Humaines" : "Moteur d'Audit Analytique",
+          isAudited: false,
+          date: new Date().toISOString().split("T")[0]
+        });
+      });
+    }
 
-    // High Cash Withdrawals
-    list.push({
-      id: "an_high_cash",
-      type: "HIGH_WITHDRAWAL",
-      description: isFr
-        ? "Retrait de caisse exceptionnel de 45,000 HTG sans pièce justificative d'achat jointe au ticket du Grand Livre."
-        : "Gwo rale lajan kach (45,000 HTG) san papye jistifikasyon.",
-      severity: "LOW",
-      source: "Grand Livre / Ledger",
-      isAudited: false,
-      date: "2026-05-28"
-    });
+    // 5. High Cash Withdrawals / Expenses
+    const highExpense = transactions.find(t => (t.type === "EXPENSE" || t.type === "ADVANCE") && t.amount >= 50000);
+    if (highExpense) {
+      list.push({
+        id: `an_high_cash_${highExpense.id}`,
+        type: "HIGH_WITHDRAWAL",
+        description: isFr
+          ? `Retrait de caisse exceptionnel de ${highExpense.amount.toLocaleString()} HTG (${highExpense.description || "Dépense"}) nécessitant validation du justificatif.`
+          : `Gwo rale lajan kach (${highExpense.amount.toLocaleString()} HTG) ki bezwen jistifikasyon.`,
+        severity: "LOW",
+        source: "Grand Livre / Ledger",
+        isAudited: false,
+        date: highExpense.date.split("T")[0]
+      });
+    }
 
     setAnomalies(list);
-  }, [transactions, contracts, isFr]);
+  }, [transactions, contracts, snapshot, isFr]);
 
   const toggleAuditStatus = (id: string) => {
     setAnomalies(prev => prev.map(a => {

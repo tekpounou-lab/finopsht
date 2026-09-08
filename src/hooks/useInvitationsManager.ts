@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { db } from "../lib/firebase";
 import { collection, query, where, doc, setDoc } from "firebase/firestore";
 import { realtimeManager, tenantQuery } from "../services/firestore/realtimeManager";
+import { isQuotaExceededError } from "../utils/resilientFirestore";
 import { Invitation } from "../types";
 import { InvitationLifecycleService } from "../services/auth/InvitationLifecycleService";
 
@@ -29,7 +30,11 @@ export function useInvitationsManager(businessId: string | undefined) {
         setInvitations(Array.from(inviteMap.values()));
       },
       (err) => {
-        console.error("[useInvitationsManager] Snapshot error:", err);
+        if (isQuotaExceededError(err)) {
+          console.warn("[useInvitationsManager] Stream paused (Quota limit exceeded). Using local cache.");
+        } else {
+          console.warn("[useInvitationsManager] Snapshot notice:", err);
+        }
       }
     );
 

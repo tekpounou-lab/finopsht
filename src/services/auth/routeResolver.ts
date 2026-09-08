@@ -163,6 +163,7 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
     case "EMPLOYEE":
       return [
         "employeeSpace",
+        "documents",
         ...commonTabs,
       ];
     default:

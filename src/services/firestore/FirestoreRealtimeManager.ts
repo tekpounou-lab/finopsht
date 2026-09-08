@@ -117,15 +117,30 @@ export class FirestoreRealtimeManager {
       };
     }
 
-    // Hard limit enforcement
+    // Hard limit enforcement - auto-prune stale listeners instead of throwing
     if (this.listenerRegistry.size >= this.maxListeners) {
-      console.warn(`[FirestoreRealtimeManager] Warning: Approaching active listeners threshold! Active: ${this.listenerRegistry.size}, Max: ${this.maxListeners}`);
+      console.warn(`[FirestoreRealtimeManager] Warning: Approaching active listeners threshold! Active: ${this.listenerRegistry.size}, Max: ${this.maxListeners}. Auto-pruning stale listeners...`);
       this.forceCleanupStaleListeners();
       
+      // If still above threshold, remove the oldest listener gracefully
       if (this.listenerRegistry.size >= this.maxListeners) {
-        throw new Error(
-          `[FirestoreRealtimeManager] Cannot register listener: Max active listeners limit (${this.maxListeners}) reached.`
-        );
+        let oldestKey: string | null = null;
+        let oldestTime = Infinity;
+        this.listenerRegistry.forEach((entry, id) => {
+          if (entry.lastActivity < oldestTime) {
+            oldestTime = entry.lastActivity;
+            oldestKey = id;
+          }
+        });
+        if (oldestKey) {
+          const oldEntry = this.listenerRegistry.get(oldestKey);
+          if (oldEntry) {
+            try { oldEntry.listener(); } catch (_) {}
+            this.listenerRegistry.delete(oldestKey);
+            this.cleanupsExecutedCount++;
+            console.debug(`[FirestoreRealtimeManager] Pruned oldest listener "${oldestKey}" to keep under limit.`);
+          }
+        }
       }
     }
 

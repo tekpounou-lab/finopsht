@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useMemo } from "react";
+import React, { createContext, useContext, useState, useMemo, useCallback } from "react";
 import { Employee, LedgerTransaction, AttendanceRecord, PayrollRecord } from "../../../types";
 
 export interface ExecutiveFilters {
@@ -54,31 +54,32 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
   const [isFiltering, setIsFiltering] = useState(false);
   const [pendingFilter, setPendingFilter] = useState<ExecutiveFilters | null>(null);
 
-  const resetFilters = () => {
+  const resetFilters = useCallback(() => {
     if (isFiltering) {
       setPendingFilter(defaultFilters);
     } else {
       setFilters(defaultFilters);
       setFilterVersion((v) => v + 1);
     }
-  };
+  }, [isFiltering]);
 
-  const updateFilter = <K extends keyof ExecutiveFilters>(key: K, value: ExecutiveFilters[K]) => {
+  const updateFilter = useCallback(<K extends keyof ExecutiveFilters>(key: K, value: ExecutiveFilters[K]) => {
     if (isFiltering) {
       setPendingFilter((prev) => {
         const base = prev || filters;
+        if (base[key] === value) return prev;
         return { ...base, [key]: value };
       });
     } else {
       setFilters((prev) => {
-        const next = { ...prev, [key]: value };
+        if (prev[key] === value) return prev;
         setFilterVersion((v) => v + 1);
-        return next;
+        return { ...prev, [key]: value };
       });
     }
-  };
+  }, [isFiltering, filters]);
 
-  const setFiltersWithVersion = (updater: React.SetStateAction<ExecutiveFilters>) => {
+  const setFiltersWithVersion = useCallback((updater: React.SetStateAction<ExecutiveFilters>) => {
     if (isFiltering) {
       setPendingFilter((prev) => {
         const base = prev || filters;
@@ -87,19 +88,20 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
     } else {
       setFilters((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
+        if (next === prev) return prev;
         setFilterVersion((v) => v + 1);
         return next;
       });
     }
-  };
+  }, [isFiltering, filters]);
 
-  const applyPendingFilter = () => {
+  const applyPendingFilter = useCallback(() => {
     if (pendingFilter) {
       setFilters(pendingFilter);
       setFilterVersion((v) => v + 1);
       setPendingFilter(null);
     }
-  };
+  }, [pendingFilter]);
 
   // Pure memoized central filters
   const filterEmployees = useMemo(() => {
@@ -169,36 +171,51 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
         if (filters.employeeId !== "ALL" && rEmpId !== filters.employeeId) return false;
         if (filters.status !== "ALL" && rec.status !== filters.status) return false;
         
-        // Date range filtering
-        const rawDate = rec.generated_at || rec.updated_at || (rec as any).paymentDate || (rec as any).created_at || (rec as any).period_end || (rec as any).period_start;
-        if (rawDate) {
-          const recDate = String(rawDate).split("T")[0];
-          if (filters.startDate && recDate < filters.startDate) return false;
-          if (filters.endDate && recDate > filters.endDate) return false;
+        // Date range filtering - check work period overlap with filter bounds
+        const pStart = rec.period_start || (rec as any).startDate || (rec as any).periodStart || (rec as any).generated_at || (rec as any).paymentDate || (rec as any).created_at || (rec as any).createdAt;
+        const pEnd = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || (rec as any).effectiveAccountingDate || pStart;
+        if (filters.startDate && filters.endDate) {
+          if (!pStart && !pEnd) return false;
+          const recStart = String(pStart || pEnd).split("T")[0];
+          const recEnd = String(pEnd || pStart).split("T")[0];
+          if (!recStart || !recEnd || recEnd < filters.startDate || recStart > filters.endDate) return false;
         }
         return true;
       });
     };
   }, [filters.branchId, filters.departmentId, filters.employeeId, filters.status, filters.startDate, filters.endDate]);
 
+  const contextValue = useMemo(() => ({
+    filters,
+    setFilters: setFiltersWithVersion,
+    resetFilters,
+    updateFilter,
+    filterEmployees,
+    filterTransactions,
+    filterAttendance,
+    filterPayrolls,
+    filterVersion,
+    isFiltering,
+    setIsFiltering,
+    pendingFilter,
+    applyPendingFilter,
+  }), [
+    filters,
+    setFiltersWithVersion,
+    resetFilters,
+    updateFilter,
+    filterEmployees,
+    filterTransactions,
+    filterAttendance,
+    filterPayrolls,
+    filterVersion,
+    isFiltering,
+    pendingFilter,
+    applyPendingFilter,
+  ]);
+
   return (
-    <ExecutiveFilterContext.Provider
-      value={{
-        filters,
-        setFilters: setFiltersWithVersion,
-        resetFilters,
-        updateFilter,
-        filterEmployees,
-        filterTransactions,
-        filterAttendance,
-        filterPayrolls,
-        filterVersion,
-        isFiltering,
-        setIsFiltering,
-        pendingFilter,
-        applyPendingFilter,
-      }}
-    >
+    <ExecutiveFilterContext.Provider value={contextValue}>
       {children}
     </ExecutiveFilterContext.Provider>
   );

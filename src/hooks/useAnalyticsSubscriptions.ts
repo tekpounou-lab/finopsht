@@ -13,6 +13,7 @@ import {
   Branch,
   EmployeeContract,
   EmployeeDepartmentActivity,
+  PayrollCycle,
 } from "../types";
 
 export interface AnalyticsSubscriptions {
@@ -20,6 +21,7 @@ export interface AnalyticsSubscriptions {
   transactions: LedgerTransaction[];
   attendance: AttendanceRecord[];
   payrollRecords: PayrollRecord[];
+  payrollCycles: PayrollCycle[];
   departments: Department[];
   branches: Branch[];
   departmentActivities: EmployeeDepartmentActivity[];
@@ -33,6 +35,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
   const [transactions, setTransactions] = useState<LedgerTransaction[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
+  const [payrollCycles, setPayrollCycles] = useState<PayrollCycle[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [departmentActivities, setDepartmentActivities] = useState<EmployeeDepartmentActivity[]>([]);
@@ -43,6 +46,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     tx: true,
     att: true,
     pay: true,
+    cycle: true,
     dept: true,
     branch: true,
     activity: true,
@@ -57,6 +61,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       setTransactions([]);
       setAttendance([]);
       setPayrollRecords([]);
+      setPayrollCycles([]);
       setDepartments([]);
       setBranches([]);
       setDepartmentActivities([]);
@@ -66,6 +71,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
         tx: false,
         att: false,
         pay: false,
+        cycle: false,
         dept: false,
         branch: false,
         activity: false,
@@ -79,6 +85,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       tx: true,
       att: true,
       pay: true,
+      cycle: true,
       dept: true,
       branch: true,
       activity: true,
@@ -86,56 +93,75 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     });
     setError(null);
 
+    console.debug(`[useAnalyticsSubscriptions] Initializing subscriptions for businessId: ${businessId}`);
+
     // 1. Employees query with bound and order
-    const qEmp = tenantQuery(collection(db, "employees"), businessId, orderBy("name"), limit(300));
+    const qEmp = tenantQuery(collection(db, "employees"), businessId, orderBy("name"), limit(200));
     const unsubEmp = FirestoreRealtimeManager.registerListener(
       `employees:${businessId}`,
       "employees",
       qEmp,
       (data) => {
+        console.debug(`[useAnalyticsSubscriptions] Loaded ${data.length} employees`);
         setEmployees(data as Employee[]);
         setLoadingStates((prev) => ({ ...prev, emp: false }));
       }
     );
 
     // 2. Transactions query with bound and order
-    const qTx = tenantQuery(collection(db, "ledger_transactions"), businessId, orderBy("date", "desc"), limit(1000));
+    const qTx = tenantQuery(collection(db, "ledger_transactions"), businessId, orderBy("date", "desc"), limit(300));
     const unsubTx = FirestoreRealtimeManager.registerListener(
       `transactions:${businessId}`,
       "transactions",
       qTx,
       (data) => {
+        console.debug(`[useAnalyticsSubscriptions] Loaded ${data.length} transactions`);
         setTransactions(data as LedgerTransaction[]);
         setLoadingStates((prev) => ({ ...prev, tx: false }));
       }
     );
 
     // 3. Attendance query
-    const qAtt = tenantQuery(collection(db, "attendance_logs"), businessId, orderBy("date", "desc"), limit(1000));
+    const qAtt = tenantQuery(collection(db, "attendance_logs"), businessId, orderBy("date", "desc"), limit(300));
     const unsubAtt = FirestoreRealtimeManager.registerListener(
       `attendance_logs:${businessId}`,
       "attendance_logs",
       qAtt,
       (data) => {
+        console.debug(`[useAnalyticsSubscriptions] Loaded ${data.length} attendance logs`);
         setAttendance(data as AttendanceRecord[]);
         setLoadingStates((prev) => ({ ...prev, att: false }));
       }
     );
 
     // 4. Payroll Records query
-    const qPay = tenantQuery(collection(db, "payroll_records"), businessId, limit(500));
+    const qPay = tenantQuery(collection(db, "payroll_records"), businessId, limit(200));
     const unsubPay = FirestoreRealtimeManager.registerListener(
       `payroll_records:${businessId}`,
       "payroll_records",
       qPay,
       (data) => {
+        console.debug(`[useAnalyticsSubscriptions] Loaded ${data.length} payroll records`);
         setPayrollRecords(data as PayrollRecord[]);
         setLoadingStates((prev) => ({ ...prev, pay: false }));
       }
     );
 
+    // 4b. Payroll Cycles query
+    const qCycle = tenantQuery(collection(db, "payroll_cycles"), businessId, limit(50));
+    const unsubCycle = FirestoreRealtimeManager.registerListener(
+      `payroll_cycles:${businessId}`,
+      "payroll_cycles",
+      qCycle,
+      (data) => {
+        console.debug(`[useAnalyticsSubscriptions] Loaded ${data.length} payroll cycles`);
+        setPayrollCycles(data as PayrollCycle[]);
+        setLoadingStates((prev) => ({ ...prev, cycle: false }));
+      }
+    );
+
     // 5. Departments query
-    const qDept = tenantQuery(collection(db, "departments"), businessId, orderBy("name"), limit(100));
+    const qDept = tenantQuery(collection(db, "departments"), businessId, orderBy("name"), limit(50));
     const unsubDept = FirestoreRealtimeManager.registerListener(
       `departments:${businessId}`,
       "departments",
@@ -147,7 +173,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     );
 
     // 6. Branches query
-    const qBranch = tenantQuery(collection(db, "branches"), businessId, limit(100));
+    const qBranch = tenantQuery(collection(db, "branches"), businessId, limit(50));
     const unsubBranch = FirestoreRealtimeManager.registerListener(
       `branches:${businessId}`,
       "branches",
@@ -159,7 +185,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     );
 
     // 7. Employee Department Activity query
-    const qAct = tenantQuery(collection(db, "employee_department_activity"), businessId, limit(500));
+    const qAct = tenantQuery(collection(db, "employee_department_activity"), businessId, limit(200));
     const unsubAct = FirestoreRealtimeManager.registerListener(
       `employee_department_activity:${businessId}`,
       "employee_department_activity",
@@ -171,7 +197,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     );
 
     // 8. Employee Contracts query
-    const qCont = tenantQuery(collection(db, "employee_contracts"), businessId, limit(500));
+    const qCont = tenantQuery(collection(db, "employee_contracts"), businessId, limit(200));
     const unsubCont = FirestoreRealtimeManager.registerListener(
       `employee_contracts:${businessId}`,
       "employee_contracts",
@@ -187,6 +213,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       unsubTx();
       unsubAtt();
       unsubPay();
+      unsubCycle();
       unsubDept();
       unsubBranch();
       unsubAct();
@@ -203,6 +230,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     transactions,
     attendance,
     payrollRecords,
+    payrollCycles,
     departments,
     branches,
     departmentActivities,

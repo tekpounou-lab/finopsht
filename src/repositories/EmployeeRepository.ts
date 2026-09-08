@@ -8,7 +8,8 @@ import {
   where, 
   getDocs, 
   writeBatch,
-  setDoc
+  setDoc,
+  deleteDoc
 } from "firebase/firestore";
 import { Employee } from "../types";
 import { EventBus } from "../modules/runtime/EventBus";
@@ -563,7 +564,17 @@ export class EmployeeRepository {
   }
 
   static async saveContract(contract: any, actor?: any): Promise<void> {
-    await setDoc(doc(db, "employee_contracts", contract.id), contract);
+    const docToSave = {
+      ...contract,
+      business_id: contract.business_id || contract.businessId,
+      businessId: contract.businessId || contract.business_id,
+      updatedAt: new Date().toISOString()
+    };
+    await setDoc(doc(db, "employee_contracts", contract.id), docToSave, { merge: true });
+  }
+
+  static async deleteContract(contractId: string): Promise<void> {
+    await deleteDoc(doc(db, "employee_contracts", contractId));
   }
 
   static async createInvitationBatch(employee: any, invitation: any, badge: any, contract: any): Promise<void> {

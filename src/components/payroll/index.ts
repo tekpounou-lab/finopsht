@@ -6,6 +6,8 @@ export { PayrollRunTable } from "./components/PayrollRunTable";
 export { PayrollRunModal } from "./components/PayrollRunModal";
 export { PayrollSlipViewer } from "./components/PayrollSlipViewer";
 export { CreateCycleModal } from "./modals/CreateCycleModal";
+export { CreatePayrollCycleDialog } from "./modals/CreatePayrollCycleDialog";
+export { EditCycleModal } from "./modals/EditCycleModal";
 export { SalaryStructureModal } from "./modals/SalaryStructureModal";
 export { SalaryAdvanceModal } from "./modals/SalaryAdvanceModal";
 export { BonusModal } from "./modals/BonusModal";

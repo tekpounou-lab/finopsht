@@ -8,12 +8,15 @@ import { useI18n } from "../i18n";
 import { FolderOpen, Plus, FileSpreadsheet, Eye, Trash2, X, Sparkles, Building2, Download, Printer, Check, RefreshCw, Pencil } from "lucide-react";
 import { DocumentGenerationService } from "../services/DocumentGenerationService";
 import { DocumentRepository } from "../repositories/DocumentRepository";
+import { EmployeeRepository } from "../repositories/EmployeeRepository";
+import { useBusinessContext } from "../contexts/BusinessContext";
 
 interface DocumentsProps {
   currentRole?: Role | string;
   currentUser?: { name: string; id: string };
   currentUserId?: string;
   current_business_id?: string;
+  businessName?: string;
   employees?: Employee[];
   employeeContracts?: EmployeeContract[];
   onAddEmployeeContract?: (contract: EmployeeContract) => void;
@@ -167,6 +170,7 @@ export default function DocumentsManager({
   currentUser,
   currentUserId,
   current_business_id = "BIZ_MAIN",
+  businessName,
   employees = [],
   employeeContracts = [],
   onAddEmployeeContract,
@@ -178,6 +182,17 @@ export default function DocumentsManager({
   const { t, language } = useI18n();
   const activeLang = (language === "fr" || language === "ht" || language === "en") ? language : "fr";
   const d = docDict[activeLang];
+
+  // Resolve business name from prop or BusinessContext fallback
+  let contextBusinessName: string | undefined;
+  try {
+    const { business } = useBusinessContext();
+    contextBusinessName = business?.name;
+  } catch (err) {
+    // Graceful fallback if context unavailable
+  }
+  const resolvedBusinessName = businessName || contextBusinessName || "FINOPS ERP";
+
   const [loading, setLoading] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [editingContractId, setEditingContractId] = useState<string | null>(null);
@@ -189,14 +204,31 @@ export default function DocumentsManager({
   const safeEmployees = employees || [];
   const safeEmployeeContracts = employeeContracts || [];
 
-  const businessEmployees = safeEmployees.filter((e) => e.business_id === current_business_id);
+  const businessEmployees = safeEmployees.filter((e) => e.business_id === current_business_id || (e as any).businessId === current_business_id);
   
+  // Instrumentation logs
+  useEffect(() => {
+    console.debug("[DocumentsManager] Component mounted.");
+    console.debug("[DocumentsManager] Business ID:", current_business_id);
+    console.debug("[DocumentsManager] Total contracts received:", safeEmployeeContracts.length);
+  }, [current_business_id, safeEmployeeContracts.length]);
+
   // RBAC for Contracts Register
   const businessContracts = safeEmployeeContracts.filter((c) => {
-    if (c.business_id !== current_business_id) return false;
-    if (currentRole === "OWNER" || currentRole === "MANAGER" || currentRole === "SUPER_ADMIN") return true;
+    const matchBiz = c.business_id === current_business_id || (c as any).businessId === current_business_id;
+    if (!matchBiz) return false;
+    if (
+      currentRole === "OWNER" ||
+      currentRole === "ADMIN" ||
+      currentRole === "MANAGER" ||
+      currentRole === "SUPER_ADMIN"
+    ) return true;
     return c.employeeId === currentUserId;
   });
+
+  useEffect(() => {
+    console.debug("[DocumentsManager] Filtered business contracts for role", currentRole, ":", businessContracts.length);
+  }, [businessContracts.length, currentRole]);
 
   // Close modal on ESC key
   useEffect(() => {
@@ -267,10 +299,17 @@ export default function DocumentsManager({
       }
 
       if (editingContractId) {
-        onUpdateEmployeeContract?.({
+        const updatedFields = {
           id: editingContractId,
-          ...data
-        });
+          employeeId: data.employeeId,
+          business_id: current_business_id,
+          contractType: data.contractType,
+          payRegime: data.payRegime,
+          salaryBaseHtg: data.salaryBaseHtg,
+          commissionRate: data.commissionRate,
+        };
+        await EmployeeRepository.saveContract(updatedFields, currentUser);
+        onUpdateEmployeeContract?.(updatedFields);
 
         onAddEvent?.({
           id: "ev_con_" + Math.random().toString(36).substring(2, 9),
@@ -312,6 +351,7 @@ export default function DocumentsManager({
           status: "active",
         };
 
+        await EmployeeRepository.saveContract(newContract, currentUser);
         onAddEmployeeContract?.(newContract);
 
         // Event stream dispatch
@@ -374,10 +414,15 @@ export default function DocumentsManager({
     setContractToDelete(contractId);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (contractToDelete) {
       if (editingContractId === contractToDelete) {
         cancelEdit();
+      }
+      try {
+        await EmployeeRepository.deleteContract(contractToDelete);
+      } catch (err) {
+        console.error("[DocumentsManager] Error deleting contract:", err);
       }
       onDeleteEmployeeContract?.(contractToDelete);
       setContractToDelete(null);
@@ -544,8 +589,12 @@ export default function DocumentsManager({
         {/* Existing Contracts Registry Grid */}
         <div className="lg:col-span-7 flex flex-col gap-4" id="contracts-list-pane">
           <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl overflow-hidden" id="contracts-table-box">
-            <div className="p-3 bg-slate-950/60 border-b border-slate-800/80" id="contracts-table-header">
+            <div className="p-3 bg-slate-950/60 border-b border-slate-800/80 flex items-center justify-between" id="contracts-table-header">
               <span className="text-xs uppercase font-extrabold text-slate-200 tracking-wide">{d.registryTitle}</span>
+              <span className="text-[11px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-800/50 px-2.5 py-0.5 rounded-full flex items-center gap-1.5" id="business-badge-indicator">
+                <Building2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                {resolvedBusinessName}
+              </span>
             </div>
 
             <div className="overflow-x-auto" id="contracts-table-scroll">
@@ -566,6 +615,10 @@ export default function DocumentsManager({
                       <tr key={con.id} className="hover:bg-slate-900/20 text-slate-350" id={`con-row-${con.id}`}>
                         <td className="py-2.5 px-3">
                           <p className="font-semibold text-slate-200">{empRef ? empRef.name : "Employee"}</p>
+                          <p className="text-[10px] text-cyan-400/80 font-medium truncate flex items-center gap-1 mt-0.5">
+                            <Building2 className="w-2.5 h-2.5 shrink-0" />
+                            {resolvedBusinessName}
+                          </p>
                           <p className="text-[10px] text-slate-500 font-mono truncate max-w-[150px]">{con.id}</p>
                         </td>
                         <td className="py-2.5 px-3">
@@ -631,6 +684,10 @@ export default function DocumentsManager({
                       <div className="flex justify-between items-start border-b border-slate-800 pb-2">
                         <div>
                            <p className="font-bold text-slate-200">{empRef ? empRef.name : "Employee"}</p>
+                           <p className="text-[11px] text-cyan-400/80 font-medium flex items-center gap-1 mt-0.5">
+                             <Building2 className="w-3 h-3 shrink-0" />
+                             {resolvedBusinessName}
+                           </p>
                            <p className="text-[10px] text-slate-500 font-mono truncate">{con.id}</p>
                         </div>
                         <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px] font-semibold text-cyan-400 uppercase">
@@ -731,7 +788,11 @@ export default function DocumentsManager({
                     <p>
                       <strong>{d.betweenSigned}</strong>
                     </p>
-                    <p className="pl-4" dangerouslySetInnerHTML={{ __html: d.employerText }} />
+                    <p className="pl-4" dangerouslySetInnerHTML={{ 
+                      __html: d.employerText
+                        .replace(/TEK POU NOU S\.A\./g, resolvedBusinessName)
+                        .replace(/\{businessName\}/g, resolvedBusinessName) 
+                    }} />
                     <p className="pl-4" dangerouslySetInnerHTML={{ __html: d.employeeText.replace("{name}", selectedSigner ? selectedSigner.name : "Loveline Altidor") }} />
 
                     <p>
@@ -767,7 +828,13 @@ export default function DocumentsManager({
                   <div className="grid grid-cols-2 text-center text-xs font-sans text-slate-600" id="signatures-grid">
                     <div>
                       <p className="font-bold">{d.forEmployer}</p>
-                      <p className="italic mt-5 font-mono text-cyan-700 text-[10px]">{d.immutableSeal}</p>
+                      <p className="text-xs font-bold text-slate-800 mt-0.5">{resolvedBusinessName}</p>
+                      <p className="italic mt-3 font-mono text-cyan-700 text-[10px]">
+                        {d.immutableSeal
+                          .replace(/TEK POU NOU S\.A\./g, resolvedBusinessName)
+                          .replace(/TEK POU NOU/g, resolvedBusinessName)
+                          .replace(/\{businessName\}/g, resolvedBusinessName)}
+                      </p>
                       <p className="text-[9px] text-slate-500 font-mono mt-1 pr-2">SIG: {activeViewerContract.id}_ADMIN_SEAL</p>
                     </div>
                     <div>

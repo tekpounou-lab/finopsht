@@ -12,6 +12,7 @@ import {
   LedgerTransaction,
   AttendanceRecord,
   PayrollRecord,
+  PayrollCycle,
   EmployeeContract,
   EmployeeDepartmentActivity,
 } from "../../../types";
@@ -135,6 +136,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     transactions,
     attendance: attendanceLogs,
     payrollRecords,
+    payrollCycles,
     contracts,
     departmentActivities: activities,
     isLoading: isSubscribedLoading,
@@ -148,6 +150,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const deferredTransactions = useDeferredValue(transactions);
   const deferredAttendance = useDeferredValue(attendanceLogs);
   const deferredPayrolls = useDeferredValue(payrollRecords);
+  const deferredCycles = useDeferredValue(payrollCycles);
   const deferredContracts = useDeferredValue(contracts);
   const deferredActivities = useDeferredValue(activities);
 
@@ -168,6 +171,10 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     () => (deferredPayrolls.length > 0 ? deferredPayrolls : contextPay || []),
     [deferredPayrolls, contextPay]
   );
+  const effectiveCycles = useMemo(
+    () => (deferredCycles && deferredCycles.length > 0 ? deferredCycles : []),
+    [deferredCycles]
+  );
   const effectiveContracts = useMemo(
     () => (deferredContracts.length > 0 ? deferredContracts : contextContracts || []),
     [deferredContracts, contextContracts]
@@ -176,6 +183,14 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     () => deferredActivities,
     [deferredActivities]
   );
+
+  const cycleMap = useMemo(() => {
+    const map = new Map<string, PayrollCycle>();
+    effectiveCycles.forEach((c) => {
+      if (c.id) map.set(c.id, c);
+    });
+    return map;
+  }, [effectiveCycles]);
 
   // Filtered collections reflecting ExecutiveFilters for SSOT alignment
   const filteredEmployees = useMemo(() => {
@@ -215,7 +230,55 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return customRange;
   }, [filters.startDate, filters.endDate, customRange]);
 
-  const filteredTransactions = useMemo(() => {
+  // Standardized Date Normalization Helpers
+  const normalizeDateStr = (rawDate: any): string => {
+    if (!rawDate) return "";
+    let str = "";
+    if (typeof rawDate === "string") {
+      str = rawDate.trim().split("T")[0];
+    } else if (typeof rawDate === "number") {
+      str = new Date(rawDate).toISOString().split("T")[0];
+    } else if (rawDate instanceof Date) {
+      str = rawDate.toISOString().split("T")[0];
+    } else if (rawDate?.toDate && typeof rawDate.toDate === "function") {
+      str = rawDate.toDate().toISOString().split("T")[0];
+    } else if (rawDate?.seconds) {
+      str = new Date(rawDate.seconds * 1000).toISOString().split("T")[0];
+    } else {
+      str = String(rawDate).split("T")[0];
+    }
+
+    if (!str) return "";
+
+    if (str.includes("/")) {
+      const parts = str.split("/");
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+        } else {
+          return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+        }
+      }
+    } else if (str.includes("-")) {
+      const parts = str.split("-");
+      if (parts.length === 3) {
+        if (parts[0].length !== 4 && parts[2].length === 4) {
+          return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+        }
+      }
+    }
+    return str;
+  };
+
+  const getAttendanceDate = (a: any): string => {
+    if (!a) return "";
+    const raw = a.date || a.date_str || a.dateStr || a.work_date || a.checkInDate || a.checkIn?.deviceDate || a.created_at || a.timestamp || a.checkIn?.timestamp;
+    return normalizeDateStr(raw);
+  };
+
+  // Scope-filtered collections (filtered by business, branch, department, employee, status, currency WITHOUT stripping dates)
+  // These allow AnalyticsEngine to calculate both CURRENT and PREVIOUS period trends.
+  const scopedTransactions = useMemo(() => {
     return effectiveTransactions.filter((tx) => {
       const empId = tx.employeeId || (tx as any).employee_id;
       const txBranch = tx.branchId || (tx as any).branch_id || (empId ? empBranchMap.get(empId) : undefined);
@@ -227,41 +290,24 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (filters.status !== "ALL" && tx.status !== filters.status) return false;
       if (filters.currency && filters.currency !== "ALL" && tx.currency !== filters.currency) return false;
 
-      // Filter by active date range if set
-      if (activeCustomRange?.startDate && activeCustomRange?.endDate && tx.date) {
-        const txDateStr = tx.date.split("T")[0];
-        if (txDateStr < activeCustomRange.startDate || txDateStr > activeCustomRange.endDate) {
-          return false;
-        }
-      }
-
       return true;
     });
-  }, [effectiveTransactions, filters.branchId, filters.departmentId, filters.transactionType, filters.status, filters.currency, empDeptMap, empBranchMap, activeCustomRange]);
+  }, [effectiveTransactions, filters.branchId, filters.departmentId, filters.transactionType, filters.status, filters.currency, empDeptMap, empBranchMap]);
 
-  const filteredAttendance = useMemo(() => {
+  const scopedAttendance = useMemo(() => {
     return effectiveAttendance.filter((rec) => {
-      const rBranch = rec.branchId || (rec as any).branch_id;
-      const rDept = rec.departmentId || (rec as any).department_id;
+      const rBranch = rec.branchId || (rec as any).branch_id || (rec.employeeId ? empBranchMap.get(rec.employeeId) : undefined);
+      const rDept = rec.departmentId || (rec as any).department_id || (rec.employeeId ? empDeptMap.get(rec.employeeId) : undefined);
       const rEmp = rec.employeeId || (rec as any).employee_id;
-      if (filters.branchId !== "ALL" && rBranch !== filters.branchId) return false;
-      if (filters.departmentId !== "ALL" && rDept !== filters.departmentId) return false;
-      if (filters.employeeId !== "ALL" && rEmp !== filters.employeeId) return false;
-
-      // Filter by active date range if set
-      const recDate = rec.date || (rec as any).timestamp?.split("T")?.[0];
-      if (activeCustomRange?.startDate && activeCustomRange?.endDate && recDate) {
-        const recDateStr = recDate.split("T")[0];
-        if (recDateStr < activeCustomRange.startDate || recDateStr > activeCustomRange.endDate) {
-          return false;
-        }
-      }
+      if (filters.branchId !== "ALL" && rBranch && rBranch !== filters.branchId) return false;
+      if (filters.departmentId !== "ALL" && rDept && rDept !== filters.departmentId) return false;
+      if (filters.employeeId !== "ALL" && rEmp && rEmp !== filters.employeeId) return false;
 
       return true;
     });
-  }, [effectiveAttendance, filters.branchId, filters.departmentId, filters.employeeId, activeCustomRange]);
+  }, [effectiveAttendance, filters.branchId, filters.departmentId, filters.employeeId, empBranchMap, empDeptMap]);
 
-  const filteredPayrolls = useMemo(() => {
+  const scopedPayrolls = useMemo(() => {
     return effectivePayrolls.filter((rec) => {
       const rBranchId = rec.branch_id || (rec as any).branchId;
       const rDeptId = rec.department_id || (rec as any).departmentId;
@@ -271,20 +317,62 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (filters.employeeId !== "ALL" && rEmpId !== filters.employeeId) return false;
       if (filters.status !== "ALL" && rec.status !== filters.status) return false;
 
-      // Filter by active date range if set
-      const pStart = rec.period_start || (rec as any).generated_at?.split("T")?.[0];
-      const pEnd = rec.period_end || (rec as any).generated_at?.split("T")?.[0];
-      if (activeCustomRange?.startDate && activeCustomRange?.endDate && (pStart || pEnd)) {
-        const startStr = (pStart || pEnd || "").split("T")[0];
-        const endStr = (pEnd || pStart || "").split("T")[0];
-        if (endStr < activeCustomRange.startDate || startStr > activeCustomRange.endDate) {
-          return false;
+      return true;
+    });
+  }, [effectivePayrolls, filters.branchId, filters.departmentId, filters.employeeId, filters.status]);
+
+  const filteredTransactions = useMemo(() => {
+    return scopedTransactions.filter((tx) => {
+      if (filters.startDate && filters.endDate) {
+        const rawDate = tx.date || (tx as any).created_at || (tx as any).timestamp;
+        const txDate = normalizeDateStr(rawDate);
+        if (!txDate || txDate < filters.startDate || txDate > filters.endDate) return false;
+      }
+      return true;
+    });
+  }, [scopedTransactions, filters.startDate, filters.endDate]);
+
+  const filteredAttendance = useMemo(() => {
+    return scopedAttendance.filter((rec) => {
+      if (filters.startDate && filters.endDate) {
+        const attDate = getAttendanceDate(rec);
+        if (!attDate || attDate < filters.startDate || attDate > filters.endDate) return false;
+      }
+      return true;
+    });
+  }, [scopedAttendance, filters.startDate, filters.endDate]);
+
+  const filteredPayrolls = useMemo(() => {
+    return scopedPayrolls.filter((rec) => {
+      const cycleId = rec.cycleId || rec.payroll_cycle_id;
+      const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
+
+      let pStart = rec.period_start || (rec as any).startDate || (rec as any).periodStart || cycle?.startDate || (cycle as any)?.start_date;
+      let pEnd = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || cycle?.endDate || (cycle as any)?.end_date || (cycle as any)?.effectiveAccountingDate || pStart;
+
+      if (!pStart && !pEnd && cycleId) {
+        const dateMatch = cycleId.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+        if (dateMatch) {
+          pStart = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+          pEnd = pStart;
         }
+      }
+
+      if (!pStart && !pEnd) {
+        pStart = (rec as any).generated_at || (rec as any).paymentDate || (rec as any).createdAt || rec.created_at;
+        pEnd = pStart;
+      }
+
+      if (filters.startDate && filters.endDate) {
+        if (!pStart && !pEnd) return false;
+        const recStart = normalizeDateStr(pStart || pEnd);
+        const recEnd = normalizeDateStr(pEnd || pStart);
+        if (!recStart || !recEnd || recEnd < filters.startDate || recStart > filters.endDate) return false;
       }
 
       return true;
     });
-  }, [effectivePayrolls, filters.branchId, filters.departmentId, filters.employeeId, filters.status, activeCustomRange]);
+  }, [scopedPayrolls, filters.startDate, filters.endDate, cycleMap]);
 
   const [snapshot, setSnapshot] = useState<AnalyticsSnapshot | null>(null);
 
@@ -304,16 +392,17 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           "CUSTOM",
           activeCustomRange,
           filteredEmployees,
-          filteredTransactions,
-          filteredAttendance,
-          filteredPayrolls,
+          scopedTransactions,
+          scopedAttendance,
+          scopedPayrolls,
           branches,
           departments,
           effectiveContracts,
           businessId,
           (language as "fr" | "ht" | "en") || "fr",
           effectiveActivities,
-          businessSettings
+          businessSettings,
+          effectiveCycles
         );
         setSnapshot(snap);
       } catch (err) {
@@ -327,9 +416,9 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [
     activeCustomRange,
     filteredEmployees,
-    filteredTransactions,
-    filteredAttendance,
-    filteredPayrolls,
+    scopedTransactions,
+    scopedAttendance,
+    scopedPayrolls,
     branches,
     departments,
     effectiveContracts,
@@ -337,6 +426,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     language,
     effectiveActivities,
     businessSettings,
+    effectiveCycles,
   ]);
 
   useEffect(() => {

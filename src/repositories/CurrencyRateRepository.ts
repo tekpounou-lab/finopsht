@@ -16,6 +16,7 @@ import {
 import { AuditService } from "@/services/audit/AuditService";
 import { EventBus } from "@/modules/runtime/EventBus";
 import { StaticDataCacheService } from "@/services/cache/StaticDataCacheService";
+import { resilientGetDocs, isQuotaExceededError } from "@/utils/resilientFirestore";
 
 export interface ExchangeRate {
   id: string;                    // e.g., "USD_HTG_2026-08-10"
@@ -117,7 +118,11 @@ export class CurrencyRateRepository {
             }
           }
         } catch (error) {
-          console.error(`[CurrencyRateRepository] Error resolving rate at ${date}:`, error);
+          if (isQuotaExceededError(error)) {
+            console.warn(`[CurrencyRateRepository] Quota limit reached resolving rate at ${date}. Using default rate (${this.DEFAULT_RATE}).`);
+          } else {
+            console.warn(`[CurrencyRateRepository] Warning resolving rate at ${date}:`, error);
+          }
         }
 
         // Cache the resolved rate in in-memory layer
@@ -154,7 +159,7 @@ export class CurrencyRateRepository {
       limit(1)
     );
 
-    const snap = await getDocs(q);
+    const snap = await resilientGetDocs(q);
     if (!snap.empty) {
       const data = snap.docs[0].data();
       return data.rate as number;

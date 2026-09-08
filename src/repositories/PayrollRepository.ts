@@ -6,14 +6,19 @@ import {
   doc, 
   getDoc, 
   setDoc, 
+  updateDoc,
+  deleteDoc,
   serverTimestamp, 
   writeBatch 
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
-import { PayrollCycle, Payslip, LedgerTransaction, ForensicLog, Employee } from "../types";
+import { PayrollCycle, Payslip, LedgerTransaction, ForensicLog, Employee, PayrollRecord } from "../types";
 import { MessageQueue } from "../modules/runtime/EnterpriseMessageQueue";
 import { RuntimeEvent } from "../modules/runtime/types";
+import { EventBus } from "../modules/runtime/EventBus";
 import { PaginatedRepository, PaginatedResult } from "./PaginatedRepository";
+import { PayrollService } from "../services/payroll/PayrollService";
+import { FinopsException } from "../modules/runtime/FinopsException";
 
 export interface SealPayrollParams {
   cycle: PayrollCycle;
@@ -43,9 +48,11 @@ export const PayrollRepository = {
         where("business_id", "==", businessId)
       );
       const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as PayrollCycle));
+      return snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as PayrollCycle))
+        .filter(c => !(c as any).deleted && (c as any).deleted !== "true");
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, path);
+      console.warn("[PayrollRepository] Failed to fetch cycles list (quota/offline fallback):", error);
       return [];
     }
   },
@@ -97,6 +104,35 @@ export const PayrollRepository = {
       throw new Error("Multi-Tenancy Violation: business_id is strictly required for PayrollCycle.");
     }
 
+    // Deduplication check: verify no cycle with the same name exists for this business
+    const targetName = (cycle.cycleName || cycle.label || "").trim();
+    if (targetName) {
+      try {
+        const existingCycles = await this.listCyclesByBusiness(cycle.business_id);
+        const duplicate = existingCycles.find(
+          (c) => (c.cycleName || c.label || "").trim().toLowerCase() === targetName.toLowerCase()
+        );
+        if (duplicate) {
+          throw new FinopsException(
+            `Un cycle de paie nommé "${targetName}" existe déjà pour cette entreprise.`,
+            {
+              businessId: cycle.business_id,
+              actorId: "system",
+              module: "PAYROLL",
+              operation: "createCycle",
+              correlationId: `create_cycle_${cycle.id}`,
+              severity: "HIGH",
+              errorCode: "CYCLE_ALREADY_EXISTS",
+              cycleName: targetName,
+            }
+          );
+        }
+      } catch (err: any) {
+        if (err instanceof FinopsException) throw err;
+        console.warn("[PayrollRepository] Skipping deduplication check due to quota or network issue:", err);
+      }
+    }
+
     const event: RuntimeEvent = {
       eventId: `evt_pay_cycle_created_${cycle.id}_${Date.now()}`,
       correlationId: `corr_pay_${cycle.id}`,
@@ -131,7 +167,23 @@ export const PayrollRepository = {
         },
         event
       );
-    } catch (error) {
+
+      try {
+        EventBus.publish(event);
+      } catch (busErr) {
+        console.warn("[PayrollRepository] EventBus publish warning:", busErr);
+      }
+    } catch (error: any) {
+      const errStr = String(error?.message || error || "");
+      if (
+        errStr.includes("Quota limit exceeded") ||
+        errStr.includes("RESOURCE_EXHAUSTED") ||
+        errStr.includes("quota") ||
+        errStr.includes("Quota limite")
+      ) {
+        console.warn("[PayrollRepository] Quota limit exceeded during saveCycle. Local state preserved.", error);
+        return;
+      }
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycle.id}`);
     }
   },
@@ -150,9 +202,217 @@ export const PayrollRepository = {
         ...updates,
         updated_at: serverTimestamp()
       }, { merge: true });
-    } catch (error) {
+
+      // If excludedEmployeeIds are updated, clean up existing records for those employees
+      if (Array.isArray(updates.excludedEmployeeIds) && updates.excludedEmployeeIds.length > 0) {
+        try {
+          const q = query(
+            collection(db, "payroll_records"),
+            where("business_id", "==", updates.business_id),
+            where("payroll_cycle_id", "==", cycleId)
+          );
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            const recData = d.data();
+            if (updates.excludedEmployeeIds.includes(recData.employeeId)) {
+              await updateDoc(d.ref, {
+                deleted: true,
+                isExcluded: true,
+                deleted_at: serverTimestamp()
+              }).catch(() => {});
+            }
+          }
+        } catch (err) {
+          console.warn("[PayrollRepository] Cleaning excluded employee records had error:", err);
+        }
+      }
+    } catch (error: any) {
+      const errStr = String(error?.message || error || "");
+      if (errStr.includes("Quota limit exceeded") || errStr.includes("RESOURCE_EXHAUSTED") || errStr.includes("quota")) {
+        console.warn("[PayrollRepository] Quota limit exceeded during updateCycle. Applied locally.", error);
+        return;
+      }
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycleId}`);
     }
+  },
+
+  /**
+   * Soft-deletes a single payroll record.
+   */
+  async deletePayrollRecord(recordId: string, businessId: string): Promise<void> {
+    if (!businessId || !recordId) return;
+    try {
+      const ref = doc(db, "payroll_records", recordId);
+      await updateDoc(ref, {
+        deleted: true,
+        deleted_at: serverTimestamp(),
+        updated_at: serverTimestamp()
+      });
+    } catch (error) {
+      console.warn(`[PayrollRepository] deletePayrollRecord fallback for ${recordId}:`, error);
+      try {
+        const ref = doc(db, "payroll_records", recordId);
+        await deleteDoc(ref);
+      } catch (delErr) {
+        handleFirestoreError(delErr, OperationType.DELETE, `payroll_records/${recordId}`);
+      }
+    }
+  },
+
+  /**
+   * Deletes a DRAFT payroll cycle (soft delete with deleted: true, child payroll_records soft delete, and forensic audit log).
+   */
+  async deleteCycle(cycleId: string, businessId: string, actorId: string = "system"): Promise<void> {
+    if (!businessId) {
+      throw new Error("Multi-Tenancy Violation: business_id is strictly required to delete PayrollCycle.");
+    }
+
+    console.debug(`[Payroll] Delete draft requested for cycle: ${cycleId}`);
+    console.debug(`[Payroll] Deleting cycle from Firestore...`);
+
+    const markLocalDeleted = () => {
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          const key = `deleted_cycles_${businessId}`;
+          const existing: string[] = JSON.parse(localStorage.getItem(key) || "[]");
+          if (!existing.includes(cycleId)) {
+            existing.push(cycleId);
+            localStorage.setItem(key, JSON.stringify(existing));
+          }
+        }
+      } catch (e) {
+        console.warn("[PayrollRepository] Local deletion marker failed:", e);
+      }
+    };
+
+    const ref = doc(db, "payroll_cycles", cycleId);
+    let cycleData: Partial<PayrollCycle> = { id: cycleId, business_id: businessId };
+
+    try {
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        cycleData = snap.data() as PayrollCycle;
+        if (cycleData.status === "SEALED") {
+          throw new Error("Impossible de supprimer un cycle scellé (SEALED).");
+        }
+      }
+    } catch (readErr: any) {
+      if (readErr.message?.includes("SEALED")) throw readErr;
+      console.warn("[PayrollRepository] Fetching cycle before delete failed (quota or offline):", readErr);
+    }
+
+    // Query associated child payroll_records to soft-delete them as well
+    const childRecordRefs: Array<ReturnType<typeof doc>> = [];
+    try {
+      const qRecs = query(
+        collection(db, "payroll_records"),
+        where("business_id", "==", businessId),
+        where("cycleId", "==", cycleId)
+      );
+      const recSnap = await getDocs(qRecs);
+      recSnap.docs.forEach((d) => {
+        childRecordRefs.push(doc(db, "payroll_records", d.id));
+      });
+    } catch (errRecs) {
+      console.warn("[PayrollRepository] Fetching child payroll_records before delete failed:", errRecs);
+    }
+
+    const event: RuntimeEvent = {
+      eventId: `evt_pay_cycle_deleted_${cycleId}_${Date.now()}`,
+      correlationId: `corr_del_${cycleId}`,
+      businessId,
+      module: "PAYROLL",
+      aggregate: "PayrollCycle",
+      type: "PAYROLL_CYCLE_DELETED",
+      eventType: "PAYROLL_CYCLE_DELETED",
+      source: "PayrollRepository",
+      payload: {
+        cycleId,
+        cycleName: cycleData.cycleName || cycleData.label,
+        business_id: businessId,
+        deletedBy: actorId,
+      },
+      version: "1.0.0",
+      status: "PENDING",
+      timestamp: new Date().toISOString()
+    };
+
+    const forensicLog: ForensicLog = {
+      id: "f_del_cyc_" + Math.random().toString(36).substring(2, 9),
+      timestamp: new Date().toISOString(),
+      userId: actorId,
+      userName: actorId || "Administrator",
+      userRole: "ADMIN",
+      action: "PAYROLL_CYCLE_DELETED",
+      beforeState: JSON.stringify(cycleData),
+      afterState: JSON.stringify({ deleted: true }),
+      signature: "seal_del_" + Math.random().toString(36).substring(2, 9),
+      business_id: businessId,
+    };
+
+    try {
+      await MessageQueue.persistAndPublishWithBatch(
+        businessId,
+        (batch) => {
+          // Soft-delete main cycle
+          batch.set(ref, {
+            deleted: true,
+            deletedAt: new Date().toISOString(),
+            deletedBy: actorId,
+            updated_at: serverTimestamp()
+          }, { merge: true });
+
+          // Soft-delete associated child payroll_records
+          childRecordRefs.forEach((recRef) => {
+            batch.set(recRef, {
+              deleted: true,
+              deletedAt: new Date().toISOString(),
+              deletedBy: actorId,
+              updated_at: serverTimestamp()
+            }, { merge: true });
+          });
+
+          // Write forensic audit log to forensic_logs
+          const logRef = doc(db, "forensic_logs", forensicLog.id);
+          batch.set(logRef, {
+            ...forensicLog,
+            business_id: businessId,
+            _server_timestamp: serverTimestamp()
+          });
+        },
+        event
+      );
+      markLocalDeleted();
+      console.debug(`[Payroll] Cycle deleted successfully. {softDelete: true, childRecordsMarked: ${childRecordRefs.length}}`);
+    } catch (error: any) {
+      const errStr = String(error?.message || error || "");
+      const isQuotaOrOffline =
+        errStr.includes("Quota limit exceeded") ||
+        errStr.includes("RESOURCE_EXHAUSTED") ||
+        errStr.includes("quota") ||
+        errStr.includes("unavailable") ||
+        errStr.includes("offline");
+
+      if (isQuotaOrOffline) {
+        console.warn("[PayrollRepository] Quota limit exceeded or offline while deleting cycle. Applied local fallback deletion.", error);
+        markLocalDeleted();
+        return;
+      }
+
+      handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycleId}/delete`);
+      throw error;
+    }
+  },
+
+  /**
+   * Processes a payroll cycle calculation, generating payroll records and updating cycle state.
+   */
+  async processCycle(
+    cycle: PayrollCycle,
+    employees: Employee[],
+    businessId: string
+  ): Promise<PayrollRecord[]> {
+    return await PayrollService.processPayrollCycle(cycle, employees, businessId);
   },
 
   /**

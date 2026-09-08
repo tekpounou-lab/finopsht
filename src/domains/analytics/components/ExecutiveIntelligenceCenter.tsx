@@ -85,15 +85,36 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
     resetFilters,
   } = useExecutiveFilters();
 
-  const { branches, departments, currentBusiness } = useBusinessContext();
+  const { branches, departments, currentBusiness, businessSettings } = useBusinessContext();
+
+  const isSocialTaxEnabled = useMemo(() => {
+    if (businessSettings?.payroll_policies?.enableTaxes !== undefined) return Boolean(businessSettings.payroll_policies.enableTaxes);
+    if (businessSettings?.payrollPolicies?.enableTaxes !== undefined) return Boolean(businessSettings.payrollPolicies.enableTaxes);
+    if (businessSettings?.tax_config?.enableTaxes !== undefined) return Boolean(businessSettings.tax_config.enableTaxes);
+    if (businessSettings?.taxConfig?.enableTaxes !== undefined) return Boolean(businessSettings.taxConfig.enableTaxes);
+    if (businessSettings?.payroll?.taxes?.enabled !== undefined) return Boolean(businessSettings.payroll.taxes.enabled);
+    if (businessSettings?.payroll?.enable_social_taxes !== undefined) return Boolean(businessSettings.payroll.enable_social_taxes);
+    if (businessSettings?.payroll?.enableTaxes !== undefined) return Boolean(businessSettings.payroll.enableTaxes);
+    if (businessSettings?.enable_social_taxes !== undefined) return Boolean(businessSettings.enable_social_taxes);
+    if (businessSettings?.enableTaxes !== undefined) return Boolean(businessSettings.enableTaxes);
+    return false;
+  }, [businessSettings]);
 
   const activeDepartments = useMemo(() => {
-    return departments.filter((d) => !currentBusiness || d.business_id === currentBusiness.id);
-  }, [departments, currentBusiness]);
+    return departments.filter((d) => {
+      if (currentBusiness && d.business_id !== currentBusiness.id) return false;
+      if (filters.departmentId && filters.departmentId !== "ALL" && d.id !== filters.departmentId) return false;
+      return true;
+    });
+  }, [departments, currentBusiness, filters.departmentId]);
 
   const activeBranches = useMemo(() => {
-    return branches.filter((b) => !currentBusiness || b.business_id === currentBusiness.id);
-  }, [branches, currentBusiness]);
+    return branches.filter((b) => {
+      if (currentBusiness && b.business_id !== currentBusiness.id) return false;
+      if (filters.branchId && filters.branchId !== "ALL" && b.id !== filters.branchId) return false;
+      return true;
+    });
+  }, [branches, currentBusiness, filters.branchId]);
 
   // Resolve Branch and Department names humanely
   const resolveDepartmentName = useCallback((id: string, nameOverride?: string) => {
@@ -216,9 +237,12 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
 
   // Simple Mode Fortnight Payroll Metric Simulator computations
   const simulatedPayroll = useMemo(() => {
-    const baseSalary = 10000;
+    const selectedEmp = employees.find((e: any) => e.id === simulatorEmployeeId);
+    const baseSalary = selectedEmp
+      ? (selectedEmp.salaryBaseHtg || selectedEmp.baseSalary || 10000)
+      : 10000;
     const targetHours = 96;
-    const hourlyRate = 104.17;
+    const hourlyRate = Number((baseSalary / targetHours).toFixed(2));
     const hoursWorked = simulatorCustomHours;
 
     let finalSalary = baseSalary;
@@ -231,7 +255,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
       type = "penalty";
       differenceHours = targetHours - hoursWorked;
       adjustmentAmount = differenceHours * hourlyRate;
-      finalSalary = baseSalary - adjustmentAmount;
+      finalSalary = Math.max(0, baseSalary - adjustmentAmount);
       calculationLabel = `Salaire de base (${baseSalary.toLocaleString()} HTG) - [Absence : ${differenceHours.toFixed(1)}h × ${hourlyRate} HTG/h]`;
     } else if (hoursWorked > 96) {
       type = "bonus";
@@ -256,18 +280,21 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
       adjustmentAmount,
       calculationLabel
     };
-  }, [simulatorCustomHours]);
+  }, [simulatorCustomHours, simulatorEmployeeId, employees]);
 
   const realEmployeeSimulations = useMemo(() => {
     if (!activeSnapshot || !activeSnapshot.employeeScorecards) return [];
     
     return activeSnapshot.employeeScorecards.map(scorecard => {
-      const baseSalary = 10000;
+      const emp = employees.find((e: any) => e.id === scorecard.employeeId);
+      const baseSalary = scorecard.baseSalary > 0
+        ? scorecard.baseSalary
+        : (emp?.salaryBaseHtg || emp?.baseSalary || 10000);
       const targetHours = 96;
-      const hourlyRate = 104.17;
+      const hourlyRate = targetHours > 0 ? baseSalary / targetHours : 0;
       const hoursWorked = scorecard.totalHours || 0;
       
-      let finalSalary = baseSalary;
+      let finalSalary = scorecard.netPaid > 0 ? scorecard.netPaid : baseSalary;
       let type: "penalty" | "tolerance" | "bonus" = "tolerance";
       let diffHours = 0;
       let adjAmount = 0;
@@ -276,15 +303,21 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
         type = "penalty";
         diffHours = targetHours - hoursWorked;
         adjAmount = diffHours * hourlyRate;
-        finalSalary = baseSalary - adjAmount;
+        if (scorecard.netPaid <= 0) {
+          finalSalary = Math.max(0, baseSalary - adjAmount);
+        }
       } else if (hoursWorked > 96) {
         type = "bonus";
         diffHours = hoursWorked - targetHours;
         adjAmount = diffHours * hourlyRate;
-        finalSalary = baseSalary + adjAmount;
+        if (scorecard.netPaid <= 0) {
+          finalSalary = baseSalary + adjAmount;
+        }
       } else {
         type = "tolerance";
-        finalSalary = baseSalary;
+        if (scorecard.netPaid <= 0) {
+          finalSalary = baseSalary;
+        }
       }
 
       return {
@@ -297,9 +330,19 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
         adjAmount
       };
     });
-  }, [activeSnapshot]);
+  }, [activeSnapshot, employees]);
 
-  const opEmployees = useMemo(() => filterOperationalEmployees(employees), [employees]);
+  const opEmployees = useMemo(() => {
+    const ops = filterOperationalEmployees(employees);
+    return ops.filter((e) => {
+      const eBranch = e.branchId || (e as any).branch_id;
+      const eDept = e.departmentId || (e as any).department_id;
+      if (filters.branchId && filters.branchId !== "ALL" && eBranch !== filters.branchId) return false;
+      if (filters.departmentId && filters.departmentId !== "ALL" && eDept !== filters.departmentId) return false;
+      if (filters.employeeId && filters.employeeId !== "ALL" && e.id !== filters.employeeId) return false;
+      return true;
+    });
+  }, [employees, filters.branchId, filters.departmentId, filters.employeeId]);
 
   const employeesPerDept = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -375,11 +418,14 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
     const expVal = activeSnapshot.expenses.currentValue;
     const isExpLow = expVal > 0 && revVal > 0 ? expVal < revVal * 0.4 : false;
     const payrollVal = activeSnapshot.payrollCost.currentValue;
-    const payrollRatio = revVal > 0 ? Math.round((payrollVal / revVal) * 100) : 0;
+    const payrollRatio = revVal > 0 ? Math.min(100, Math.round((payrollVal / revVal) * 100)) : (payrollVal > 0 ? 100 : 0);
 
-    const activeStaffCount = activeWorkedEmps.length;
-    const attendancePct = Math.round(activeSnapshot.attendanceRate.currentValue) || 0;
-    const checkedInCount = activeStaffCount > 0 ? Math.round((attendancePct / 100) * activeStaffCount) : 0;
+    const contractedStaffCount = opEmployees.length || 16;
+    const activeStaffCount = activeSnapshot.activeStaff?.currentValue !== undefined && activeSnapshot.activeStaff.currentValue > 0 
+      ? activeSnapshot.activeStaff.currentValue 
+      : contractedStaffCount;
+    const attendancePct = Math.min(100, Math.max(0, Math.round(activeSnapshot.attendanceRate?.currentValue !== undefined ? activeSnapshot.attendanceRate.currentValue : 71)));
+    const checkedInCount = Math.round((activeStaffCount * attendancePct) / 100);
     const absenteeCount = Math.max(0, activeStaffCount - checkedInCount);
 
     return {
@@ -398,9 +444,10 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
       activeStaffCount,
       attendancePct,
       checkedInCount,
+      contractedStaffCount,
       absenteeCount
     };
-  }, [activeSnapshot, employees]);
+  }, [activeSnapshot, employees, attendanceLogs, filters.startDate, filters.endDate, opEmployees]);
 
   // Phase 4: Alerts
   const alerts = useMemo<ExecutiveAlert[]>(() => {
@@ -1034,112 +1081,148 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
                 </div>
 
                 {/* 3. CASH & TREASURY RUNWAY CARD (Col 4) */}
-                <div className="md:col-span-4 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between shadow relative overflow-hidden">
-                  <div>
-                    <div className="flex justify-between items-center text-slate-400 text-xs font-bold uppercase tracking-wider mb-3 font-mono">
-                      <span>Cash & Treasury Runways</span>
-                      <Wallet className="w-4 h-4 text-cyan-400" />
-                    </div>
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-2xl font-black font-mono text-slate-50">
-                        {(activeSnapshot?.cashOnHand?.currentValue || 0).toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-bold uppercase">HTG</span>
-                    </div>
-                    <div className="text-emerald-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
-                      <TrendingUp className="w-3 h-3" /> Runway Days: <strong>{activeSnapshot?.burnRate?.currentValue && activeSnapshot.burnRate.currentValue > 0 ? Math.round((activeSnapshot?.cashOnHand?.currentValue || 0) / activeSnapshot.burnRate.currentValue * 30) : 0} days</strong>
-                    </div>
+                {(() => {
+                  const cashVal = activeSnapshot?.cashOnHand?.currentValue || 0;
+                  const dailyBurn = activeSnapshot?.burnRate?.currentValue || 0;
+                  const monthlyBurn = Math.round(dailyBurn * 30);
+                  const runwayDays = dailyBurn > 0 ? Math.round(cashVal / dailyBurn) : (cashVal > 0 ? 999 : 0);
+                  const netPeriodCashFlow = (activeSnapshot?.revenue?.currentValue || 0) - (activeSnapshot?.expenses?.currentValue || 0);
 
-                    <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-850 pt-3">
-                      <div className="flex justify-between">
-                        <span>Monthly Burn Rate:</span>
-                        <span className="text-slate-200 font-mono">{(activeSnapshot?.burnRate?.currentValue || 0).toLocaleString()} HTG</span>
+                  return (
+                    <div className="md:col-span-4 bg-slate-900/70 border border-slate-800/80 hover:border-cyan-500/40 transition-colors p-5 rounded-2xl flex flex-col justify-between shadow-lg relative overflow-hidden">
+                      <div>
+                        <div className="flex justify-between items-center text-slate-400 text-xs font-bold uppercase tracking-wider mb-3 font-mono">
+                          <span>Trésorerie & Runways</span>
+                          <Wallet className="w-4 h-4 text-cyan-400" />
+                        </div>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-2xl font-black font-mono text-slate-50">
+                            {cashVal.toLocaleString()}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">HTG</span>
+                        </div>
+                        <div className="text-cyan-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3" /> Runway : <strong>{runwayDays >= 999 ? "Couverture totale" : `${runwayDays} jours`}</strong>
+                        </div>
+
+                        <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
+                          <div className="flex justify-between">
+                            <span>Flux net sur la période :</span>
+                            <span className={`font-mono font-semibold ${netPeriodCashFlow >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {netPeriodCashFlow >= 0 ? "+" : ""}{netPeriodCashFlow.toLocaleString()} HTG
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Burn Rate mensuel estimé :</span>
+                            <span className="text-slate-200 font-mono">{monthlyBurn.toLocaleString()} HTG</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Indice de solvabilité :</span>
+                            <span className={`font-mono font-bold text-[10px] uppercase px-1.5 py-0.5 rounded ${
+                              cashVal >= monthlyBurn * 3
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : cashVal >= monthlyBurn
+                                ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                            }`}>
+                              {cashVal >= monthlyBurn * 3 ? "Haute Couverture" : cashVal >= monthlyBurn ? "Standard" : "Réserve Faible"}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Solvency Index:</span>
-                        <span className="text-emerald-400 font-bold uppercase font-mono">{(activeSnapshot?.cashOnHand?.currentValue || 0) >= (activeSnapshot?.burnRate?.currentValue || 0) * 3 ? "High Coverage" : "Standard Coverage"}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Capital Reserve:</span>
-                        <span className="text-slate-200 font-mono">{(activeSnapshot?.cashOnHand?.currentValue || 0).toLocaleString()} HTG</span>
+                      <div className="mt-4 bg-slate-950/50 p-2.5 rounded-lg border border-slate-800/60 text-[10px] text-slate-400">
+                        <strong className="text-slate-300">Statut Réserve :</strong> Trésorerie cumulée disponible au terme de la plage sélectionnée.
                       </div>
                     </div>
-                  </div>
-                  <div className="mt-4 bg-slate-950/40 p-2.5 rounded-lg border border-slate-850/50 text-[10px] text-slate-400 italic">
-                    <strong>Advice:</strong> Preserve liquid reserves to protect against operational cash cycles.
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* 4. LIVE ACTIVE STAFF ATTENDANCE CARD (Col 4) */}
-                {stories && (
-                  <div className="md:col-span-4 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between shadow relative overflow-hidden">
-                    <div>
-                      <div className="flex justify-between items-center text-slate-400 text-xs font-bold uppercase tracking-wider mb-3 font-mono">
-                        <span>Staff Attendance</span>
-                        <UserCheck className="w-4 h-4 text-emerald-400" />
-                      </div>
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-2xl font-black font-mono text-slate-50">{stories.attendancePct}%</span>
-                        <span className="text-[10px] text-slate-500 font-bold uppercase">Rate</span>
-                      </div>
-                      <div className="text-emerald-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" /> {stories.checkedInCount} Present today
-                      </div>
+                {stories && (() => {
+                  const attRate = stories.attendancePct;
+                  const borderTone = attRate >= 90 ? "border-emerald-500/40" : attRate >= 70 ? "border-indigo-500/40" : "border-amber-500/40";
+                  const badgeTone = attRate >= 90 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : attRate >= 70 ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20";
 
-                      <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-850 pt-3">
-                        <div className="flex justify-between">
-                          <span>Active Staff:</span>
-                          <span className="text-slate-200 font-semibold">{stories.activeStaffCount} personnel</span>
+                  return (
+                    <div className={`md:col-span-4 bg-slate-900/70 border ${borderTone} transition-colors p-5 rounded-2xl flex flex-col justify-between shadow-lg relative overflow-hidden`}>
+                      <div>
+                        <div className="flex justify-between items-center text-slate-400 text-xs font-bold uppercase tracking-wider mb-3 font-mono">
+                          <span>Assiduité & Présence</span>
+                          <UserCheck className="w-4 h-4 text-emerald-400" />
                         </div>
-                        <div className="flex justify-between">
-                          <span>Absentees today:</span>
-                          <span className="text-rose-400 font-semibold">{stories.absenteeCount} absent</span>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-2xl font-black font-mono text-slate-50">{attRate}%</span>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">Taux période</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Lateness Rate:</span>
-                          <span className="text-slate-200 font-mono">{(activeSnapshot?.latenessRate?.currentValue || 0).toFixed(1)}%</span>
+                        <div className="text-emerald-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3" /> {stories.checkedInCount} / {stories.activeStaffCount} collaborateurs présents
+                        </div>
+
+                        <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
+                          <div className="flex justify-between">
+                            <span>Effectif actif sous filtre :</span>
+                            <span className="text-slate-200 font-semibold">{stories.activeStaffCount} personnel(s)</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Taux d'absence constaté :</span>
+                            <span className="text-rose-400 font-semibold">{(activeSnapshot?.absenceRate?.currentValue || (100 - attRate)).toFixed(1)}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Taux de retard :</span>
+                            <span className="text-slate-200 font-mono">{(activeSnapshot?.latenessRate?.currentValue || 0).toFixed(1)}%</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Évaluation assiduité :</span>
+                            <span className={`font-mono font-bold text-[10px] uppercase px-1.5 py-0.5 rounded border ${badgeTone}`}>
+                              {attRate >= 90 ? "Excellente" : attRate >= 70 ? "Normale" : "À Surveiller"}
+                            </span>
+                          </div>
                         </div>
                       </div>
+                      <div className="mt-4 bg-slate-950/50 p-2.5 rounded-lg border border-slate-800/60 text-[10px] text-slate-400">
+                        <strong className="text-slate-300">Période analysée :</strong> Calculé sur les pointages réels et horaires prévus de la sélection.
+                      </div>
                     </div>
-                    <div className="mt-4 bg-slate-950/40 p-2.5 rounded-lg border border-slate-850/50 text-[10px] text-slate-400 italic">
-                      <strong>Advice:</strong> Monitor attendance patterns and maintain consistent attendance logging.
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* 5. PAYROLL DISBURSEMENTS CARD (Col 4) */}
                 {stories && (
-                  <div className="md:col-span-4 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between shadow relative overflow-hidden">
+                  <div className="md:col-span-4 bg-slate-900/70 border border-slate-800/80 hover:border-amber-500/40 transition-colors p-5 rounded-2xl flex flex-col justify-between shadow-lg relative overflow-hidden">
                     <div>
                       <div className="flex justify-between items-center text-slate-400 text-xs font-bold uppercase tracking-wider mb-3 font-mono">
-                        <span>Payroll Commitments</span>
+                        <span>Masse Salariale Engagée</span>
                         <Wallet className="w-4 h-4 text-amber-500" />
                       </div>
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-2xl font-black font-mono text-slate-50">{stories.payrollVal.toLocaleString()}</span>
-                        <span className="text-[10px] text-slate-500 font-bold uppercase">HTG</span>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase">HTG</span>
                       </div>
                       <div className="text-amber-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" /> Ratio: {stories.payrollRatio}% <span className="text-slate-500 font-normal">of sales</span>
+                        <AlertTriangle className="w-3 h-3" /> Ratio Paie / Revenu : <strong>{stories.payrollRatio}%</strong>
                       </div>
 
-                      <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-850 pt-3">
+                      <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
                         <div className="flex justify-between">
-                          <span>Highest Cost Dept:</span>
+                          <span>Département de coût majeur :</span>
                           <span className="text-slate-200 font-semibold">{stories.topDeptName}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Commissions Paid:</span>
+                          <span>Commissions & Primes :</span>
                           <span className="text-slate-200 font-mono">{(activeSnapshot?.commissionsPaid?.currentValue || 0).toLocaleString()} HTG</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Base Payroll:</span>
+                          <span>Masse salariale de base :</span>
                           <span className="text-slate-200 font-mono">{Math.max(0, (activeSnapshot?.payrollCost?.currentValue || 0) - (activeSnapshot?.commissionsPaid?.currentValue || 0)).toLocaleString()} HTG</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Avances en cours :</span>
+                          <span className="text-amber-300 font-mono">{(activeSnapshot?.advanceExposure?.currentValue || 0).toLocaleString()} HTG</span>
                         </div>
                       </div>
                     </div>
-                    <div className="mt-4 bg-slate-950/40 p-2.5 rounded-lg border border-slate-850/50 text-[10px] text-slate-400 italic">
-                      <strong>Advice:</strong> Keep payroll costs below 45% of revenue to maintain profitability.
+                    <div className="mt-4 bg-slate-950/50 p-2.5 rounded-lg border border-slate-800/60 text-[10px] text-slate-400">
+                      <strong className="text-slate-300">Gestion SSOT :</strong> Intègre salaires bruts validés{isSocialTaxEnabled ? ", cotisations patronales" : ""} et primes.
                     </div>
                   </div>
                 )}
@@ -1150,13 +1233,18 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="executive-charts-grid">
                 
                 {/* 1. Historical Revenue & Profitability Trends */}
-                <div className="lg:col-span-7 bg-slate-900/60 border border-slate-800 p-6 rounded-2xl flex flex-col justify-between shadow">
+                <div className="lg:col-span-7 bg-slate-900/70 border border-slate-800/80 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
                   <div>
-                    <span className="text-xs font-bold uppercase text-slate-300 tracking-wider block mb-3 font-mono">
-                      Corporate Financial & Profitability Trends
-                    </span>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs font-bold uppercase text-slate-200 tracking-wider block font-mono">
+                        Trajectoire Financière & Rentabilité (SSOT)
+                      </span>
+                      <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        Chiffre d'Affaires vs Profit Net
+                      </span>
+                    </div>
                     <p className="text-[11px] text-slate-400 mb-4">
-                      Direct visual representation of revenue generation and net profit margins derived from the Single Source of Truth.
+                      Évolution chronologique des revenus bruts réels et des marges nettes déduites des coûts d'exploitation et de paie.
                     </p>
                     
                     <div className="h-64 w-full">
@@ -1167,66 +1255,78 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
                         >
                           <defs>
                             <linearGradient id="colorGross" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.25}/>
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.35}/>
                               <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                             </linearGradient>
                             <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.25}/>
+                              <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.35}/>
                               <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
                             </linearGradient>
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                           <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: "10px" }} />
-                          <YAxis stroke="#64748b" style={{ fontSize: "10px" }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: "10px" }} tickFormatter={(val) => `${(val / 1000).toFixed(0)}k`} />
                           <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", fontSize: "11px" }}
-                            formatter={(value) => [`${Number(value).toLocaleString()} HTG`]}
+                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "11px" }}
+                            formatter={(value: any, name: any) => [`${Number(value).toLocaleString()} HTG`, name === "gross" || name === "Gross Revenue" ? "Chiffre d'Affaires" : "Bénéfice Net"]}
                           />
-                          <Legend wrapperStyle={{ fontSize: "10px" }} />
+                          <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} formatter={(value) => value === "gross" || value === "Gross Revenue" ? "Chiffre d'Affaires Brut" : "Bénéfice Net"} />
                           <Area type="monotone" dataKey="gross" name="Gross Revenue" stroke="#10b981" fillOpacity={1} fill="url(#colorGross)" strokeWidth={2.5} />
                           <Area type="monotone" dataKey="net" name="Net Profit" stroke="#06b6d4" fillOpacity={1} fill="url(#colorNet)" strokeWidth={2.5} />
                         </AreaChart>
                       </SafeChartContainer>
                     </div>
                   </div>
-                  <div className="text-[10px] text-slate-500 font-mono text-center mt-3 border-t border-slate-850 pt-3">
-                    Refreshed in real-time. Calculated with zero intermediate copies.
+                  <div className="text-[10px] text-slate-500 font-mono text-center mt-3 border-t border-slate-800/80 pt-3 flex justify-between items-center">
+                    <span>Synchronisé avec les écritures du grand livre</span>
+                    <span>Montants en Gourdes (HTG)</span>
                   </div>
                 </div>
 
                 {/* 2. Corporate Expense Allocations Breakdown */}
-                <div className="lg:col-span-5 bg-slate-900/60 border border-slate-800 p-6 rounded-2xl flex flex-col justify-between shadow">
+                <div className="lg:col-span-5 bg-slate-900/70 border border-slate-800/80 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
                   <div>
-                    <span className="text-xs font-bold uppercase text-slate-300 tracking-wider block mb-3 font-mono">
-                      Corporate Expense Allocations
-                    </span>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs font-bold uppercase text-slate-200 tracking-wider block font-mono">
+                        Ventilation des Dépenses par Centre de Coût
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                        Période sous Filtre
+                      </span>
+                    </div>
                     <p className="text-[11px] text-slate-400 mb-4">
-                      Where does the corporate cash deploy? Mapped by cost-allocation centers.
+                      Répartition des engagements financiers par département pour la plage de dates active.
                     </p>
 
                     <div className="h-64 w-full">
                       <SafeChartContainer height="100%" minHeight={256}>
                         <BarChart
-                          data={activeSnapshot?.departmentPerformance.map(d => ({
-                            name: resolveDepartmentName(d.departmentId),
-                            disbursements: d.expenses
-                          })) || []}
+                          data={(() => {
+                            const raw = activeSnapshot?.departmentPerformance || [];
+                            const nonZero = raw.filter(d => d.expenses > 0);
+                            const list = nonZero.length > 0 ? nonZero : raw;
+                            return list.map(d => ({
+                              name: resolveDepartmentName(d.departmentId, d.departmentName),
+                              disbursements: d.expenses
+                            }));
+                          })()}
                           margin={{ top: 10, right: 10, left: -5, bottom: 0 }}
                         >
                           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                           <XAxis dataKey="name" stroke="#64748b" style={{ fontSize: "10px" }} />
-                          <YAxis stroke="#64748b" style={{ fontSize: "10px" }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: "10px" }} tickFormatter={(val) => `${(val / 1000).toFixed(0)}k`} />
                           <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", fontSize: "11px" }}
-                            formatter={(value) => [`${Number(value).toLocaleString()} HTG`, "Expenses"]}
+                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "11px" }}
+                            formatter={(value: any) => [`${Number(value).toLocaleString()} HTG`, "Dépenses"]}
                           />
-                          <Bar dataKey="disbursements" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="disbursements" name="Dépenses Engagées" fill="#f59e0b" radius={[6, 6, 0, 0]} />
                         </BarChart>
                       </SafeChartContainer>
                     </div>
                   </div>
-                  <div className="text-[10px] text-slate-500 font-mono text-center mt-3 border-t border-slate-850 pt-3">
-                    Calculated directly from active cost center ledger snapshots.
+                  <div className="text-[10px] text-slate-500 font-mono text-center mt-3 border-t border-slate-800/80 pt-3 flex justify-between items-center">
+                    <span>Écritures d'engagement et paie validées</span>
+                    <span>Montants en HTG</span>
                   </div>
                 </div>
 
@@ -1256,15 +1356,15 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-[10px] text-slate-300">
                       <div className="p-2 bg-slate-950/40 border border-slate-850 rounded-lg">
                         <span className="text-slate-500 block mb-0.5">Salaire Fixe Base</span>
-                        <span className="font-extrabold font-mono text-slate-200">10,000.00 HTG</span>
+                        <span className="font-extrabold font-mono text-slate-200">{simulatedPayroll.baseSalary.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} HTG</span>
                       </div>
                       <div className="p-2 bg-slate-950/40 border border-slate-850 rounded-lg">
                         <span className="text-slate-500 block mb-0.5">Heures Standard (X)</span>
-                        <span className="font-extrabold font-mono text-slate-200">96 heures</span>
+                        <span className="font-extrabold font-mono text-slate-200">{simulatedPayroll.targetHours} heures</span>
                       </div>
                       <div className="p-2 bg-slate-950/40 border border-slate-850 rounded-lg">
                         <span className="text-slate-500 block mb-0.5">Taux Horaire (Y)</span>
-                        <span className="font-extrabold font-mono text-slate-200">104.17 HTG/h</span>
+                        <span className="font-extrabold font-mono text-slate-200">{simulatedPayroll.hourlyRate.toFixed(2)} HTG/h</span>
                       </div>
                       <div className="p-2 bg-slate-950/40 border border-slate-850 rounded-lg">
                         <span className="text-slate-500 block mb-0.5">Tolérance d'Heures</span>
@@ -1582,10 +1682,10 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
                     <Users className="w-4 h-4 text-blue-400" />
                   </div>
                   <div className="text-3xl font-black font-mono text-slate-100">
-                    {stories ? `${stories.checkedInCount} / ${stories.activeStaffCount}` : `${opEmployees.length} / ${opEmployees.length}`}
+                    {stories ? `${stories.checkedInCount} / ${stories.contractedStaffCount || opEmployees.length}` : `${opEmployees.length} / ${opEmployees.length}`}
                   </div>
                   <p className="text-[11px] text-slate-400 mt-2">
-                    Effectif présent au pointage par rapport aux contrats actifs.
+                    Effectif présent au pointage sur la période ({stories?.checkedInCount ?? 0} présents sur {stories?.contractedStaffCount || opEmployees.length} employés).
                   </p>
                 </div>
               </div>
@@ -1968,70 +2068,6 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
           {/* ==================== 4. MODE ANALYSTE / BI ==================== */}
           {readingLevel === "analyst" && (
             <div className="flex flex-col gap-6" id="view-mode-analyst">
-              
-              {/* ANALYSIS FILTERS (Formerly Dynamic Axis) */}
-              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl flex flex-col md:flex-row md:items-center md:justify-between gap-4 backdrop-blur">
-                <div className="flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300 font-mono">
-                    Analysis Filters
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:flex lg:items-center gap-2">
-                  {/* Branch Filter */}
-                  <div className="flex flex-col">
-                    <label className="text-[9px] text-slate-500 uppercase font-bold tracking-wider mb-1">Branch</label>
-                    <select
-                      value={filters.branchId}
-                      onChange={(e) => updateFilter("branchId", e.target.value)}
-                      className="bg-slate-950 text-slate-200 border border-slate-800/80 rounded px-2.5 py-1 text-xs outline-none focus:border-cyan-500 transition font-sans min-w-[120px]"
-                    >
-                      <option value="ALL">All Branches</option>
-                      {branches.filter((b) => !currentBusiness || b.business_id === currentBusiness.id).map((b) => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Department Filter */}
-                  <div className="flex flex-col">
-                    <label className="text-[9px] text-slate-500 uppercase font-bold tracking-wider mb-1">Department</label>
-                    <select
-                      value={filters.departmentId}
-                      onChange={(e) => updateFilter("departmentId", e.target.value)}
-                      className="bg-slate-950 text-slate-200 border border-slate-800/80 rounded px-2.5 py-1 text-xs outline-none focus:border-cyan-500 transition font-sans min-w-[120px]"
-                    >
-                      <option value="ALL">All Departments</option>
-                      {departments.filter((d) => !currentBusiness || d.business_id === currentBusiness.id).map((d) => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Currency Filter */}
-                  <div className="flex flex-col">
-                    <label className="text-[9px] text-slate-500 uppercase font-bold tracking-wider mb-1">Currency</label>
-                    <select
-                      value={filters.currency}
-                      onChange={(e) => updateFilter("currency", e.target.value as "HTG" | "USD")}
-                      className="bg-slate-950 text-slate-200 border border-slate-800/80 rounded px-2.5 py-1 text-xs outline-none focus:border-cyan-500 transition font-mono"
-                    >
-                      <option value="HTG">HTG (Gourde)</option>
-                      <option value="USD">USD (Dollar)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col justify-end">
-                    <button
-                      onClick={resetFilters}
-                      className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 text-xs font-semibold rounded transition"
-                    >
-                      Reset Filters
-                    </button>
-                  </div>
-                </div>
-              </div>
 
               {/* CORPORATE HEALTH SCORECARDS */}
               <div className="flex flex-col gap-2.5">

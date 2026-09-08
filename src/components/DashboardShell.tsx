@@ -17,6 +17,10 @@ import { normalizeTab } from "./dashboard/hooks/useNavigation";
 import { Role, Business } from "../types";
 import EnterpriseErrorBoundary from "./ui/ErrorBoundary";
 import { EditProfileModal } from "./profile/EditProfileModal";
+import { EmployeeRepository } from "../repositories/EmployeeRepository";
+import { PayrollRepository } from "../repositories/PayrollRepository";
+import { db } from "../lib/firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 // Subcomponents - Lazy loaded for performance & code splitting
 const AttendanceLedger = lazyWithRetry(() => import("../pages/AttendanceLedger"));
@@ -92,6 +96,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
     forensicLogs = [],
     leaves = [],
     events = [],
+    employeeContracts = [],
   } = useBusinessContext();
 
   // 1. Navigation Hook with normalized tab mapping
@@ -231,13 +236,69 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 payrollCycles={payrollCycles}
                 payrollRecords={payrollRecords}
                 attendanceRecords={attendanceRecords}
-                onLockCycle={() => {}}
-                onAddCycle={() => {}}
-                onUpdateCycle={() => {}}
-                onAddRecords={() => {}}
-                onAddForensicLog={() => {}}
-                onAddEvent={() => {}}
-                onAddTransaction={() => {}}
+                onLockCycle={async (cycleId, lockedBy) => {
+                  console.debug(`[Payroll] Cycle locked: ${cycleId} by ${lockedBy}`);
+                  await PayrollRepository.updateCycle(cycleId, {
+                    status: "LOCKED",
+                    validatedBy: lockedBy,
+                    validatedAt: new Date().toISOString(),
+                    business_id: liveBusiness?.id || "BIZ_MAIN"
+                  });
+                }}
+                onAddCycle={async (cycle) => {
+                  console.debug(`[Payroll] Creating cycle with period: ${cycle.startDate}, ${cycle.endDate} -> generated name: "${cycle.cycleName}"`);
+                  await PayrollRepository.createCycle(cycle);
+                  console.debug(`[Payroll] Cycle created with ID: ${cycle.id} and name: "${cycle.cycleName}"`);
+                }}
+                onUpdateCycle={async (cycleId, updates) => {
+                  console.debug(`[Payroll] Updating cycle ${cycleId}:`, updates);
+                  await PayrollRepository.updateCycle(cycleId, {
+                    ...updates,
+                    business_id: liveBusiness?.id || "BIZ_MAIN"
+                  });
+                }}
+                onDeleteCycle={async (cycleId) => {
+                  console.debug(`[Payroll] Deleting cycle ${cycleId}`);
+                  await PayrollRepository.deleteCycle(cycleId, liveBusiness?.id || "BIZ_MAIN", authUser?.uid || "admin");
+                }}
+                onAddRecords={async (records) => {
+                  console.debug(`[Payroll] Employees added: ${records.length} payroll records`);
+                  for (const rec of records) {
+                    const ref = doc(db, "payroll_records", rec.id);
+                    await setDoc(ref, {
+                      ...rec,
+                      business_id: liveBusiness?.id || "BIZ_MAIN",
+                      updated_at: serverTimestamp()
+                    }, { merge: true });
+                  }
+                }}
+                onAddForensicLog={async (log) => {
+                  console.debug(`[Payroll] Forensic log recorded: ${log.id}`);
+                  const ref = doc(db, "forensic_logs", log.id);
+                  await setDoc(ref, {
+                    ...log,
+                    business_id: liveBusiness?.id || "BIZ_MAIN",
+                    _server_timestamp: serverTimestamp()
+                  }, { merge: true });
+                }}
+                onAddEvent={async (ev) => {
+                  console.debug(`[Payroll] Event published: ${ev.type}`);
+                  const ref = doc(db, "erp_events", ev.id);
+                  await setDoc(ref, {
+                    ...ev,
+                    business_id: liveBusiness?.id || "BIZ_MAIN",
+                    created_at: serverTimestamp()
+                  }, { merge: true });
+                }}
+                onAddTransaction={async (tx) => {
+                  console.debug(`[Payroll] Ledger transaction posted: ${tx.id}`);
+                  const ref = doc(db, "ledger_transactions", tx.id);
+                  await setDoc(ref, {
+                    ...tx,
+                    business_id: liveBusiness?.id || "BIZ_MAIN",
+                    updatedAt: serverTimestamp()
+                  }, { merge: true });
+                }}
               />
             )}
 
@@ -306,11 +367,33 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             {normalizedActiveTab === "documents" && (
               <DocumentsManager
                 currentRole={currentRole}
-                currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
+                currentUser={{ name: resolvedUserName || authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
                 currentUserId={authUser?.uid}
                 current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                businessName={liveBusiness?.name || ""}
                 employees={employees || []}
-                employeeContracts={[]}
+                employeeContracts={employeeContracts || []}
+                onAddEmployeeContract={async (contract) => {
+                  try {
+                    await EmployeeRepository.saveContract(contract, authUser);
+                  } catch (err) {
+                    console.error("[DashboardShell] Error saving employee contract:", err);
+                  }
+                }}
+                onUpdateEmployeeContract={async (contract) => {
+                  try {
+                    await EmployeeRepository.saveContract(contract, authUser);
+                  } catch (err) {
+                    console.error("[DashboardShell] Error updating employee contract:", err);
+                  }
+                }}
+                onDeleteEmployeeContract={async (contractId) => {
+                  try {
+                    await EmployeeRepository.deleteContract(contractId);
+                  } catch (err) {
+                    console.error("[DashboardShell] Error deleting employee contract:", err);
+                  }
+                }}
               />
             )}
 
