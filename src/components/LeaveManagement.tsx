@@ -194,6 +194,20 @@ export default function LeaveManagement({
   // Absence/Lateness incidents state
   const [absenceEvents, setAbsenceEvents] = useState<AbsenceEvent[]>([]);
 
+  // Dynamic Requests Filter states
+  const [filterSearch, setFilterSearch] = useState("");
+  const [filterEmployeeId, setFilterEmployeeId] = useState("ALL");
+  const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterType, setFilterType] = useState("ALL");
+
+  const handleTabChange = (tab: "leaves" | "overtime" | "absences") => {
+    setActiveTab(tab);
+    setFilterSearch("");
+    setFilterEmployeeId("ALL");
+    setFilterStatus("ALL");
+    setFilterType("ALL");
+  };
+
   // Subscriptions to overtime and absence justifications
   useEffect(() => {
     if (!current_business_id || current_business_id === "undefined" || current_business_id === "null" || !auth.currentUser) {
@@ -406,6 +420,172 @@ export default function LeaveManagement({
     }
   };
 
+  // Dynamic Filtering Calculations
+  const filteredLeaves = leaves
+    .filter((l) => l.business_id === current_business_id)
+    .filter((l) => {
+      const searchLower = filterSearch.trim().toLowerCase();
+      if (searchLower) {
+        const nameMatches = l.employeeName?.toLowerCase().includes(searchLower);
+        const reasonMatches = l.reason?.toLowerCase().includes(searchLower);
+        if (!nameMatches && !reasonMatches) return false;
+      }
+      if (filterEmployeeId !== "ALL" && l.employeeId !== filterEmployeeId && (l as any).employee_id !== filterEmployeeId) {
+        return false;
+      }
+      if (filterStatus !== "ALL") {
+        if (filterStatus === "PENDING" && l.status !== "PENDING" && l.status !== "SUBMITTED" && l.status !== "MANAGER_REVIEW") {
+          return false;
+        }
+        if (filterStatus === "APPROVED" && l.status !== "APPROVED" && l.status !== "PAYROLL_SYNCED") {
+          return false;
+        }
+        if (filterStatus === "REJECTED" && l.status !== "REJECTED") {
+          return false;
+        }
+      }
+      if (filterType !== "ALL" && l.type !== filterType) {
+        return false;
+      }
+      return true;
+    });
+
+  const filteredOvertimes = overtimes.filter((ot) => {
+    const searchLower = filterSearch.trim().toLowerCase();
+    if (searchLower) {
+      const nameMatches = ot.employeeName?.toLowerCase().includes(searchLower);
+      const reasonMatches = ot.reason?.toLowerCase().includes(searchLower);
+      if (!nameMatches && !reasonMatches) return false;
+    }
+    if (filterEmployeeId !== "ALL" && ot.employeeId !== filterEmployeeId) {
+      return false;
+    }
+    if (filterStatus !== "ALL") {
+      if (filterStatus === "PENDING" && ot.status !== "PENDING") return false;
+      if (filterStatus === "APPROVED" && ot.status !== "APPROVED") return false;
+      if (filterStatus === "REJECTED" && ot.status !== "REJECTED") return false;
+    }
+    return true;
+  });
+
+  const filteredAbsenceEvents = absenceEvents.filter((evt) => {
+    const searchLower = filterSearch.trim().toLowerCase();
+    if (searchLower) {
+      const nameMatches = evt.employeeName?.toLowerCase().includes(searchLower);
+      const justificationMatches = evt.justification?.toLowerCase().includes(searchLower);
+      if (!nameMatches && !justificationMatches) return false;
+    }
+    if (filterEmployeeId !== "ALL" && evt.employeeId !== filterEmployeeId && (evt as any).employee_id !== filterEmployeeId) {
+      return false;
+    }
+    if (filterStatus !== "ALL") {
+      if (filterStatus === "PENDING" && evt.status !== "PENDING_JUSTIFICATION") return false;
+      if (filterStatus === "APPROVED" && evt.status !== "JUSTIFIED") return false;
+      if (filterStatus === "REJECTED" && evt.status !== "REJECTED_JUSTIFICATION") return false;
+    }
+    if (filterType !== "ALL" && evt.type !== filterType) {
+      return false;
+    }
+    return true;
+  });
+
+  const leaveTypeOptions = Object.entries(LEAVE_TYPES_CONFIG).map(([key, config]) => ({
+    key,
+    label: config.name
+  }));
+
+  const absenceTypeOptions = [
+    { key: "UNEXCUSED_ABSENCE", label: "Absence injustifiée" },
+    { key: "CRITICAL_LATE", label: "Retard critique" },
+    { key: "EARLY_LEAVE", label: "Départ anticipé" }
+  ];
+
+  const renderFilterToolbar = (showTypeSelect: boolean, typeOptions?: { key: string; label: string }[]) => {
+    return (
+      <div className="bg-slate-950/45 border border-slate-800/80 rounded-xl p-3 flex flex-wrap gap-3 items-center mb-4" id="demandes-filter-toolbar">
+        {/* Search */}
+        <div className="flex-1 min-w-[150px]">
+          <label className="block text-[9px] uppercase font-bold text-slate-400 mb-1">Rechercher</label>
+          <input
+            type="text"
+            value={filterSearch}
+            onChange={(e) => setFilterSearch(e.target.value)}
+            placeholder="Nom ou motif..."
+            className="w-full bg-slate-900/60 border border-slate-800 rounded p-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500 placeholder-slate-600 font-mono"
+          />
+        </div>
+
+        {/* Employee select */}
+        <div className="w-full sm:w-auto min-w-[145px]">
+          <label className="block text-[9px] uppercase font-bold text-slate-400 mb-1">Employé</label>
+          <select
+            value={filterEmployeeId}
+            onChange={(e) => setFilterEmployeeId(e.target.value)}
+            className="w-full bg-slate-900/60 border border-slate-800 rounded p-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500 cursor-pointer font-sans"
+          >
+            <option value="ALL">Tous les employés</option>
+            {businessEmployees.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Status select */}
+        <div className="w-full sm:w-auto min-w-[120px]">
+          <label className="block text-[9px] uppercase font-bold text-slate-400 mb-1">Statut</label>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="w-full bg-slate-900/60 border border-slate-800 rounded p-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500 cursor-pointer font-sans"
+          >
+            <option value="ALL">Tous statuts</option>
+            <option value="PENDING">En attente</option>
+            <option value="APPROVED">Approuvés / Validés</option>
+            <option value="REJECTED">Refusés / Rejetés</option>
+          </select>
+        </div>
+
+        {/* Type select if applicable */}
+        {showTypeSelect && typeOptions && (
+          <div className="w-full sm:w-auto min-w-[130px]">
+            <label className="block text-[9px] uppercase font-bold text-slate-400 mb-1">Type</label>
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="w-full bg-slate-900/60 border border-slate-800 rounded p-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500 cursor-pointer font-sans"
+            >
+              <option value="ALL">Tous types</option>
+              {typeOptions.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Reset button */}
+        {(filterSearch || filterEmployeeId !== "ALL" || filterStatus !== "ALL" || filterType !== "ALL") && (
+          <div className="self-end pb-0.5">
+            <button
+              onClick={() => {
+                setFilterSearch("");
+                setFilterEmployeeId("ALL");
+                setFilterStatus("ALL");
+                setFilterType("ALL");
+              }}
+              className="px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-400 font-bold rounded text-[10px] uppercase font-mono tracking-wider transition cursor-pointer"
+            >
+              Effacer
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-6" id="leave-tab-container">
       {/* Title */}
@@ -423,7 +603,7 @@ export default function LeaveManagement({
         {/* Tab Selectors */}
         <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-xl">
           <button
-            onClick={() => setActiveTab("leaves")}
+            onClick={() => handleTabChange("leaves")}
             className={`px-3 py-1.5 text-[10px] font-bold font-mono tracking-wider rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTab === "leaves" 
                 ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/10" 
@@ -434,7 +614,7 @@ export default function LeaveManagement({
             CONGÉS ({leaves.filter(l => l.business_id === current_business_id).length})
           </button>
           <button
-            onClick={() => setActiveTab("overtime")}
+            onClick={() => handleTabChange("overtime")}
             className={`px-3 py-1.5 text-[10px] font-bold font-mono tracking-wider rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTab === "overtime" 
                 ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/10" 
@@ -445,7 +625,7 @@ export default function LeaveManagement({
             HEURES SUP ({overtimes.length})
           </button>
           <button
-            onClick={() => setActiveTab("absences")}
+            onClick={() => handleTabChange("absences")}
             className={`px-3 py-1.5 text-[10px] font-bold font-mono tracking-wider rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTab === "absences" 
                 ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/10" 
@@ -608,6 +788,7 @@ export default function LeaveManagement({
 
           {/* Leaves Records Table (Right Column) */}
           <div className="lg:col-span-7 flex flex-col gap-4" id="leave-list-pane">
+            {renderFilterToolbar(true, leaveTypeOptions)}
             <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl overflow-hidden" id="leave-table-box">
               <div className="p-3 bg-slate-950/60 border-b border-slate-800/80" id="leave-table-header">
                 <span className="text-xs uppercase font-extrabold text-slate-200 tracking-wide">{d.requestedLeaves}</span>
@@ -625,7 +806,7 @@ export default function LeaveManagement({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-850">
-                    {leaves.filter((l) => l.business_id === current_business_id).map((lv) => (
+                    {filteredLeaves.map((lv) => (
                       <tr key={lv.id} className="hover:bg-slate-900/20 text-slate-350" id={`leave-row-${lv.id}`}>
                         <td className="py-2.5 px-3">
                           <p className="font-semibold text-slate-200">{lv.employeeName}</p>
@@ -688,7 +869,7 @@ export default function LeaveManagement({
                       </tr>
                     ))}
 
-                    {leaves.filter((l) => l.business_id === current_business_id).length === 0 && (
+                    {filteredLeaves.length === 0 && (
                       <tr>
                         <td colSpan={5} className="py-8 text-center text-slate-500">
                           {d.emptyLeaves}
@@ -711,7 +892,9 @@ export default function LeaveManagement({
             ARBITRAGE DES HEURES SUPPLÉMENTAIRES
           </h3>
 
-          <div className="overflow-x-auto">
+          {renderFilterToolbar(false)}
+
+          <div className="overflow-x-auto mt-4">
             <table className="w-full text-left font-sans text-xs">
               <thead>
                 <tr className="bg-slate-950/40 border-b border-slate-850 text-[10px] uppercase text-slate-400 tracking-wide font-bold">
@@ -724,7 +907,7 @@ export default function LeaveManagement({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-850">
-                {overtimes.map((ot) => (
+                {filteredOvertimes.map((ot) => (
                   <tr key={ot.id} className="hover:bg-slate-900/20 text-slate-350">
                     <td className="py-2.5 px-3 font-semibold text-slate-200">
                       {ot.employeeName}
@@ -774,7 +957,7 @@ export default function LeaveManagement({
                   </tr>
                 ))}
 
-                {overtimes.length === 0 && (
+                {filteredOvertimes.length === 0 && (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-slate-500">
                       Aucune demande d'heures supplémentaires pour le moment.
@@ -795,7 +978,9 @@ export default function LeaveManagement({
             ARBITRAGE DES RETARDS ET ABSENCES
           </h3>
 
-          <div className="overflow-x-auto">
+          {renderFilterToolbar(true, absenceTypeOptions)}
+
+          <div className="overflow-x-auto mt-4">
             <table className="w-full text-left font-sans text-xs">
               <thead>
                 <tr className="bg-slate-950/40 border-b border-slate-850 text-[10px] uppercase text-slate-400 tracking-wide font-bold">
@@ -809,7 +994,7 @@ export default function LeaveManagement({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-850">
-                {absenceEvents.map((evt) => {
+                {filteredAbsenceEvents.map((evt) => {
                   const badge = getAbsenceBadge(evt.type);
                   return (
                     <tr key={evt.id} className="hover:bg-slate-900/20 text-slate-350">
@@ -871,7 +1056,7 @@ export default function LeaveManagement({
                   );
                 })}
 
-                {absenceEvents.length === 0 && (
+                {filteredAbsenceEvents.length === 0 && (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-slate-500">
                       Aucun incident enregistré ou tous les incidents ont été justifiés.
