@@ -476,8 +476,8 @@ export default function CameraQrScanner({
         className="hidden"
       />
 
-      {/* Main Viewport Stage */}
-      <div className="relative w-full max-w-[340px] aspect-square bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center justify-center">
+      {/* Main Viewport Stage - Enlarged for high-definition badge scanning */}
+      <div className="relative w-full max-w-[560px] aspect-[4/3] sm:aspect-square md:aspect-[4/3] bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center justify-center">
         {/* Live Native Video Feed */}
         <video
           ref={videoRef}

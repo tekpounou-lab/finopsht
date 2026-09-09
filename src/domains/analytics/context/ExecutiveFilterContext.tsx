@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useMemo, useCallback } from "react";
 import { Employee, LedgerTransaction, AttendanceRecord, PayrollRecord } from "../../../types";
+import { toDateOnly, normalizeDateFilter, isDateInRange } from "../../../utils/dateNormalization";
 
 export interface ExecutiveFilters {
   startDate: string;
@@ -34,8 +35,8 @@ export interface ExecutiveFilterContextState {
 }
 
 const defaultFilters: ExecutiveFilters = {
-  startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-  endDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0],
+  startDate: toDateOnly(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+  endDate: toDateOnly(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)),
   branchId: "ALL",
   departmentId: "ALL",
   employeeId: "ALL",
@@ -54,7 +55,17 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
   const [isFiltering, setIsFiltering] = useState(false);
   const [pendingFilter, setPendingFilter] = useState<ExecutiveFilters | null>(null);
 
+  React.useEffect(() => {
+    console.debug("[ExecutiveFilterContext] Filters propagated to application:", {
+      filters,
+      filterVersion,
+      isFiltering,
+      hasPending: !!pendingFilter
+    });
+  }, [filters, filterVersion, isFiltering, pendingFilter]);
+
   const resetFilters = useCallback(() => {
+    console.debug("[ExecutiveFilterContext] resetFilters triggered, target defaultFilters:", defaultFilters);
     if (isFiltering) {
       setPendingFilter(defaultFilters);
     } else {
@@ -64,17 +75,22 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
   }, [isFiltering]);
 
   const updateFilter = useCallback(<K extends keyof ExecutiveFilters>(key: K, value: ExecutiveFilters[K]) => {
+    console.debug(`[ExecutiveFilterContext] updateFilter called for key '${key}':`, value);
     if (isFiltering) {
       setPendingFilter((prev) => {
         const base = prev || filters;
         if (base[key] === value) return prev;
-        return { ...base, [key]: value };
+        const updated = { ...base, [key]: value };
+        console.debug("[ExecutiveFilterContext] Queued pending filter update:", updated);
+        return updated;
       });
     } else {
       setFilters((prev) => {
         if (prev[key] === value) return prev;
+        const updated = { ...prev, [key]: value };
+        console.debug("[ExecutiveFilterContext] Direct filter update applied:", updated);
         setFilterVersion((v) => v + 1);
-        return { ...prev, [key]: value };
+        return updated;
       });
     }
   }, [isFiltering, filters]);
@@ -83,12 +99,15 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
     if (isFiltering) {
       setPendingFilter((prev) => {
         const base = prev || filters;
-        return typeof updater === 'function' ? updater(base) : updater;
+        const next = typeof updater === 'function' ? updater(base) : updater;
+        console.debug("[ExecutiveFilterContext] setFilters (pending) updated:", next);
+        return next;
       });
     } else {
       setFilters((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         if (next === prev) return prev;
+        console.debug("[ExecutiveFilterContext] setFilters (active) updated:", next);
         setFilterVersion((v) => v + 1);
         return next;
       });
@@ -119,6 +138,7 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
 
   const filterTransactions = useMemo(() => {
     return (transactions: LedgerTransaction[]): LedgerTransaction[] => {
+      const normBounds = normalizeDateFilter(filters.startDate, filters.endDate);
       return (transactions || []).filter((tx) => {
         const txBranch = tx.branchId || (tx as any).branch_id;
         const txDept = tx.departmentId || (tx as any).department_id;
@@ -128,12 +148,11 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
         if (filters.status !== "ALL" && tx.status !== filters.status) return false;
         if (filters.currency && filters.currency !== "ALL" && tx.currency !== filters.currency) return false;
         
-        // Date range filtering
-        if (tx.date) {
-          const txDate = tx.date.split("T")[0];
-          if (filters.startDate && txDate < filters.startDate) return false;
-          if (filters.endDate && txDate > filters.endDate) return false;
-        }
+        // Date range filtering using SSOT date normalization
+        const rawDate = tx.date || (tx as any).transaction_date || (tx as any).transactionDate || (tx as any).createdAt;
+        const txDate = toDateOnly(rawDate);
+        if (normBounds.startDate && (!txDate || txDate < normBounds.startDate)) return false;
+        if (normBounds.endDate && (!txDate || txDate > normBounds.endDate)) return false;
         return true;
       });
     };
@@ -141,6 +160,7 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
 
   const filterAttendance = useMemo(() => {
     return (records: AttendanceRecord[]): AttendanceRecord[] => {
+      const normBounds = normalizeDateFilter(filters.startDate, filters.endDate);
       return (records || []).filter((rec) => {
         const rBranch = rec.branchId || (rec as any).branch_id;
         const rDept = rec.departmentId || (rec as any).department_id;
@@ -149,12 +169,11 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
         if (filters.departmentId !== "ALL" && rDept !== filters.departmentId) return false;
         if (filters.employeeId !== "ALL" && rEmp !== filters.employeeId) return false;
         
-        // Date range filtering
-        if (rec.date) {
-          const recDate = rec.date.split("T")[0];
-          if (filters.startDate && recDate < filters.startDate) return false;
-          if (filters.endDate && recDate > filters.endDate) return false;
-        }
+        // Date range filtering using SSOT date normalization
+        const rawDate = rec.date || (rec as any).created_at || (rec as any).createdAt;
+        const recDate = toDateOnly(rawDate);
+        if (normBounds.startDate && (!recDate || recDate < normBounds.startDate)) return false;
+        if (normBounds.endDate && (!recDate || recDate > normBounds.endDate)) return false;
         return true;
       });
     };
@@ -162,6 +181,7 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
 
   const filterPayrolls = useMemo(() => {
     return (records: PayrollRecord[]): PayrollRecord[] => {
+      const normBounds = normalizeDateFilter(filters.startDate, filters.endDate);
       return (records || []).filter((rec) => {
         const rBranchId = rec.branch_id || (rec as any).branchId;
         const rDeptId = rec.department_id || (rec as any).departmentId;
@@ -172,13 +192,13 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
         if (filters.status !== "ALL" && rec.status !== filters.status) return false;
         
         // Date range filtering - check work period overlap with filter bounds
-        const pStart = rec.period_start || (rec as any).startDate || (rec as any).periodStart || (rec as any).generated_at || (rec as any).paymentDate || (rec as any).created_at || (rec as any).createdAt;
-        const pEnd = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || (rec as any).effectiveAccountingDate || pStart;
-        if (filters.startDate && filters.endDate) {
-          if (!pStart && !pEnd) return false;
-          const recStart = String(pStart || pEnd).split("T")[0];
-          const recEnd = String(pEnd || pStart).split("T")[0];
-          if (!recStart || !recEnd || recEnd < filters.startDate || recStart > filters.endDate) return false;
+        const pStartRaw = rec.period_start || (rec as any).startDate || (rec as any).periodStart || (rec as any).generated_at || (rec as any).paymentDate || (rec as any).created_at || (rec as any).createdAt;
+        const pEndRaw = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || (rec as any).effectiveAccountingDate || pStartRaw;
+        if (normBounds.startDate && normBounds.endDate) {
+          if (!pStartRaw && !pEndRaw) return false;
+          const recStart = toDateOnly(pStartRaw || pEndRaw);
+          const recEnd = toDateOnly(pEndRaw || pStartRaw);
+          if (!recStart || !recEnd || recEnd < normBounds.startDate || recStart > normBounds.endDate) return false;
         }
         return true;
       });

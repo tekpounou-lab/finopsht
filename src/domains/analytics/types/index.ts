@@ -32,6 +32,8 @@ export interface BranchPerformance {
   branchName: string;
   revenue: number;
   expenses: number;
+  payrollCost?: number;
+  nonPayrollExpenses?: number;
   profit: number;
   margin: number;
   attendanceRate: number;
@@ -43,9 +45,22 @@ export interface DepartmentPerformance {
   departmentId: string;
   departmentName: string;
   expenses: number;
+  payrollCost?: number;
+  nonPayrollExpenses?: number;
   employeeCount: number;
   attendanceRate: number;
   averageHours: number;
+  revenue?: number;
+  margin?: number;
+}
+
+export interface PayrollAggregates {
+  payrollPaid: number;
+  commissionsPaid: number;
+  cnssContributions: number;
+  cnsContributions: number;
+  employerChargesSocials: number;
+  totalEmploymentCost: number;
 }
 
 export interface EmployeeScorecard {
@@ -61,7 +76,9 @@ export interface EmployeeScorecard {
   baseSalary: number;
   commissions: number;
   netPaid: number;
+  payrollCost?: number;
   underperformanceSignal: boolean;
+  salesVolume?: number;
 }
 
 export interface TrendPoint {
@@ -121,5 +138,7 @@ export interface AnalyticsSnapshot {
   businessHealthScore: number;
   profitMargin: number;
   payrollCostRatio: number;
+  payrollAggregates?: PayrollAggregates;
+  isSocialTaxEnabled?: boolean;
   workforceProfitability?: WorkforceProfitabilitySnapshot;
 }

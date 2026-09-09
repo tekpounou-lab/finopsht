@@ -15,7 +15,7 @@ export const PayslipsList: React.FC<PayslipsListProps> = ({
   tw,
 }) => {
   const employeeRecords = records
-    .filter((r) => r.employeeId === employeeId)
+    .filter((r) => r.employeeId === employeeId || r.employee_id === employeeId || (r as any).user_uid === employeeId)
     .sort((a, b) => b.id.localeCompare(a.id));
 
   const formatCurrency = (amount: number) => {

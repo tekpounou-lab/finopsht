@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { sendEvent } from "./analytics";
 
 export interface AnalyticsEvent {
   id: string;
@@ -41,6 +42,15 @@ export function trackEvent(
 
   // Trigger all registered local telemetry listeners
   listeners.forEach((listener) => listener(event));
+
+  // Dispatch event to Firebase Analytics (GA4)
+  const ga4EventName = action || category.toLowerCase();
+  sendEvent(ga4EventName, {
+    category,
+    label: label || "",
+    value: value ?? 0,
+    ...(metadata && typeof metadata === "object" ? metadata : {}),
+  }).catch(() => {});
 }
 
 export function useAnalytics() {

@@ -22,6 +22,7 @@ import { AnalyticsRepository } from "../repositories/AnalyticsRepository";
 import { AnalyticsEngine as SemanticAnalyticsEngine } from "../../../modules/analytics/core/AnalyticsEngine";
 import { RuntimeEngine } from "../../../modules/runtime/RuntimeEngine";
 import { useExecutiveFilters } from "./ExecutiveFilterContext";
+import { toDateOnly } from "../../../utils/dateNormalization";
 
 export interface AnalyticsContextState {
   period: AnalyticsPeriod;
@@ -164,7 +165,12 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [deferredTransactions, contextTxs]
   );
   const effectiveAttendance = useMemo(
-    () => (deferredAttendance.length > 0 ? deferredAttendance : contextAtt || []),
+    () => {
+      const map = new Map<string, any>();
+      (contextAtt || []).forEach((item: any) => { if (item && item.id) map.set(item.id, item); });
+      (deferredAttendance || []).forEach((item: any) => { if (item && item.id) map.set(item.id, item); });
+      return Array.from(map.values());
+    },
     [deferredAttendance, contextAtt]
   );
   const effectivePayrolls = useMemo(
@@ -231,44 +237,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [filters.startDate, filters.endDate, customRange]);
 
   // Standardized Date Normalization Helpers
-  const normalizeDateStr = (rawDate: any): string => {
-    if (!rawDate) return "";
-    let str = "";
-    if (typeof rawDate === "string") {
-      str = rawDate.trim().split("T")[0];
-    } else if (typeof rawDate === "number") {
-      str = new Date(rawDate).toISOString().split("T")[0];
-    } else if (rawDate instanceof Date) {
-      str = rawDate.toISOString().split("T")[0];
-    } else if (rawDate?.toDate && typeof rawDate.toDate === "function") {
-      str = rawDate.toDate().toISOString().split("T")[0];
-    } else if (rawDate?.seconds) {
-      str = new Date(rawDate.seconds * 1000).toISOString().split("T")[0];
-    } else {
-      str = String(rawDate).split("T")[0];
-    }
-
-    if (!str) return "";
-
-    if (str.includes("/")) {
-      const parts = str.split("/");
-      if (parts.length === 3) {
-        if (parts[0].length === 4) {
-          return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
-        } else {
-          return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
-        }
-      }
-    } else if (str.includes("-")) {
-      const parts = str.split("-");
-      if (parts.length === 3) {
-        if (parts[0].length !== 4 && parts[2].length === 4) {
-          return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
-        }
-      }
-    }
-    return str;
-  };
+  const normalizeDateStr = (rawDate: any): string => toDateOnly(rawDate);
 
   const getAttendanceDate = (a: any): string => {
     if (!a) return "";
@@ -384,6 +353,23 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
 
+    console.debug("[AnalyticsContext] Triggering AnalyticsEngine.generateSnapshot recalculation:", {
+      businessId,
+      activeCustomRange,
+      filters: {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        branchId: filters.branchId,
+        departmentId: filters.departmentId,
+      },
+      scopedCounts: {
+        employees: filteredEmployees.length,
+        transactions: scopedTransactions.length,
+        attendance: scopedAttendance.length,
+        payrolls: scopedPayrolls.length,
+      }
+    });
+
     setIsCalculating(true);
 
     const timer = setTimeout(() => {
@@ -404,6 +390,14 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           businessSettings,
           effectiveCycles
         );
+        console.debug("[AnalyticsContext] Snapshot recalculated successfully:", {
+          generatedAt: snap.generatedAt,
+          revenue: snap.revenue.currentValue,
+          expenses: snap.expenses.currentValue,
+          profit: snap.profit.currentValue,
+          payrollCost: snap.payrollCost.currentValue,
+          attendanceRate: snap.attendanceRate.currentValue,
+        });
         setSnapshot(snap);
       } catch (err) {
         console.error("[ANALYTICS_CONTEXT] Failed to calculate asynchronous snapshot:", err);

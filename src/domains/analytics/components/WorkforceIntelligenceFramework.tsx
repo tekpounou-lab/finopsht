@@ -80,6 +80,20 @@ export const WorkforceIntelligenceFramework: React.FC = () => {
   const { filters } = useExecutiveFilters();
   const { language } = useI18n();
 
+  React.useEffect(() => {
+    if (snapshot) {
+      console.debug("[WorkforceIntelligenceFramework] Rendered SSOT snapshot metrics:", {
+        generatedAt: snapshot.generatedAt,
+        period: snapshot.period,
+        customRange: snapshot.customRange,
+        attendanceRate: snapshot.attendanceRate.currentValue,
+        activeStaff: snapshot.activeStaff.currentValue,
+        payrollCost: snapshot.payrollCost.currentValue,
+        scorecardsCount: snapshot.employeeScorecards?.length || 0,
+      });
+    }
+  }, [snapshot]);
+
   const isFr = language === "fr";
   const isHt = language === "ht";
 
@@ -280,7 +294,7 @@ export const WorkforceIntelligenceFramework: React.FC = () => {
       const scaledBenefits = Math.round(emp.financial.benefitsCost * timeframeMultiplier);
       const scaledRevenue = Math.round(emp.profitability.employeeRevenue * timeframeMultiplier);
       
-      const hasWorked = scaledWorkedHours > 0;
+      const hasWorked = scaledWorkedHours > 0 || scaledRevenue > 0 || scaledTotalCost > 0;
       // Inactive / unworked employees receive score 0 or flagged
       const globalScore = hasWorked ? emp.healthScore.score : 0;
 

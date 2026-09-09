@@ -45,6 +45,9 @@ To prevent data corruption, duplicate calculations, and confusion:
 
 ## 3. FIRESTORE PERSISTENCE & DATA FLOW
 
+### 3.0 Canonical Date Normalization (SSOT)
+All payroll period dates (`periodStartDate`, `periodEndDate`, `effectiveDate`, `startDate`, `endDate`) pass through `toDateOnly` from `src/utils/dateNormalization.ts` prior to persistence and prorated financial computations, enforcing the strict `YYYY-MM-DD` format across all cycles.
+
 ### 3.1 Dialog Component Specification (`CreatePayrollCycleDialog`)
 - **Component File:** `src/components/payroll/modals/CreatePayrollCycleDialog.tsx` (re-exported via `src/components/payroll/modals/CreateCycleModal.tsx` and `src/components/payroll/index.ts`).
 - **Parent Integration:** `PayrollEngine.tsx` binds `isCreateCycleOpen`, passes `current_business_id`, `existingCycles={tenantCycles}`, and `onCreateCycle={handleCreateCycle}`.

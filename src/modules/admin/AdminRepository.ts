@@ -1,5 +1,5 @@
 
-import { db, handleFirestoreError, OperationType, auth, serverTimestamp } from "../../lib/firebase";
+import { db, handleFirestoreError, logFirestoreError, OperationType, auth, serverTimestamp } from "../../lib/firebase";
 import { collection, doc, setDoc, getDoc, query, where, onSnapshot, getDocs, limit, orderBy } from "firebase/firestore";
 import { ModuleHealth, EnterpriseIncident } from "./types";
 
@@ -11,26 +11,35 @@ export class AdminRepository {
     if (!auth.currentUser) {
       return;
     }
-    // Tenant isolation: if businessId is provided, scope to tenant; if global service, do not inject hardcoded demo
+    // Tenant isolation: if businessId is provided, scope to tenant
     const docId = health.businessId ? `${health.name}_${health.businessId}` : health.name;
     const path = `${this.HEALTH_COLLECTION}/${docId}`;
     
     try {
       const ref = doc(db, this.HEALTH_COLLECTION, docId);
-      const data: any = {
-        ...health,
+      const cleanData: any = {
+        name: String(health.name || "UNKNOWN"),
+        status: String(health.status || "GREEN"),
+        lastUpdate: String(health.lastUpdate || new Date().toISOString()),
         updatedAt: serverTimestamp()
       };
-      if (health.businessId) {
-        data.business_id = health.businessId;
-        data.businessId = health.businessId;
-      } else {
-        delete data.businessId;
-        delete data.business_id;
+
+      if (health.metrics && typeof health.metrics === "object") {
+        try {
+          cleanData.metrics = JSON.parse(JSON.stringify(health.metrics));
+        } catch {
+          cleanData.metrics = {};
+        }
       }
-      await setDoc(ref, data);
+
+      if (health.businessId) {
+        cleanData.business_id = String(health.businessId);
+        cleanData.businessId = String(health.businessId);
+      }
+
+      await setDoc(ref, cleanData);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      logFirestoreError(error, OperationType.WRITE, path);
     }
   }
 
@@ -46,11 +55,12 @@ export class AdminRepository {
         business_id: incident.businessId // Ensure snake_case for rules
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      logFirestoreError(error, OperationType.WRITE, path);
     }
   }
 
   public static async getActiveIncidents(businessId: string): Promise<EnterpriseIncident[]> {
+    if (!businessId) return [];
     try {
       const q = query(
         collection(db, this.INCIDENTS_COLLECTION),
@@ -61,7 +71,8 @@ export class AdminRepository {
       const snapshot = await getDocs(q);
       return snapshot.docs.map(d => d.data() as EnterpriseIncident);
     } catch (error) {
-      handleFirestoreError(error, OperationType.GET, this.INCIDENTS_COLLECTION);
+      logFirestoreError(error, OperationType.GET, this.INCIDENTS_COLLECTION);
+      return [];
     }
   }
 
@@ -78,12 +89,11 @@ export class AdminRepository {
         },
         (error) => {
           console.warn("[AdminRepository] Warning in subscribeToHealth:", error);
-          // If we can't subscribe due to auth delay, just return an empty unsub function
-          handleFirestoreError(error, OperationType.GET, this.HEALTH_COLLECTION);
+          logFirestoreError(error, OperationType.GET, this.HEALTH_COLLECTION);
         }
       );
     } catch (error) {
-      handleFirestoreError(error, OperationType.GET, this.HEALTH_COLLECTION);
+      logFirestoreError(error, OperationType.GET, this.HEALTH_COLLECTION);
       return () => {};
     }
   }

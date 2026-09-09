@@ -49,7 +49,13 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
 
   // Filter employee payroll records
   const myRecords = payrollRecords.filter(r => 
-    (r.employeeId === employee.id || r.employee_id === employee.id || (r as any).employeeId === employee.id) && 
+    (
+      r.employeeId === employee.id || 
+      r.employee_id === employee.id || 
+      (r as any).employeeId === employee.id ||
+      (r as any).user_uid === employee.id ||
+      (employee.email && (r as any).employee_email && (r as any).employee_email.toLowerCase().trim() === employee.email.toLowerCase().trim())
+    ) && 
     (
       !r.business_id || 
       !employee.business_id || 
@@ -57,7 +63,7 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
       r.business_id === (employee as any).businessId ||
       r.business_id === (employee as any).business_id
     ) &&
-    ["VALIDATED", "APPROVED", "PAID", "LOCKED", "DRAFT", "PENDING", "CORRECTED"].includes(r.status || "")
+    ["SEALED", "CALCULATED", "POSTED", "COMPLETED", "VALIDATED", "APPROVED", "PAID", "LOCKED", "DRAFT", "PENDING", "CORRECTED"].includes(r.status || "")
   );
 
   // Apply filters for history table

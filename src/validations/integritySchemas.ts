@@ -96,10 +96,10 @@ export const OBSOLETE_FIELDS_MAP: Record<string, string[]> = {
  * Checks if data contains any forbidden obsolete or unmigrated fields.
  */
 export function detectObsoleteFields(entityName: string, data: Record<string, any>): string[] {
-  if (!data || typeof data !== "object") return [];
+  if (!data || typeof data !== "object" || data === null) return [];
   const normalizedEntity = entityName.toUpperCase().split("_")[0];
   const obsoleteList = OBSOLETE_FIELDS_MAP[normalizedEntity] || OBSOLETE_FIELDS_MAP[entityName.toUpperCase()] || [];
-  return obsoleteList.filter(field => field in data && data[field] !== undefined);
+  return obsoleteList.filter(field => data && typeof data === "object" && field in data && data[field] !== undefined);
 }
 
 /**

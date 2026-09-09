@@ -22,13 +22,13 @@ export class ExceptionOrchestrator {
       const copy = JSON.parse(JSON.stringify(payload));
       
       const redact = (obj: any) => {
-        if (!obj || typeof obj !== "object") return;
+        if (!obj || typeof obj !== "object" || obj === null) return;
         
         for (const key in obj) {
           if (Object.prototype.hasOwnProperty.call(obj, key)) {
             if (this.PII_KEYS.includes(key.toLowerCase())) {
               obj[key] = "[REDACTED]";
-            } else if (typeof obj[key] === "object") {
+            } else if (obj[key] && typeof obj[key] === "object") {
               redact(obj[key]);
             }
           }

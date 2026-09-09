@@ -27,10 +27,11 @@ const effectiveConfig = {
   firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId,
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+  measurementId: env.VITE_GA_MEASUREMENT_ID || env.VITE_FIREBASE_MEASUREMENT_ID || (firebaseConfig as any).measurementId || "",
 };
 
 // Initialize Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(effectiveConfig);
+export const app = getApps().length > 0 ? getApp() : initializeApp(effectiveConfig);
 export const auth = getAuth(app);
 
 // Use session persistence across domains in browser environment
@@ -159,6 +160,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     rawMsg.includes("quota") ||
     rawMsg.includes("Quota exceeded");
 
+  const isInternalSdkAssertion =
+    rawMsg.includes("INTERNAL ASSERTION FAILED") ||
+    rawMsg.includes("nullValue") ||
+    rawMsg.includes("ping timeout") ||
+    rawMsg.includes("latency ping");
+
   const errInfo: FirestoreErrorInfo = {
     error: rawMsg,
     authInfo: {
@@ -181,6 +188,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     throw new Error(`Quota limite Firestore atteint pour cette journée (Free tier database read/write limit).`);
   }
 
+  if (isInternalSdkAssertion) {
+    logger.warn('Firestore Transport Notice:', errInfo);
+    throw new Error(`Une interruption temporaire du réseau Firestore s'est produite. L'opération va être réessayée.`);
+  }
+
   logger.error('Firestore Error Captured:', errInfo);
   throw new Error(rawMsg || "Une erreur Firestore s'est produite.");
 }
@@ -200,3 +212,6 @@ export function getDbWriteBatch() {
 
 // Resilient Firestore retry & backoff utilities
 export { withFirestoreRetry, isRetriableFirestoreError, calculateBackoffDelay } from "../services/firestore/firestoreRetry";
+
+// Firebase Analytics (GA4) centralized integration utilities
+export { initAnalytics, sendEvent, setAnalyticsConsent, setAnalyticsUser, trackPageView } from "./analytics";

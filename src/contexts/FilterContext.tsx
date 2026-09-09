@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { GenericFilterGroup, FilterNamespace, DEFAULT_NAMESPACE_FILTERS } from '../types/filters';
+import { toDateOnly } from '../utils/dateNormalization';
 
 export interface FilterContextType {
   filters: Record<string, GenericFilterGroup>;
@@ -111,15 +112,17 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({
   );
 
   const setDateRange = useCallback((namespace: string, startDate: string, endDate: string) => {
+    const normStart = toDateOnly(startDate);
+    const normEnd = toDateOnly(endDate);
     setStore((prev) => {
       const current = prev[namespace] || registeredDefaults[namespace] || {};
-      if (current.startDate === startDate && current.endDate === endDate && current.period === 'CUSTOM') return prev;
+      if (current.startDate === normStart && current.endDate === normEnd && current.period === 'CUSTOM') return prev;
       return {
         ...prev,
         [namespace]: {
           ...current,
-          startDate,
-          endDate,
+          startDate: normStart,
+          endDate: normEnd,
           period: 'CUSTOM'
         }
       };

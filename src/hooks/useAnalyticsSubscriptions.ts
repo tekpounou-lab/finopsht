@@ -121,16 +121,43 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       }
     );
 
-    // 3. Attendance query
-    const qAtt = tenantQuery(collection(db, "attendance_logs"), businessId, orderBy("date", "desc"), limit(300));
-    const unsubAtt = FirestoreRealtimeManager.registerListener(
+    // 3. Attendance queries (combining attendance_logs and attendance_records)
+    let logsDataArr: AttendanceRecord[] = [];
+    let recordsDataArr: AttendanceRecord[] = [];
+
+    const updateCombinedAttendance = () => {
+      const combinedMap = new Map<string, AttendanceRecord>();
+      logsDataArr.forEach((item) => {
+        if (item.id) combinedMap.set(item.id, item);
+      });
+      recordsDataArr.forEach((item) => {
+        if (item.id) combinedMap.set(item.id, item);
+      });
+      const merged = Array.from(combinedMap.values());
+      console.debug(`[useAnalyticsSubscriptions] Combined ${merged.length} attendance records`);
+      setAttendance(merged);
+      setLoadingStates((prev) => ({ ...prev, att: false }));
+    };
+
+    const qAttLogs = tenantQuery(collection(db, "attendance_logs"), businessId, limit(500));
+    const unsubAttLogs = FirestoreRealtimeManager.registerListener(
       `attendance_logs:${businessId}`,
       "attendance_logs",
-      qAtt,
+      qAttLogs,
       (data) => {
-        console.debug(`[useAnalyticsSubscriptions] Loaded ${data.length} attendance logs`);
-        setAttendance(data as AttendanceRecord[]);
-        setLoadingStates((prev) => ({ ...prev, att: false }));
+        logsDataArr = data as AttendanceRecord[];
+        updateCombinedAttendance();
+      }
+    );
+
+    const qAttRecords = tenantQuery(collection(db, "attendance_records"), businessId, limit(500));
+    const unsubAttRecords = FirestoreRealtimeManager.registerListener(
+      `attendance_records:${businessId}`,
+      "attendance_records",
+      qAttRecords,
+      (data) => {
+        recordsDataArr = data as AttendanceRecord[];
+        updateCombinedAttendance();
       }
     );
 
@@ -211,7 +238,8 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     return () => {
       unsubEmp();
       unsubTx();
-      unsubAtt();
+      unsubAttLogs();
+      unsubAttRecords();
       unsubPay();
       unsubCycle();
       unsubDept();

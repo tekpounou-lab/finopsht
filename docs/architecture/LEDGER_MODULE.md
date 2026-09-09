@@ -15,6 +15,7 @@ The **General Ledger (Grand Livre Comptable)** is the central system-of-record f
 2. **Double-Entry Bookkeeping**: Every transaction specifies debit and credit accounts, ensuring exact balance (`sum(debits) === sum(credits)`).
 3. **Repository Pattern**: Persistence operations pass through `LedgerRepository.ts` for atomic transaction writes, event outbox logging, and forensic audit generation.
 4. **Realtime Synchronization**: Uses `useRealtimeSubscription` to stream updates instantly across tenant sessions.
+5. **Canonical Date Normalization (SSOT)**: All dates (ISO 8601, Firestore Timestamps, US/EU CSV imports, JS Dates) are strictly normalized into `YYYY-MM-DD` via `src/utils/dateNormalization.ts` (`toDateOnly`) prior to filtering or storage.
 
 ---
 

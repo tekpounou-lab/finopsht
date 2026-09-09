@@ -48,8 +48,10 @@ if (typeof window !== "undefined" && typeof HTMLMediaElement !== "undefined") {
       throw syncErr;
     }
   };
+}
 
-  // Global window error handler for benign media lifecycle events
+// Global window error handlers for benign media lifecycle events, Firestore transport latency, and Protobuf nullValue deserialization
+if (typeof window !== "undefined") {
   window.onerror = (message) => {
     const msg = typeof message === "string" ? message : "";
     if (
@@ -57,9 +59,11 @@ if (typeof window !== "undefined" && typeof HTMLMediaElement !== "undefined") {
       msg.includes("RenderedCameraImpl") ||
       msg.includes("video surface onabort") ||
       msg.includes("media was removed from the document") ||
-      msg.includes("AbortError")
+      msg.includes("AbortError") ||
+      msg.includes("nullValue") ||
+      msg.includes("Firestore latency ping timeout")
     ) {
-      return true; // Suppress error
+      return true; // Suppress benign runtime error
     }
     return false;
   };
@@ -71,7 +75,9 @@ if (typeof window !== "undefined" && typeof HTMLMediaElement !== "undefined") {
       message.includes("RenderedCameraImpl") ||
       message.includes("video surface onabort") ||
       message.includes("media was removed from the document") ||
-      message.includes("AbortError")
+      message.includes("AbortError") ||
+      message.includes("nullValue") ||
+      message.includes("Firestore latency ping timeout")
     ) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -87,7 +93,9 @@ if (typeof window !== "undefined" && typeof HTMLMediaElement !== "undefined") {
       message.includes("RenderedCameraImpl") ||
       message.includes("video surface onabort") ||
       message.includes("media was removed from the document") ||
-      message.includes("AbortError")
+      message.includes("AbortError") ||
+      message.includes("nullValue") ||
+      message.includes("Firestore latency ping timeout")
     ) {
       event.preventDefault();
       event.stopImmediatePropagation();

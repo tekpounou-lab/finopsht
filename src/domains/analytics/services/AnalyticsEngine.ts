@@ -1,4 +1,5 @@
 import { ExecutiveScoreEngine } from "./ExecutiveScoreEngine";
+import { toDateOnly } from "../../../utils/dateNormalization";
 import {
   Employee,
   LedgerTransaction,
@@ -314,6 +315,21 @@ export class AnalyticsEngine {
     businessSettings?: any,
     payrollCycles?: PayrollCycle[]
   ): AnalyticsSnapshot {
+    console.debug("[AnalyticsEngine.generateSnapshot] Starting SSOT snapshot calculation with parameters:", {
+      period,
+      customRange,
+      businessId,
+      language,
+      counts: {
+        rawEmployees: employees?.length || 0,
+        rawTransactions: transactions?.length || 0,
+        rawAttendance: attendanceLogs?.length || 0,
+        rawPayroll: payrollRecords?.length || 0,
+        branches: branches?.length || 0,
+        departments: departments?.length || 0,
+      }
+    });
+
     const isSocialTaxEnabled = businessSettings?.payroll_policies?.enableTaxes !== undefined
       ? Boolean(businessSettings.payroll_policies.enableTaxes)
       : (businessSettings?.payrollPolicies?.enableTaxes !== undefined
@@ -337,48 +353,32 @@ export class AnalyticsEngine {
     // 1. Resolve date boundaries
     const { current, previous } = this.getPeriodRanges(period, customRange);
 
-    const normalizeDateStr = (rawDate: any): string => {
-      if (!rawDate) return "";
-      let str = "";
-      if (typeof rawDate === "string") {
-        str = rawDate.trim().split("T")[0];
-      } else if (typeof rawDate === "number") {
-        str = new Date(rawDate).toISOString().split("T")[0];
-      } else if (rawDate instanceof Date) {
-        str = rawDate.toISOString().split("T")[0];
-      } else if (rawDate?.toDate && typeof rawDate.toDate === "function") {
-        str = rawDate.toDate().toISOString().split("T")[0];
-      } else if (rawDate?.seconds) {
-        str = new Date(rawDate.seconds * 1000).toISOString().split("T")[0];
-      } else {
-        str = String(rawDate).split("T")[0];
-      }
+    const normalizeDateStr = (rawDate: any): string => toDateOnly(rawDate);
 
-      if (!str) return "";
-
-      if (str.includes("/")) {
-        const parts = str.split("/");
-        if (parts.length === 3) {
-          if (parts[0].length === 4) {
-            return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
-          } else {
-            return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
-          }
-        }
-      } else if (str.includes("-")) {
-        const parts = str.split("-");
-        if (parts.length === 3) {
-          if (parts[0].length !== 4 && parts[2].length === 4) {
-            return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
-          }
-        }
-      }
-      return str;
+    const getTxDate = (t: any): string => {
+      if (!t) return "";
+      const raw = t.date || t.transaction_date || t.transactionDate || t.created_at || t.createdAt || t.timestamp;
+      return normalizeDateStr(raw);
     };
 
     const getAttendanceDate = (a: any): string => {
       if (!a) return "";
-      const raw = a.date || a.date_str || a.dateStr || a.work_date || a.checkInDate || a.checkIn?.deviceDate || a.created_at || a.timestamp || a.checkIn?.timestamp;
+      const raw =
+        a.date ||
+        a.date_str ||
+        a.dateStr ||
+        a.work_date ||
+        a.workDate ||
+        a.checkInDate ||
+        a.checkIn?.deviceDate ||
+        a.created_at ||
+        a.createdAt ||
+        a.timestamp ||
+        a.checkIn?.timestamp ||
+        a.checkIn ||
+        a.check_in ||
+        a.checkInTime ||
+        a.check_in_time;
       return normalizeDateStr(raw);
     };
 
@@ -406,10 +406,19 @@ export class AnalyticsEngine {
       const cycleId = p.cycleId || p.payroll_cycle_id;
       const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
 
-      let pStart = p.period_start || (p as any).periodStart || (p as any).startDate || cycle?.startDate || (cycle as any)?.start_date || (cycle as any)?.periodStart || (cycle as any)?.period_start;
-      let pEnd = p.period_end || (p as any).periodEnd || (p as any).endDate || cycle?.endDate || (cycle as any)?.end_date || (cycle as any)?.periodEnd || (cycle as any)?.period_end || (cycle as any)?.effectiveAccountingDate;
+      // 1. Check if explicit payment date falls in range
+      const paymentDate = (p as any).paymentDate || (p as any).effectiveAccountingDate;
+      if (paymentDate) {
+        const normPayment = normalizeDateStr(paymentDate);
+        if (normPayment && normPayment >= range.startDate && normPayment <= range.endDate) {
+          return true;
+        }
+      }
 
-      // Extract date token from cycleId if available (e.g. cycle_2026-07-01_2026-07-15)
+      // 2. Check work period overlap
+      let pStart = p.period_start || (p as any).periodStart || (p as any).startDate || cycle?.startDate || (cycle as any)?.start_date;
+      let pEnd = p.period_end || (p as any).periodEnd || (p as any).endDate || cycle?.endDate || (cycle as any)?.end_date;
+
       if (!pStart && !pEnd && cycleId) {
         const dateMatch = cycleId.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
         if (dateMatch) {
@@ -419,7 +428,7 @@ export class AnalyticsEngine {
       }
 
       if (!pStart && !pEnd) {
-        pStart = (p as any).generated_at || (p as any).paymentDate || (p as any).createdAt || p.created_at || p.updated_at;
+        pStart = (p as any).generated_at || (p as any).createdAt || p.created_at;
         pEnd = pStart;
       }
 
@@ -427,6 +436,7 @@ export class AnalyticsEngine {
         const startStr = normalizeDateStr(pStart || pEnd);
         const endStr = normalizeDateStr(pEnd || pStart);
         if (startStr && endStr) {
+          // Range overlap: recStart <= range.endDate && recEnd >= range.startDate
           return !(endStr < range.startDate || startStr > range.endDate);
         }
       }
@@ -436,10 +446,10 @@ export class AnalyticsEngine {
 
     // 2. Filter collections for current and previous period
     const curTxs = transactions.filter(
-      (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(t.date, current)
+      (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(getTxDate(t), current)
     );
     const prevTxs = transactions.filter(
-      (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(t.date, previous)
+      (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(getTxDate(t), previous)
     );
 
     const curAttendance = attendanceLogs.filter(
@@ -461,6 +471,27 @@ export class AnalyticsEngine {
     const matchedEmployees = filterOperationalEmployees(employees.filter((e) => matchesBusiness(e)));
     const activeEmployees = matchedEmployees.length > 0 ? matchedEmployees : filterOperationalEmployees(employees);
 
+    console.debug("[AnalyticsEngine.generateSnapshot] Filtered collections breakdown:", {
+      currentRange: current,
+      previousRange: previous,
+      transactions: {
+        rawTotal: transactions?.length || 0,
+        currentInPeriod: curTxs.length,
+        previousInPeriod: prevTxs.length,
+      },
+      attendance: {
+        rawTotal: attendanceLogs?.length || 0,
+        currentInPeriod: curAttendance.length,
+        previousInPeriod: prevAttendance.length,
+      },
+      payroll: {
+        rawTotal: payrollRecords?.length || 0,
+        currentInPeriod: curPayroll.length,
+        previousInPeriod: prevPayroll.length,
+      },
+      activeOperationalEmployees: activeEmployees.length,
+    });
+
     // 3. Financial KPI Calculations
     const getTxAmount = (t: LedgerTransaction): number => {
       if (typeof t.amount === "number" && !isNaN(t.amount)) return t.amount;
@@ -474,11 +505,69 @@ export class AnalyticsEngine {
       return 0;
     };
 
-    const sumRevenue = (txs: LedgerTransaction[]) =>
-      txs
-        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED")
-        .reduce((sum, t) => sum + getTxAmount(t), 0);
-      
+    // Helper to calculate cycle proration factor for sub-period custom date ranges
+    const getRecordProrationFactor = (pr: any, range: DateRange): number => {
+      if (!range || !range.startDate || !range.endDate) return 1;
+
+      const cycleId = pr.cycleId || pr.payroll_cycle_id;
+      const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
+
+      let pStart = pr.period_start || (pr as any).periodStart || (pr as any).startDate || cycle?.startDate || (cycle as any)?.start_date;
+      let pEnd = pr.period_end || (pr as any).periodEnd || (pr as any).endDate || cycle?.endDate || (cycle as any)?.end_date;
+
+      if (!pStart && !pEnd && cycleId) {
+        const dateMatch = cycleId.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+        if (dateMatch) {
+          pStart = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+          const dt = new Date(pStart);
+          const endDt = new Date(dt.getFullYear(), dt.getMonth() + 1, 0);
+          pEnd = endDt.toISOString().split("T")[0];
+        }
+      }
+
+      if (!pStart || !pEnd) return 1;
+
+      const recStartStr = normalizeDateStr(pStart);
+      const recEndStr = normalizeDateStr(pEnd);
+      if (!recStartStr || !recEndStr) return 1;
+
+      const dStart = new Date(recStartStr).getTime();
+      const dEnd = new Date(recEndStr).getTime();
+      const rStart = new Date(range.startDate).getTime();
+      const rEnd = new Date(range.endDate).getTime();
+
+      if (isNaN(dStart) || isNaN(dEnd) || isNaN(rStart) || isNaN(rEnd)) return 1;
+
+      const totalCycleDays = Math.max(1, Math.round((dEnd - dStart) / 86400000) + 1);
+      const overlapStart = rStart > dStart ? rStart : dStart;
+      const overlapEnd = rEnd < dEnd ? rEnd : dEnd;
+
+      if (overlapStart > overlapEnd) return 0;
+      const overlapDays = Math.max(1, Math.round((overlapEnd - overlapStart) / 86400000) + 1);
+
+      if (overlapDays >= totalCycleDays) return 1;
+      return overlapDays / totalCycleDays;
+    };
+
+    // Revenue Calculation & Instrumentation (Payroll Sales SSOT + GL Income)
+    const calculateTotalRevenue = (payrolls: PayrollRecord[], txs: LedgerTransaction[], range: DateRange) => {
+      const payrollSalesSum = payrolls.reduce((sum, pr: any) => {
+        const factor = getRecordProrationFactor(pr, range);
+        if (factor <= 0) return sum;
+        const s = (pr.sales_cents ? pr.sales_cents / 100 : (pr.salesHtg || pr.salesVolume || pr.sales_gl || pr.sales || 0));
+        return sum + (s * factor);
+      }, 0);
+
+      const nonEmployeeGlIncome = txs.filter((t) => {
+        if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+        if (t.type !== "INCOME") return false;
+        if (payrollSalesSum > 0 && (t.employeeId || (t as any).employee_id)) return false;
+        return true;
+      }).reduce((sum, t) => sum + getTxAmount(t), 0);
+
+      return payrollSalesSum + nonEmployeeGlIncome;
+    };
+
     const sumQuickBooksRevenue = (txs: LedgerTransaction[]) =>
       txs
         .filter(
@@ -490,12 +579,38 @@ export class AnalyticsEngine {
         )
         .reduce((sum, t) => sum + getTxAmount(t), 0);
 
+    const rawIncomeTxs = curTxs.filter((t) => t.type === "INCOME");
+    const totalIncomeBeforeStatusFilter = rawIncomeTxs.reduce((sum, t) => sum + getTxAmount(t), 0);
+
+    const curRevVal = calculateTotalRevenue(curPayroll, curTxs, current);
+    const prevRevVal = calculateTotalRevenue(prevPayroll, prevTxs, previous);
+    const revenue = this.compareValues(curRevVal, prevRevVal);
+
+    console.debug("[KPI:Revenue] Pipeline step breakdown:", {
+      filterParameters: {
+        business_id: businessId,
+        startDate: current.startDate,
+        endDate: current.endDate,
+        branchesCount: branches?.length || 0,
+        departmentsCount: departments?.length || 0,
+      },
+      incomeTransactionsRecovered: rawIncomeTxs.length,
+      totalSumBeforeStatusExclusion: totalIncomeBeforeStatusFilter,
+      finalValidTransactionsCount: curTxs.filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED").length,
+      finalRevenueSum: curRevVal,
+    });
+    
+    const curQbVal = sumQuickBooksRevenue(curTxs);
+    const prevQbVal = sumQuickBooksRevenue(prevTxs);
+    const quickbooksSalesRevenue = this.compareValues(curQbVal, prevQbVal);
+
     const sumExpenses = (txs: LedgerTransaction[]) =>
       txs.filter((t) => {
         if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
-        // Accruals (PAYROLL type) are the canonical P&L expense for payroll
-        // They include Net Salary + Employee Taxes + Employer Taxes + Recoveries
-        if (t.type === "PAYROLL") return true;
+        
+        // Exclude PAYROLL ledger transactions from operational expenses
+        // Payroll is handled separately by sumPayrollDetails with proper cycle proration
+        if (t.type === "PAYROLL") return false;
         
         // Operational expenses (EXPENSE type)
         if (t.type === "EXPENSE") {
@@ -526,35 +641,36 @@ export class AnalyticsEngine {
         return false;
       }).reduce((sum, t) => sum + (t.type === "PENALTY" ? -getTxAmount(t) : getTxAmount(t)), 0);
 
-    const curRevVal = sumRevenue(curTxs);
-    const prevRevVal = sumRevenue(prevTxs);
-    const revenue = this.compareValues(curRevVal, prevRevVal);
-    
-    const curQbVal = sumQuickBooksRevenue(curTxs);
-    const prevQbVal = sumQuickBooksRevenue(prevTxs);
-    const quickbooksSalesRevenue = this.compareValues(curQbVal, prevQbVal);
+    const sumNonPayrollExpenses = sumExpenses;
 
     // Payroll cost calculation helper (SSOT)
-    const sumPayrollDetails = (payrolls: PayrollRecord[], txs: LedgerTransaction[]) => {
-      // 1. Try prioritization of bookkeeping (accruals)
-      // We sum all PAYROLL type transactions which represent the total company exposure
+    const sumPayrollDetails = (payrolls: PayrollRecord[], txs: LedgerTransaction[], range: DateRange) => {
+      // 1. Try prioritization of bookkeeping (accruals) with proration factor
       const ledgerSum = txs
         .filter((t) => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED")
-        .reduce((sum, t) => sum + getTxAmount(t), 0);
+        .reduce((sum, t) => {
+          const factor = getRecordProrationFactor(t, range);
+          return sum + (getTxAmount(t) * factor);
+        }, 0);
       
-      // 2. Logic to calculate exact HR records sum (SSOT)
+      // 2. Logic to calculate exact HR records sum with proration (SSOT)
       const dbSum = payrolls.reduce(
         (sum, pr: any) => {
-          const gross = pr.grossSalary || (pr.gross_salary_cents ? pr.gross_salary_cents / 100 : 0) || pr.gross || (pr.baseSalary || 0);
-          const net = pr.netPaid || pr.netSalary || (pr.net_salary_cents ? pr.net_salary_cents / 100 : 0) || (pr.net_salary || 0);
-          // Skip excluded records or records with no positive salary figures
-          if (pr.isExcluded || (gross <= 0 && net <= 0)) {
+          const factor = getRecordProrationFactor(pr, range);
+          if (factor <= 0) return sum;
+
+          const rawGross = pr.grossSalary || (pr.gross_salary_cents ? pr.gross_salary_cents / 100 : 0) || pr.gross || (pr.baseSalary || 0);
+          const rawNet = pr.netPaid || pr.netSalary || (pr.net_salary_cents ? pr.net_salary_cents / 100 : 0) || (pr.net_salary || 0);
+          
+          if (pr.isExcluded || (rawGross <= 0 && rawNet <= 0)) {
             return sum;
           }
 
-          const erCnss = isSocialTaxEnabled ? ((pr.cnss_employer_cents ? pr.cnss_employer_cents / 100 : 0) || pr.onaEmployer || (pr.cnssDeduction || 0)) : 0;
-          const erOfatma = isSocialTaxEnabled ? ((pr.ofatma_employer_cents ? pr.ofatma_employer_cents / 100 : 0) || pr.ofatmaEmployer || (pr.cnsDeduction || 0)) : 0;
-          const penalties = (pr.penalties_cents ? pr.penalties_cents / 100 : 0) || (pr.penalties || 0);
+          const gross = rawGross * factor;
+          const penalties = ((pr.penalties_cents ? pr.penalties_cents / 100 : 0) || (pr.penalties || 0)) * factor;
+
+          const erCnss = isSocialTaxEnabled ? (((pr.cnss_employer_cents ? pr.cnss_employer_cents / 100 : 0) || pr.onaEmployer || (pr.cnssDeduction || 0)) * factor) : 0;
+          const erOfatma = isSocialTaxEnabled ? (((pr.ofatma_employer_cents ? pr.ofatma_employer_cents / 100 : 0) || pr.ofatmaEmployer || (pr.cnsDeduction || 0)) * factor) : 0;
           
           // Total cost = Adjusted Gross (Gross - Penalties) + Employer Taxes (if enabled)
           return sum + (gross - penalties) + erCnss + erOfatma;
@@ -573,18 +689,74 @@ export class AnalyticsEngine {
     const curExpVal = sumExpenses(curTxs);
     const prevExpVal = sumExpenses(prevTxs);
 
-    const curPayrollCost = sumPayrollDetails(curPayroll, curTxs);
-    const prevPayrollCost = sumPayrollDetails(prevPayroll, prevTxs);
+    // Detailed instrumentation for Expenses & Payroll
+    const cycleLogDetails: any[] = [];
+    let grossBeforeProration = 0;
+    let grossAfterProration = 0;
+    let totalTaxesAmount = 0;
+
+    curPayroll.forEach((pr: any) => {
+      const factor = getRecordProrationFactor(pr, current);
+      const cycleId = pr.cycleId || pr.payroll_cycle_id;
+      const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
+      let pStart = pr.period_start || (pr as any).periodStart || (pr as any).startDate || cycle?.startDate || (cycle as any)?.start_date;
+      let pEnd = pr.period_end || (pr as any).periodEnd || (pr as any).endDate || cycle?.endDate || (cycle as any)?.end_date;
+
+      const rawGross = pr.grossSalary || (pr.gross_salary_cents ? pr.gross_salary_cents / 100 : 0) || pr.gross || (pr.baseSalary || 0);
+      const proratedGross = rawGross * factor;
+
+      const erCnss = isSocialTaxEnabled ? (((pr.cnss_employer_cents ? pr.cnss_employer_cents / 100 : 0) || pr.onaEmployer || (pr.cnssDeduction || 0)) * factor) : 0;
+      const erOfatma = isSocialTaxEnabled ? (((pr.ofatma_employer_cents ? pr.ofatma_employer_cents / 100 : 0) || pr.ofatmaEmployer || (pr.cnsDeduction || 0)) * factor) : 0;
+      const taxSum = erCnss + erOfatma;
+
+      grossBeforeProration += rawGross;
+      grossAfterProration += proratedGross;
+      totalTaxesAmount += taxSum;
+
+      cycleLogDetails.push({
+        recordId: pr.id,
+        cycleId,
+        startDate: pStart,
+        endDate: pEnd,
+        prorationFactor: factor,
+        rawGross,
+        proratedGross,
+        taxes: isSocialTaxEnabled ? taxSum : 0,
+      });
+    });
+
+    const curPayrollCost = sumPayrollDetails(curPayroll, curTxs, current);
+    const prevPayrollCost = sumPayrollDetails(prevPayroll, prevTxs, previous);
     const payrollCost = this.compareValues(curPayrollCost, prevPayrollCost, true);
 
-    const hasCurPayrollTx = curTxs.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID");
-    const totalCurExpenses = curExpVal + (hasCurPayrollTx ? 0 : curPayrollCost);
+    const totalCurExpenses = curExpVal + curPayrollCost;
+    const totalPrevExpenses = prevExpVal + prevPayrollCost;
 
-    const hasPrevPayrollTx = prevTxs.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID");
-    const totalPrevExpenses = prevExpVal + (hasPrevPayrollTx ? 0 : prevPayrollCost);
+    console.debug("[KPI:Expenses] Pipeline step breakdown:", {
+      expenseTransactionsCount: curTxs.filter((t) => t.type === "EXPENSE" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED").length,
+      operationalExpensesSum: curExpVal,
+      payrollCyclesOverlappingCount: cycleLogDetails.length,
+      cyclesBreakdown: cycleLogDetails,
+      grossPayrollBeforeProration: grossBeforeProration,
+      proratedGrossPayroll: grossAfterProration,
+      enableTaxes: isSocialTaxEnabled,
+      socialTaxesAmount: isSocialTaxEnabled ? totalTaxesAmount : 0,
+      totalPayrollCostProrated: curPayrollCost,
+      finalExpensesSum: totalCurExpenses,
+    });
 
     const expenses = this.compareValues(totalCurExpenses, totalPrevExpenses, true);
-    const profit = this.compareValues(curRevVal - totalCurExpenses, prevRevVal - totalPrevExpenses);
+    
+    // Profit Calculation & Instrumentation
+    const curProfitVal = curRevVal - totalCurExpenses;
+    const prevProfitVal = prevRevVal - totalPrevExpenses;
+    const profit = this.compareValues(curProfitVal, prevProfitVal);
+
+    console.debug("[KPI:Profit] Final Profit Calculation:", {
+      revenue: curRevVal,
+      expenses: totalCurExpenses,
+      profitResult: curProfitVal,
+    });
 
     // Cash on hand: Cumulative sum of INCOME minus EXPENSES/PAYROLL and ADVANCES
     // Since cash on hand is a running total, we calculate it across all transactions up to current.endDate
@@ -669,13 +841,13 @@ export class AnalyticsEngine {
     // Active staff: distinct employees who have worked and have at least ONE day of presence in attendance logs for the period
     const curActiveEmpIds = new Set(
       curAttendance
-        .filter((a) => a.status !== "ABSENT" || getAttendanceHours(a) > 0)
+        .filter((a) => (a.status as string) !== "ABSENT" && (a.status as string) !== "CANCELLED" && (a.status as string) !== "VOID" && (a.status as string) !== "REJECTED")
         .map((a) => a.employeeId || (a as any).employee_id)
         .filter(Boolean)
     );
     const prevActiveEmpIds = new Set(
       prevAttendance
-        .filter((a) => a.status !== "ABSENT" || getAttendanceHours(a) > 0)
+        .filter((a) => (a.status as string) !== "ABSENT" && (a.status as string) !== "CANCELLED" && (a.status as string) !== "VOID" && (a.status as string) !== "REJECTED")
         .map((a) => a.employeeId || (a as any).employee_id)
         .filter(Boolean)
     );
@@ -686,7 +858,7 @@ export class AnalyticsEngine {
 
     // Attendance calculations
     const computeAttendanceKPIs = (attendance: AttendanceRecord[], staffCount: number = curActiveStaffCount || activeEmployees.length) => {
-      const presentRecords = attendance.filter((a) => a.status !== "ABSENT" || getAttendanceHours(a) > 0);
+      const presentRecords = attendance.filter((a) => (a.status as string) !== "ABSENT" && (a.status as string) !== "CANCELLED" && (a.status as string) !== "VOID" && (a.status as string) !== "REJECTED");
       const totalHours = presentRecords.reduce((sum, r) => sum + getAttendanceHours(r), 0);
       const expectedHoursPerEmployee = AnalyticsEngine.getExpectedWorkingHours(current.startDate, current.endDate);
       const expectedHours = (staffCount > 0 ? staffCount : 1) * expectedHoursPerEmployee;
@@ -694,19 +866,37 @@ export class AnalyticsEngine {
       const lates = attendance.filter((a) => a.status === "LATE").length;
       const absents = attendance.filter((a) => a.status === "ABSENT").length;
 
-      // Realistic attendance rate
+      // Realistic attendance rate (real worked hours / (staff count * expected hours))
       let attRate = 0;
-      if (expectedHours > 0 && totalHours > 0) {
-        attRate = Math.min(100, Math.max(0, Math.round((totalHours / expectedHours) * 100)));
+      const empCount = staffCount > 0 ? staffCount : (activeEmployees.length > 0 ? activeEmployees.length : 1);
+      const expectedTotalHours = empCount * expectedHoursPerEmployee;
+
+      if (expectedTotalHours > 0 && totalHours > 0) {
+        attRate = Math.min(100, Math.max(0, Math.round((totalHours / expectedTotalHours) * 100)));
       } else if (total > 0) {
         const presentCount = presentRecords.length;
-        attRate = Math.round((presentCount / total) * 100);
+        attRate = Math.min(100, Math.max(0, Math.round((presentCount / total) * 100)));
       }
 
       // Realistic absence rate: either explicitly flagged ABSENT records or hours shortfall
       const explicitAbsenceRate = total > 0 ? Math.round((absents / total) * 100) : 0;
       const hoursDeficitAbsenceRate = Math.max(0, 100 - attRate);
       const computedAbsenceRate = Math.max(0, Math.min(100, Math.max(explicitAbsenceRate, hoursDeficitAbsenceRate)));
+
+      console.debug("[KPI:Attendance] Pipeline step breakdown:", {
+        filterParameters: {
+          business_id: businessId,
+          startDate: current.startDate,
+          endDate: current.endDate,
+          branchesCount: branches?.length || 0,
+          departmentsCount: departments?.length || 0,
+        },
+        activeOperationalEmployeesCount: empCount,
+        actualWorkedHoursSum: totalHours,
+        expectedHoursPerEmployee,
+        expectedTotalHours,
+        computedAttendanceRate: attRate,
+      });
 
       return {
         attendanceRate: attRate,
@@ -773,58 +963,58 @@ export class AnalyticsEngine {
 
     // 5. Segment breakdown (Branches)
     const branchPerformance: BranchPerformance[] = branches
-      .filter((b) => b.business_id === businessId)
+      .filter((b) => !businessId || b.business_id === businessId || (b as any).businessId === businessId)
       .map((br) => {
-        const brCurTxs = curTxs.filter((t) => t.branchId === br.id || (t as any).branch_id === br.id);
-        const brAttendance = curAttendance.filter((a) => a.branchId === br.id || (a as any).branch_id === br.id);
-        const brEmployees = activeEmployees.filter((e) => e.branchId === br.id || (e as any).branch_id === br.id);
-
-        const rev = brCurTxs.filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID").reduce((sum, t) => sum + getTxAmount(t), 0);
-        const directExp = brCurTxs
-          .filter((t) => {
-            if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
-            if (t.type === "PAYROLL") return true;
-            if (t.type === "EXPENSE") {
-              if (t.metadata?.payrollCycleId || (t as any).metadata?.payroll_cycle_id) return false;
-              return true;
-            }
-            return false;
-          })
-          .reduce((sum, t) => sum + getTxAmount(t), 0);
-
-        const hasBrPayrollTx = brCurTxs.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID");
+        const brEmployees = activeEmployees.filter((e) => (e.branchId || (e as any).branch_id) === br.id);
+        const brAttendance = curAttendance.filter((a) => (a.branchId || (a as any).branch_id) === br.id);
+        const brTxs = curTxs.filter((t) => (t.branchId || (t as any).branch_id) === br.id);
         const brPayrolls = curPayroll.filter((p) => {
           const emp = activeEmployees.find((e) => e.id === (p.employeeId || p.employee_id));
           return (p.branch_id || (p as any).branchId || emp?.branchId || (emp as any)?.branch_id) === br.id;
         });
-        const brPayrollCost = brPayrolls.reduce(
-          (sum, p: any) => sum + (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || (p.baseSalary || 0)),
-          0
-        );
-        const exp = directExp + (hasBrPayrollTx ? 0 : brPayrollCost);
 
-        const net = rev - exp;
-        const margin = rev > 0 ? (net / rev) * 100 : 0;
+        const brSalesFromPayroll = brPayrolls.reduce((sum, pr: any) => {
+          const factor = getRecordProrationFactor(pr, current);
+          if (factor <= 0) return sum;
+          const s = (pr.sales_cents ? pr.sales_cents / 100 : (pr.salesHtg || pr.salesVolume || pr.sales_gl || pr.sales || 0));
+          return sum + (s * factor);
+        }, 0);
+
+        const brNonEmpGlIncome = brTxs.filter((t) => {
+          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+          if (t.type !== "INCOME") return false;
+          if (brSalesFromPayroll > 0 && (t.employeeId || (t as any).employee_id)) return false;
+          return true;
+        }).reduce((sum, t) => sum + getTxAmount(t), 0);
+
+        const brRev = brSalesFromPayroll + brNonEmpGlIncome;
+        const brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, current);
+        const brNonPayrollExp = sumNonPayrollExpenses(brTxs);
+
+        const brExpenses = brPayrollCost + brNonPayrollExp;
+        const brProfit = brRev - brExpenses;
+        const brMargin = brRev > 0 ? (brProfit / brRev) * 100 : 0;
 
         const attStats = computeAttendanceKPIs(brAttendance, brEmployees.length);
-
-        // Productivity & attendance indexing
         const attRate = attStats.attendanceRate;
+
         const efficiencyScore = Math.max(
           10,
           Math.min(
             100,
-            attRate * 0.4 + (margin > 0 ? Math.min(60, margin) : 10) + brEmployees.length * 2
+            attRate * 0.4 + (brMargin > 0 ? Math.min(60, brMargin) : 10) + brEmployees.length * 2
           )
         );
 
         return {
           branchId: br.id,
           branchName: br.name,
-          revenue: rev,
-          expenses: exp,
-          profit: net,
-          margin,
+          revenue: parseFloat(brRev.toFixed(2)),
+          expenses: parseFloat(brExpenses.toFixed(2)),
+          payrollCost: parseFloat(brPayrollCost.toFixed(2)),
+          nonPayrollExpenses: parseFloat(brNonPayrollExp.toFixed(2)),
+          profit: parseFloat(brProfit.toFixed(2)),
+          margin: parseFloat(brMargin.toFixed(2)),
           attendanceRate: attRate,
           employeeCount: brEmployees.length,
           efficiencyScore: Math.round(efficiencyScore),
@@ -832,7 +1022,15 @@ export class AnalyticsEngine {
       });
 
     // 6. Segment breakdown (Departments & Cost Centers)
-    const deptMap = new Map<string, { name: string; exp: number; empCount: number; attList: AttendanceRecord[] }>();
+    const deptMap = new Map<string, { 
+      name: string; 
+      payrollCost: number; 
+      nonPayrollExp: number; 
+      salesFromPayroll: number;
+      glIncome: number;
+      empCount: number; 
+      attList: AttendanceRecord[] 
+    }>();
     
     // Initialize with registered departments
     departments
@@ -841,39 +1039,49 @@ export class AnalyticsEngine {
         const deptEmployees = activeEmployees.filter((e) => e.departmentId === dept.id || (e as any).department_id === dept.id);
         deptMap.set(dept.id, {
           name: dept.name,
-          exp: 0,
+          payrollCost: 0,
+          nonPayrollExp: 0,
+          salesFromPayroll: 0,
+          glIncome: 0,
           empCount: deptEmployees.length,
           attList: [],
         });
       });
 
-    // Attribute payroll expenses to departments
-    curPayroll.forEach((p) => {
+    // Attribute payroll expenses & sales to departments
+    curPayroll.forEach((p: any) => {
       const emp = activeEmployees.find((e) => e.id === (p.employeeId || p.employee_id));
       const deptId = p.department_id || (p as any).departmentId || emp?.departmentId || (emp as any)?.department_id || "general";
-      const pAmount = p.grossSalary || ((p as any).gross_salary_cents ? (p as any).gross_salary_cents / 100 : 0);
-      
+      const factor = getRecordProrationFactor(p, current);
+      if (factor <= 0) return;
+
+      const rawGross = p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || (p.baseSalary || 0);
+      const penalties = ((p.penalties_cents ? p.penalties_cents / 100 : 0) || (p.penalties || 0)) * factor;
+      const erCnss = ((p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || p.onaEmployer || (isSocialTaxEnabled ? (p.cnssDeduction || 0) : 0)) * factor;
+      const erOfatma = ((p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || p.ofatmaEmployer || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (isSocialTaxEnabled ? (p.cnsDeduction || 0) : 0)) * factor;
+      const pCost = (rawGross * factor - penalties) + erCnss + erOfatma;
+
+      const pSales = (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || p.sales || 0)) * factor;
+
       if (!deptMap.has(deptId)) {
         deptMap.set(deptId, {
           name: deptId === "general" ? "Administration Générale" : deptId,
-          exp: 0,
+          payrollCost: 0,
+          nonPayrollExp: 0,
+          salesFromPayroll: 0,
+          glIncome: 0,
           empCount: 0,
           attList: [],
         });
       }
       const entry = deptMap.get(deptId)!;
-      entry.exp += pAmount;
+      entry.payrollCost += pCost;
+      entry.salesFromPayroll += pSales;
     });
 
-    // Attribute transaction expenses
+    // Attribute transaction expenses & income to departments
     curTxs
-      .filter((t) => {
-        if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
-        if (t.type === "PAYROLL") {
-          return curPayroll.length === 0;
-        }
-        return t.type === "EXPENSE" || t.type === "BONUS" || t.type === "COMPENSATION";
-      })
+      .filter((t) => t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED")
       .forEach((t) => {
         const emp = activeEmployees.find((e) => e.id === (t.employeeId || (t as any).employee_id));
         const deptId = t.departmentId || (t as any).department_id || emp?.departmentId || (emp as any)?.department_id || (t.category ? t.category : "general");
@@ -882,13 +1090,31 @@ export class AnalyticsEngine {
         if (!deptMap.has(deptId)) {
           deptMap.set(deptId, {
             name: deptId === "general" ? "Frais Généraux" : deptId,
-            exp: 0,
+            payrollCost: 0,
+            nonPayrollExp: 0,
+            salesFromPayroll: 0,
+            glIncome: 0,
             empCount: 0,
             attList: [],
           });
         }
         const entry = deptMap.get(deptId)!;
-        entry.exp += tAmount;
+
+        if (t.type === "INCOME") {
+          if (!t.employeeId && !(t as any).employee_id) {
+            entry.glIncome += tAmount;
+          } else if (entry.salesFromPayroll === 0) {
+            entry.glIncome += tAmount;
+          }
+        } else if (t.type === "EXPENSE") {
+          if (!t.metadata?.payrollCycleId && !(t as any).metadata?.payroll_cycle_id) {
+            entry.nonPayrollExp += tAmount;
+          }
+        } else if (t.type === "PAYROLL" && curPayroll.length === 0) {
+          entry.payrollCost += tAmount;
+        } else if (t.type === "BONUS" || t.type === "COMPENSATION") {
+          entry.nonPayrollExp += tAmount;
+        }
       });
 
     // Attribute attendance
@@ -902,10 +1128,18 @@ export class AnalyticsEngine {
 
     const departmentPerformance: DepartmentPerformance[] = Array.from(deptMap.entries()).map(([deptId, data]) => {
       const attStats = computeAttendanceKPIs(data.attList, data.empCount || 1);
+      const rev = data.salesFromPayroll + data.glIncome;
+      const exp = data.payrollCost + data.nonPayrollExp;
+      const margin = rev > 0 ? Math.round(((rev - exp) / rev) * 100) : 0;
+
       return {
         departmentId: deptId,
         departmentName: data.name,
-        expenses: parseFloat(data.exp.toFixed(2)),
+        expenses: parseFloat(exp.toFixed(2)),
+        payrollCost: parseFloat(data.payrollCost.toFixed(2)),
+        nonPayrollExpenses: parseFloat(data.nonPayrollExp.toFixed(2)),
+        revenue: parseFloat(rev.toFixed(2)),
+        margin,
         employeeCount: data.empCount,
         attendanceRate: attStats.attendanceRate,
         averageHours: attStats.avgHours,
@@ -940,6 +1174,18 @@ export class AnalyticsEngine {
         }
       }
 
+      let empSalesVolume = 0;
+      if (relevantPayrolls.length > 0) {
+        empSalesVolume = relevantPayrolls.reduce((sum: number, p: any) => {
+          return sum + (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || 0));
+        }, 0);
+      }
+      if (empSalesVolume === 0) {
+        const empTxs = curTxs.filter((t) => t.employeeId === emp.id || (t as any).employee_id === emp.id);
+        const empSales = empTxs.filter((t) => t.type === "INCOME" || (t.category || "").toUpperCase().includes("SALES"));
+        empSalesVolume = empSales.reduce((sum, t) => sum + (t.amount || (t.amount_cents ? t.amount_cents / 100 : 0)), 0);
+      }
+
       const latestPayroll = relevantPayrolls[0];
       const totalDays = empAttendance.length;
       const lates = empAttendance.filter((a) => a.status === "LATE").length;
@@ -948,10 +1194,13 @@ export class AnalyticsEngine {
 
       const presentRecords = empAttendance.filter((a) => a.status !== "ABSENT" || getAttendanceHours(a) > 0);
       const overtimeHours = overtimeLogs.reduce((sum, a) => sum + Math.max(0, getAttendanceHours(a) - (a.plannedHours || 8)), 0);
-      const totalHours = presentRecords.reduce((sum, a) => sum + getAttendanceHours(a), 0);
+      let totalHours = presentRecords.reduce((sum, a) => sum + getAttendanceHours(a), 0);
+      if (totalHours === 0 && relevantPayrolls.length > 0) {
+        totalHours = relevantPayrolls.reduce((sum, p: any) => sum + (p.workedHours ?? (p.worked_minutes ? p.worked_minutes / 60 : (p.hours || 0))), 0);
+      }
       const mustWorkHours = AnalyticsEngine.getExpectedWorkingHours(current.startDate, current.endDate);
 
-      const hasWorked = presentRecords.length > 0 && totalHours > 0;
+      const hasWorked = (presentRecords.length > 0 && totalHours > 0) || totalHours > 0 || commissions > 0 || empSalesVolume > 0;
 
       const latenessScore = totalDays > 0 ? (lates / totalDays) * 100 : 0;
       const attendanceConsistencyScore = mustWorkHours > 0 ? Math.min(100, (totalHours / mustWorkHours) * 100) : 0;
@@ -976,6 +1225,8 @@ export class AnalyticsEngine {
         ? relevantPayrolls.reduce((sum, p) => sum + (p.netPaid || (p.net_salary_cents ? p.net_salary_cents / 100 : 0)), 0)
         : (hasWorked ? (empBaseSalary + commissions) : 0);
 
+      const empTxs = curTxs.filter((t) => t.employeeId === emp.id || (t as any).employee_id === emp.id);
+      const empPayrollCost = sumPayrollDetails(relevantPayrolls, empTxs, current);
       const underperformanceSignal = hasWorked && (latenessScore > 20 || attendanceConsistencyScore < 80);
 
       return {
@@ -991,7 +1242,9 @@ export class AnalyticsEngine {
         baseSalary: totalBaseSalary,
         commissions,
         netPaid: totalNetPaid,
+        payrollCost: parseFloat(empPayrollCost.toFixed(2)),
         underperformanceSignal,
+        salesVolume: empSalesVolume,
       };
     });
 
@@ -1277,6 +1530,42 @@ export class AnalyticsEngine {
     const profitMargin = revenue.currentValue > 0 ? (profit.currentValue / revenue.currentValue) * 100 : 0;
     const payrollCostRatio = expenses.currentValue > 0 ? (payrollCost.currentValue / expenses.currentValue) * 100 : 0;
 
+    let totalGross = 0;
+    let totalCommissions = commissionsPaid.currentValue || 0;
+
+    let totalCnss = 0;
+    let totalCns = 0;
+    let employerCharges = 0;
+
+    curPayroll.forEach((p: any) => {
+      const factor = getRecordProrationFactor(p, current);
+      if (factor <= 0) return;
+
+      const pGross = (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || (p.baseSalary || 0)) * factor;
+      totalGross += pGross;
+
+      if (isSocialTaxEnabled) {
+        const empCnss = ((p.cnss_employee_cents ? p.cnss_employee_cents / 100 : 0) || (p.cnssDeduction || 0) || (p.onaEmployee || 0)) * factor;
+        const erCnss = ((p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || (p.onaEmployer || 0)) * factor;
+        totalCnss += (empCnss + erCnss);
+
+        const empCns = ((p.cns_employee_cents ? p.cns_employee_cents / 100 : 0) || (p.cnsDeduction || 0) || (p.ofatmaEmployee || 0)) * factor;
+        const erCns = ((p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (p.ofatmaEmployer || 0)) * factor;
+        totalCns += (empCns + erCns);
+
+        employerCharges += (erCnss + erCns);
+      }
+    });
+
+    const payrollAggregates = {
+      payrollPaid: Math.round(totalGross),
+      commissionsPaid: Math.round(totalCommissions),
+      cnssContributions: Math.round(totalCnss),
+      cnsContributions: Math.round(totalCns),
+      employerChargesSocials: Math.round(employerCharges),
+      totalEmploymentCost: Math.round(payrollCost.currentValue || (totalGross + employerCharges)),
+    };
+
     const snapshotBase = {
       period,
       customRange,
@@ -1303,6 +1592,8 @@ export class AnalyticsEngine {
       forecast,
       anomalies,
       workforceProfitability,
+      payrollAggregates,
+      isSocialTaxEnabled,
     };
 
     const hasPeriodData = curTxs.length > 0 || curAttendance.length > 0 || curPayroll.length > 0;

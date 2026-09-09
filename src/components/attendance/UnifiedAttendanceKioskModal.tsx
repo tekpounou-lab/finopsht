@@ -647,7 +647,7 @@ export function UnifiedAttendanceKioskModal({
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200"
       id="unified-attendance-kiosk-modal"
     >
-      <div className="bg-slate-900 border border-slate-800/90 rounded-2xl shadow-2xl w-full max-w-xl flex flex-col overflow-hidden max-h-[92vh]">
+      <div className="bg-slate-900 border border-slate-800/90 rounded-2xl shadow-2xl w-full max-w-5xl sm:max-w-4xl lg:max-w-5xl flex flex-col overflow-hidden max-h-[95vh]">
         {/* Top Header */}
         <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
@@ -695,323 +695,331 @@ export function UnifiedAttendanceKioskModal({
           </div>
         </div>
 
-        {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 flex flex-col gap-4 bg-slate-950/50">
-          {/* Mode Selector & Status Tag */}
-          <div className="flex items-center justify-between gap-3 bg-slate-900/80 p-2 border border-slate-800 rounded-xl">
-            <div className="flex items-center gap-1.5">
-              {(["AUTO", "IN", "OUT"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setScanMode(m)}
-                  className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase transition cursor-pointer flex items-center gap-1.5 ${
-                    scanMode === m
-                      ? m === "IN"
-                        ? "bg-emerald-600 text-white shadow-md shadow-emerald-950"
-                        : m === "OUT"
-                        ? "bg-rose-600 text-white shadow-md shadow-rose-950"
-                        : "bg-cyan-600 text-slate-950 shadow-md shadow-cyan-950 font-extrabold"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+        {/* Scrollable Body - Two Column Grid on Large Screens */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 bg-slate-950/50">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Left Primary Column: Camera Feed & Feedback (7 cols) */}
+            <div className="lg:col-span-7 flex flex-col gap-4">
+              {/* Mode Selector & Status Tag */}
+              <div className="flex items-center justify-between gap-3 bg-slate-900/80 p-2 border border-slate-800 rounded-xl">
+                <div className="flex items-center gap-1.5">
+                  {(["AUTO", "IN", "OUT"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setScanMode(m)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase transition cursor-pointer flex items-center gap-1.5 ${
+                        scanMode === m
+                          ? m === "IN"
+                            ? "bg-emerald-600 text-white shadow-md shadow-emerald-950"
+                            : m === "OUT"
+                            ? "bg-rose-600 text-white shadow-md shadow-rose-950"
+                            : "bg-cyan-600 text-slate-950 shadow-md shadow-cyan-950 font-extrabold"
+                          : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                      }`}
+                    >
+                      <span>{m === "AUTO" ? "Automatique" : m === "IN" ? "Arrivée (IN)" : "Sortie (OUT)"}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="text-[10px] font-mono text-slate-400 hidden sm:block">
+                  {scanMode === "AUTO" && "Détection automatique de statut"}
+                  {scanMode === "IN" && "Mode forcé : Enregistrement d'arrivée"}
+                  {scanMode === "OUT" && "Mode forcé : Enregistrement de sortie"}
+                </div>
+              </div>
+
+              {/* Camera Scanner Viewport - High Resolution Viewport */}
+              <div className="flex flex-col items-center justify-center p-3 bg-slate-900/80 border border-slate-800/90 rounded-2xl shadow-inner w-full">
+                <CameraQrScanner
+                  onScanSuccess={(decodedText) => {
+                    processSecureScan(undefined, decodedText);
+                  }}
+                  isMuted={isMuted}
+                  onToggleMute={() => setIsMuted(!isMuted)}
+                />
+              </div>
+
+              {/* Scanner Feedback Card */}
+              {scannerFeedback.message && (
+                <div
+                  className={`p-3.5 border rounded-xl flex items-start gap-3 transition-all duration-200 ${
+                    scannerFeedback.status === "success"
+                      ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
+                      : scannerFeedback.status === "error"
+                      ? "bg-rose-950/40 border-rose-500/50 text-rose-300"
+                      : scannerFeedback.status === "breach"
+                      ? "bg-amber-950/50 border-amber-500/60 text-amber-200"
+                      : scannerFeedback.status === "scanning"
+                      ? "bg-cyan-950/40 border-cyan-500/50 text-cyan-300"
+                      : "bg-slate-900 border-slate-800 text-slate-300"
                   }`}
+                  id="kiosk-feedback-panel"
                 >
-                  <span>{m === "AUTO" ? "Automatique" : m === "IN" ? "Arrivée (IN)" : "Sortie (OUT)"}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="text-[10px] font-mono text-slate-400 hidden sm:block">
-              {scanMode === "AUTO" && "Détection automatique de statut"}
-              {scanMode === "IN" && "Mode forcé : Enregistrement d'arrivée"}
-              {scanMode === "OUT" && "Mode forcé : Enregistrement de sortie"}
-            </div>
-          </div>
-
-          {/* Machine / Device Local Clock & Connection Bar */}
-          <div className="bg-cyan-950/20 border border-cyan-500/20 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-              <div className="flex items-center gap-1.5 text-cyan-300 font-bold">
-                <Clock className="w-3.5 h-3.5" />
-                <span>Heure Machine : <span className="text-white font-mono font-black tracking-widest">{deviceClock.time}</span></span>
-              </div>
-              <span className="text-slate-600">•</span>
-              <span className="text-slate-300">{deviceClock.date}</span>
-            </div>
-            <div className="flex items-center gap-2 text-[10px] text-slate-400">
-              <span className="bg-slate-800/90 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-900/50">
-                {deviceClock.tz}
-              </span>
-              <span className="hidden sm:inline text-emerald-400 font-sans font-bold flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                Horodatage Appareil Certifié
-              </span>
-            </div>
-          </div>
-
-          {/* Camera Scanner Viewport */}
-          <div className="flex flex-col items-center justify-center p-2 bg-slate-900/50 border border-slate-800/80 rounded-2xl">
-            <CameraQrScanner
-              onScanSuccess={(decodedText) => {
-                processSecureScan(undefined, decodedText);
-              }}
-              isMuted={isMuted}
-              onToggleMute={() => setIsMuted(!isMuted)}
-            />
-          </div>
-
-          {/* Scanner Feedback Card */}
-          {scannerFeedback.message && (
-            <div
-              className={`p-3.5 border rounded-xl flex items-start gap-3 transition-all duration-200 ${
-                scannerFeedback.status === "success"
-                  ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
-                  : scannerFeedback.status === "error"
-                  ? "bg-rose-950/40 border-rose-500/50 text-rose-300"
-                  : scannerFeedback.status === "breach"
-                  ? "bg-amber-950/50 border-amber-500/60 text-amber-200"
-                  : scannerFeedback.status === "scanning"
-                  ? "bg-cyan-950/40 border-cyan-500/50 text-cyan-300"
-                  : "bg-slate-900 border-slate-800 text-slate-300"
-              }`}
-              id="kiosk-feedback-panel"
-            >
-              {scannerFeedback.status === "success" ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              ) : scannerFeedback.status === "error" ? (
-                <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-              ) : scannerFeedback.status === "breach" ? (
-                <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              ) : (
-                <Clock className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5 animate-spin" />
-              )}
-              <div className="text-xs font-semibold leading-relaxed">
-                <p>{scannerFeedback.message}</p>
-                {scannerFeedback.details && (
-                  <p className="text-[10px] font-mono text-slate-400 mt-1">{scannerFeedback.details}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Real Collaborator Direct Lookup (Zero Simulated Data) */}
-          <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl flex flex-col gap-2.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Recherche Collaborateur ou Saisie Manuelle de Badge</span>
-              </label>
-              <span className="text-[9px] text-slate-400 font-mono">
-                {companyEmps.length} collaborateurs actifs
-              </span>
-            </div>
-
-            <div className="relative">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={empSearchQuery}
-                    onChange={(e) => {
-                      setEmpSearchQuery(e.target.value);
-                      setScannedQrString(e.target.value);
-                      setIsEmpDropdownOpen(true);
-                    }}
-                    onFocus={() => setIsEmpDropdownOpen(true)}
-                    placeholder="Entrez le nom, matricule ou scannez le badge..."
-                    className="w-full pl-9 pr-8 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-400 focus:border-cyan-500/60 outline-none"
-                  />
-                  {empSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEmpSearchQuery("");
-                        setScannedQrString("");
-                      }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => processSecureScan(scanMode, scannedQrString || empSearchQuery)}
-                  disabled={isProcessing || (!scannedQrString.trim() && !empSearchQuery.trim())}
-                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-black text-xs uppercase tracking-wider rounded-lg transition shadow-md flex items-center gap-1.5 cursor-pointer shrink-0"
-                >
-                  {isProcessing ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  {scannerFeedback.status === "success" ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : scannerFeedback.status === "error" ? (
+                    <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  ) : scannerFeedback.status === "breach" ? (
+                    <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                   ) : (
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <Clock className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5 animate-spin" />
                   )}
-                  <span>Pointer</span>
-                </button>
-              </div>
-
-              {/* Autocomplete Dropdown */}
-              {isEmpDropdownOpen && empSearchQuery.trim().length > 0 && (
-                <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden max-h-52 overflow-y-auto">
-                  <div className="p-2 bg-slate-950/90 border-b border-slate-800 text-[10px] text-slate-400 font-mono flex items-center justify-between px-3">
-                    <span>COLLABORATEURS CORRESPONDANTS</span>
-                    <button
-                      type="button"
-                      onClick={() => setIsEmpDropdownOpen(false)}
-                      className="text-slate-400 hover:text-slate-200 font-bold cursor-pointer"
-                    >
-                      Fermer ✕
-                    </button>
+                  <div className="text-xs font-semibold leading-relaxed">
+                    <p>{scannerFeedback.message}</p>
+                    {scannerFeedback.details && (
+                      <p className="text-[10px] font-mono text-slate-400 mt-1">{scannerFeedback.details}</p>
+                    )}
                   </div>
-
-                  {filteredEmployees.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-slate-400 font-mono">
-                      Aucun collaborateur trouvé pour "{empSearchQuery}"
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-800/60">
-                      {filteredEmployees.slice(0, 8).map((emp) => {
-                        const deptName = emp.departmentId
-                          ? ReferenceResolver.resolveDepartment(departments, emp.departmentId)?.name || "Général"
-                          : "Général";
-
-                        return (
-                          <div
-                            key={emp.id}
-                            onClick={() => {
-                              setScannedQrString(emp.id);
-                              setEmpSearchQuery(emp.name);
-                              setIsEmpDropdownOpen(false);
-                            }}
-                            className="p-2.5 flex items-center justify-between hover:bg-cyan-950/40 cursor-pointer transition-colors"
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-[10px] text-cyan-300 shrink-0 uppercase">
-                                {emp.name
-                                  .split(" ")
-                                  .map((n) => n[0])
-                                  .join("")
-                                  .substring(0, 2)}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-xs text-slate-200 truncate flex items-center gap-1.5">
-                                  <span>{emp.name}</span>
-                                  <span className="text-[9px] font-mono px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded">
-                                    {emp.id}
-                                  </span>
-                                </div>
-                                <div className="text-[10px] text-slate-400 truncate flex items-center gap-2">
-                                  <span>{emp.position || "Staff"}</span>
-                                  <span>•</span>
-                                  <span className="text-cyan-400/80">{deptName}</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setScannedQrString(emp.id);
-                                setEmpSearchQuery(emp.name);
-                                setIsEmpDropdownOpen(false);
-                                processSecureScan("AUTO", emp.id);
-                              }}
-                              className="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold rounded uppercase transition shrink-0 ml-2 cursor-pointer"
-                            >
-                              Pointer
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
 
-            {/* Quick Action Buttons for Directional Forced Scans */}
-            <div className="grid grid-cols-2 gap-2 mt-1">
-              <button
-                type="button"
-                onClick={() => processSecureScan("IN")}
-                disabled={isProcessing || (!scannedQrString.trim() && !empSearchQuery.trim())}
-                className="py-2 px-3 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-bold transition disabled:opacity-40 uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Entrée Forcée (IN)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => processSecureScan("OUT")}
-                disabled={isProcessing || (!scannedQrString.trim() && !empSearchQuery.trim())}
-                className="py-2 px-3 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-bold transition disabled:opacity-40 uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-              >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>Sortie Forcée (OUT)</span>
-              </button>
-            </div>
-          </div>
+            {/* Right Secondary Column: Clock, Manual Search & Live Feed (5 cols) */}
+            <div className="lg:col-span-5 flex flex-col gap-4">
+              {/* Machine / Device Local Clock & Connection Bar */}
+              <div className="bg-cyan-950/20 border border-cyan-500/20 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                  <div className="flex items-center gap-1.5 text-cyan-300 font-bold">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Heure Machine : <span className="text-white font-mono font-black tracking-widest">{deviceClock.time}</span></span>
+                  </div>
+                  <span className="text-slate-600">•</span>
+                  <span className="text-slate-300">{deviceClock.date}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                  <span className="bg-slate-800/90 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-900/50">
+                    {deviceClock.tz}
+                  </span>
+                  <span className="hidden sm:inline text-emerald-400 font-sans font-bold flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    Horodatage Certifié
+                  </span>
+                </div>
+              </div>
 
-          {/* Recent Live Scans Feed */}
-          <div className="flex flex-col gap-2 bg-slate-900/60 border border-slate-800/80 p-3.5 rounded-xl">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Flux de Pointage Récent (Session Active)</span>
-              </span>
-              <span className="text-[9px] text-slate-400 font-mono">
-                {recentScans.length} scans enregistrés
-              </span>
-            </div>
+              {/* Real Collaborator Direct Lookup */}
+              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-xl flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Recherche Collaborateur / Badge</span>
+                  </label>
+                  <span className="text-[9px] text-slate-400 font-mono">
+                    {companyEmps.length} collaborateurs
+                  </span>
+                </div>
 
-            <div className="flex flex-col gap-1.5" id="kiosk-recent-scans-feed">
-              {recentScans.length > 0 ? (
-                recentScans.map((scan) => (
-                  <div
-                    key={scan.id}
-                    className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg flex justify-between items-center text-xs animate-in slide-in-from-bottom-2 duration-200"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          scan.status === "IN"
-                            ? "bg-emerald-400"
-                            : scan.status === "OUT"
-                            ? "bg-indigo-400"
-                            : "bg-rose-400"
-                        }`}
+                <div className="relative">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        ref={searchInputRef}
+                        type="text"
+                        value={empSearchQuery}
+                        onChange={(e) => {
+                          setEmpSearchQuery(e.target.value);
+                          setScannedQrString(e.target.value);
+                          setIsEmpDropdownOpen(true);
+                        }}
+                        onFocus={() => setIsEmpDropdownOpen(true)}
+                        placeholder="Entrez le nom, matricule..."
+                        className="w-full pl-9 pr-8 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-400 focus:border-cyan-500/60 outline-none"
                       />
-                      <span className="font-bold text-slate-200">{scan.name}</span>
-                      {scan.badge && (
-                        <span className="text-[9px] font-mono px-1 py-0.2 bg-slate-800 text-slate-400 rounded">
-                          {scan.badge}
-                        </span>
+                      {empSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEmpSearchQuery("");
+                            setScannedQrString("");
+                          }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-400 font-mono">{scan.time}</span>
-                      <span
-                        className={`text-[9px] font-mono font-black px-2 py-0.5 rounded ${
-                          scan.status === "IN"
-                            ? "bg-emerald-950 text-emerald-300 border border-emerald-800/60"
-                            : scan.status === "OUT"
-                            ? "bg-indigo-950 text-indigo-300 border border-indigo-800/60"
-                            : "bg-rose-950 text-rose-300 border border-rose-800/60"
-                        }`}
-                      >
-                        {scan.status}
-                      </span>
-                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => processSecureScan(scanMode, scannedQrString || empSearchQuery)}
+                      disabled={isProcessing || (!scannedQrString.trim() && !empSearchQuery.trim())}
+                      className="px-3.5 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-black text-xs uppercase tracking-wider rounded-lg transition shadow-md flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      {isProcessing ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      )}
+                      <span>Pointer</span>
+                    </button>
                   </div>
-                ))
-              ) : (
-                <div className="p-4 text-center text-xs text-slate-400 border border-dashed border-slate-800 rounded-lg font-mono">
-                  Aucun pointage scanné pour cette session.
+
+                  {/* Autocomplete Dropdown */}
+                  {isEmpDropdownOpen && empSearchQuery.trim().length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden max-h-52 overflow-y-auto">
+                      <div className="p-2 bg-slate-950/90 border-b border-slate-800 text-[10px] text-slate-400 font-mono flex items-center justify-between px-3">
+                        <span>COLLABORATEURS CORRESPONDANTS</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsEmpDropdownOpen(false)}
+                          className="text-slate-400 hover:text-slate-200 font-bold cursor-pointer"
+                        >
+                          Fermer ✕
+                        </button>
+                      </div>
+
+                      {filteredEmployees.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-slate-400 font-mono">
+                          Aucun collaborateur trouvé pour "{empSearchQuery}"
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-slate-800/60">
+                          {filteredEmployees.slice(0, 8).map((emp) => {
+                            const deptName = emp.departmentId
+                              ? ReferenceResolver.resolveDepartment(departments, emp.departmentId)?.name || "Général"
+                              : "Général";
+
+                            return (
+                              <div
+                                key={emp.id}
+                                onClick={() => {
+                                  setScannedQrString(emp.id);
+                                  setEmpSearchQuery(emp.name);
+                                  setIsEmpDropdownOpen(false);
+                                }}
+                                className="p-2.5 flex items-center justify-between hover:bg-cyan-950/40 cursor-pointer transition-colors"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-[10px] text-cyan-300 shrink-0 uppercase">
+                                    {emp.name
+                                      .split(" ")
+                                      .map((n) => n[0])
+                                      .join("")
+                                      .substring(0, 2)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-xs text-slate-200 truncate flex items-center gap-1.5">
+                                      <span>{emp.name}</span>
+                                      <span className="text-[9px] font-mono px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded">
+                                        {emp.id}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 truncate flex items-center gap-2">
+                                      <span>{emp.position || "Staff"}</span>
+                                      <span>•</span>
+                                      <span className="text-cyan-400/80">{deptName}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setScannedQrString(emp.id);
+                                    setEmpSearchQuery(emp.name);
+                                    setIsEmpDropdownOpen(false);
+                                    processSecureScan("AUTO", emp.id);
+                                  }}
+                                  className="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold rounded uppercase transition shrink-0 ml-2 cursor-pointer"
+                                >
+                                  Pointer
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Quick Action Buttons for Directional Forced Scans */}
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => processSecureScan("IN")}
+                    disabled={isProcessing || (!scannedQrString.trim() && !empSearchQuery.trim())}
+                    className="py-2 px-3 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-bold transition disabled:opacity-40 uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Entrée (IN)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => processSecureScan("OUT")}
+                    disabled={isProcessing || (!scannedQrString.trim() && !empSearchQuery.trim())}
+                    className="py-2 px-3 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-bold transition disabled:opacity-40 uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                    <span>Sortie (OUT)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Recent Live Scans Feed */}
+              <div className="flex flex-col gap-2 bg-slate-900/60 border border-slate-800/80 p-3.5 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Flux de Pointage Récent</span>
+                  </span>
+                  <span className="text-[9px] text-slate-400 font-mono">
+                    {recentScans.length} scans
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1" id="kiosk-recent-scans-feed">
+                  {recentScans.length > 0 ? (
+                    recentScans.map((scan) => (
+                      <div
+                        key={scan.id}
+                        className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg flex justify-between items-center text-xs animate-in slide-in-from-bottom-2 duration-200"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              scan.status === "IN"
+                                ? "bg-emerald-400"
+                                : scan.status === "OUT"
+                                ? "bg-indigo-400"
+                                : "bg-rose-400"
+                            }`}
+                          />
+                          <span className="font-bold text-slate-200">{scan.name}</span>
+                          {scan.badge && (
+                            <span className="text-[9px] font-mono px-1 py-0.2 bg-slate-800 text-slate-400 rounded">
+                              {scan.badge}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-400 font-mono">{scan.time}</span>
+                          <span
+                            className={`text-[9px] font-mono font-black px-2 py-0.5 rounded ${
+                              scan.status === "IN"
+                                ? "bg-emerald-950 text-emerald-300 border border-emerald-800/60"
+                                : scan.status === "OUT"
+                                ? "bg-indigo-950 text-indigo-300 border border-indigo-800/60"
+                                : "bg-rose-950 text-rose-300 border border-rose-800/60"
+                            }`}
+                          >
+                            {scan.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center text-xs text-slate-400 border border-dashed border-slate-800 rounded-lg font-mono">
+                      Aucun pointage scanné pour cette session.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-export type PICPeriod = "7d" | "30d" | "this_month" | "last_month" | "quarter" | "year" | "custom";
+export type PICPeriod = "all" | "7d" | "30d" | "this_month" | "last_month" | "quarter" | "year" | "custom";
 
 export type PICMetricType = "all" | "payroll" | "workforce" | "revenue" | "attendance";
 

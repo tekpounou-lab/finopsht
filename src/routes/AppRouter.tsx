@@ -14,6 +14,7 @@ import {
 import { ResolveRoute } from "./ResolveRoute";
 import UnifiedAuthPortal from "../components/UnifiedAuthPortal";
 import { lazyWithRetry } from "../utils/lazyWithRetry";
+import { AnalyticsRouteTracker } from "../components/analytics/AnalyticsRouteTracker";
 
 // Lazy-loaded routes for code splitting
 const DashboardShell = lazyWithRetry(() => import("../components/DashboardShell").then((m: any) => ({ default: m.DashboardShell || m.default })));
@@ -92,6 +93,8 @@ export default function AppRouter() {
     <Suspense fallback={<PageFallback />}>
       {/* Centralized Global Reactive Navigation Engine */}
       <AuthNavigationEngine />
+      {/* Automatic GA4 Page View Tracking */}
+      <AnalyticsRouteTracker />
       
       <Routes>
         <Route path="/" element={<LandingPageWrapper />} />

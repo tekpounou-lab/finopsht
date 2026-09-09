@@ -120,15 +120,23 @@ export class WorkforceProfitabilityEngine {
       let employerContributions = 0;
       let commissions = 0;
       let allowances = 0;
+      let salesFromPayroll = 0;
+      let payrollHours = 0;
 
       if (empPayrolls.length > 0) {
-        empPayrolls.forEach((p) => {
-          monthlySalary += (p.grossSalary || ((p as any).gross_salary_cents ? (p as any).gross_salary_cents / 100 : 0));
+        empPayrolls.forEach((p: any) => {
+          const grossVal = (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : (p.gross || 0)));
+          monthlySalary += grossVal;
           if (isSocialTaxEnabled) {
             employerContributions += ((p.cnss_employer_cents || 0) + (p.ofatma_employer_cents || 0)) / 100;
           }
-          commissions += (p.commissions || ((p as any).commission_cents ? (p as any).commission_cents / 100 : 0));
-          allowances += ((p as any)?.allowances_cents ? (p as any).allowances_cents / 100 : 0);
+          commissions += (p.commissions || (p.commission_cents ? p.commission_cents / 100 : 0));
+          allowances += (p.allowances_cents ? p.allowances_cents / 100 : (p.primes || p.overtimePayout || 0));
+
+          salesFromPayroll += (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || 0));
+          
+          const pHours = p.workedHours ?? (p.worked_minutes ? p.worked_minutes / 60 : (p.hours || 0));
+          payrollHours += Number(pHours) || 0;
         });
       } else if (empAttendance.length > 0) {
         monthlySalary = emp.salaryBaseHtg || emp.baseSalary || 0;
@@ -138,7 +146,8 @@ export class WorkforceProfitabilityEngine {
         commissions = empTxs.filter((t) => t.type === "COMPENSATION" || t.type === "BONUS").reduce((s, t) => s + t.amount, 0);
       }
       const benefitsCost = Math.round(commissions + allowances);
-      const totalEmploymentCost = Math.round(monthlySalary + employerContributions + benefitsCost);
+      // grossVal already includes base + commissions + primes - penalties. Do not double-add commissions/allowances into total employment cost.
+      const totalEmploymentCost = Math.round(monthlySalary + employerContributions);
 
       const avgCostPerDay = calculatedExpectedDays > 0 ? Math.round(totalEmploymentCost / calculatedExpectedDays) : 0;
       const avgCostPerHour = (calculatedExpectedDays * 8) > 0 ? Math.round(totalEmploymentCost / (calculatedExpectedDays * 8)) : 0;
@@ -177,11 +186,17 @@ export class WorkforceProfitabilityEngine {
 
         return 0;
       };
-      const workedHours = empAttendance.reduce((sum, a) => {
+      let workedHours = empAttendance.reduce((sum, a) => {
         const status = a.status as string;
         if (status === "ABSENT" || status === "LEAVE" || status === "VACATION") return sum;
         return sum + getAttHours(a);
       }, 0);
+
+      // Fallback to payroll hours if attendance logs are absent
+      if (workedHours === 0 && payrollHours > 0) {
+        workedHours = payrollHours;
+      }
+
       const overtimeHours = empAttendance.reduce((sum, a) => sum + Math.max(0, getAttHours(a) - (a.plannedHours || 8)), 0);
 
       const attendanceRate = expectedHours > 0 ? Math.min(100, Math.round((workedHours / expectedHours) * 100)) : 0;
@@ -213,8 +228,8 @@ export class WorkforceProfitabilityEngine {
       const projectsCompleted = 0;
       const unitsProduced = 0;
 
-      // Revenue Generation Logic (Direct Sales or Role-based Allocation)
-      let revenueGenerated = salesGenerated;
+      // Revenue Generation Logic (Direct Sales or Payroll-attributed Sales)
+      let revenueGenerated = Math.max(salesGenerated, salesFromPayroll);
 
       const grossProfitGenerated = revenueGenerated - totalEmploymentCost;
 

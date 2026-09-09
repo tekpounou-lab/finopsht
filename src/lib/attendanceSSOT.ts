@@ -7,6 +7,8 @@
  * - Negative variance (< 0): Shortfall / missing hours worked (e.g., -1.5h in red)
  */
 
+import { toDateOnly } from "../utils/dateNormalization";
+
 export interface AttendanceHours {
   plannedHours: number;
   realHours: number;
@@ -39,34 +41,7 @@ export function getDeviceLocalDate(d: Date = new Date()): string {
  * into a uniform YYYY-MM-DD string for safe equality and comparison checks.
  */
 export function normalizeDateStr(dInput: any): string {
-  if (!dInput) return "";
-  let str = dInput;
-  if (typeof dInput !== "string") {
-    if (dInput.toDate && typeof dInput.toDate === "function") {
-      str = getDeviceLocalDate(dInput.toDate());
-    } else if (typeof dInput === "number") {
-      str = getDeviceLocalDate(new Date(dInput));
-    } else if (dInput instanceof Date) {
-      str = getDeviceLocalDate(dInput);
-    } else {
-      str = String(dInput);
-    }
-  }
-  const trimmed = String(str).trim();
-  if (!trimmed) return "";
-  
-  if (trimmed.includes("T")) {
-    return trimmed.split("T")[0];
-  }
-  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(trimmed)) {
-    const p = trimmed.split(/[-/]/);
-    return `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
-  }
-  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(trimmed)) {
-    const p = trimmed.split(/[-/]/);
-    return `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}`;
-  }
-  return trimmed;
+  return toDateOnly(dInput);
 }
 
 /**

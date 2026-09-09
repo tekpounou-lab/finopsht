@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Role } from "../../../types";
 
-export type OrgSubTab = "structures" | "import" | "badges" | "contracts" | "onboarding";
+export type OrgSubTab = "structures" | "import" | "badges" | "contracts" | "onboarding" | "invitations";
 export type OrgTool = "branch" | "dept" | "link" | "assign" | null;
 
 export function useOrgUIState() {

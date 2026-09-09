@@ -204,7 +204,22 @@ export function useBIDataAggregation({
 
   const getAttendanceDate = (a: any): string => {
     if (!a) return "";
-    const raw = a.date || a.date_str || a.dateStr || a.work_date || a.checkInDate || a.checkIn?.deviceDate || a.created_at || a.timestamp || a.checkIn?.timestamp;
+    const raw =
+      a.date ||
+      a.date_str ||
+      a.dateStr ||
+      a.work_date ||
+      a.workDate ||
+      a.checkInDate ||
+      a.checkIn?.deviceDate ||
+      a.created_at ||
+      a.createdAt ||
+      a.timestamp ||
+      a.checkIn?.timestamp ||
+      a.checkIn ||
+      a.check_in ||
+      a.checkInTime ||
+      a.check_in_time;
     return normalizeDateStr(raw);
   };
 
@@ -217,18 +232,33 @@ export function useBIDataAggregation({
     if (typeof a.workedHours === "number" && !isNaN(a.workedHours) && a.workedHours > 0) return a.workedHours;
     if (typeof a.totalMinutes === "number" && !isNaN(a.totalMinutes) && a.totalMinutes > 0) return Number((a.totalMinutes / 60).toFixed(2));
     
-    if (a.checkIn && a.checkOut && typeof a.checkIn === "string" && typeof a.checkOut === "string") {
-      const [h1, m1] = a.checkIn.split(":").map(Number);
-      const [h2, m2] = a.checkOut.split(":").map(Number);
-      if (!isNaN(h1) && !isNaN(h2)) {
-        const mins1 = h1 * 60 + (m1 || 0);
-        const mins2 = h2 * 60 + (m2 || 0);
-        if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+    const rawIn = a.checkIn || a.check_in || a.checkInTime || a.check_in_time;
+    const rawOut = a.checkOut || a.check_out || a.checkOutTime || a.check_out_time;
+
+    if (rawIn && rawOut) {
+      const dIn = new Date(rawIn);
+      const dOut = new Date(rawOut);
+      if (!isNaN(dIn.getTime()) && !isNaN(dOut.getTime()) && dOut > dIn) {
+        const diffMs = dOut.getTime() - dIn.getTime();
+        const hrs = diffMs / 3600000;
+        if (hrs > 0 && hrs <= 24) return Number(hrs.toFixed(2));
+      }
+
+      const strIn = typeof rawIn === "string" ? rawIn.split("T").pop() || "" : "";
+      const strOut = typeof rawOut === "string" ? rawOut.split("T").pop() || "" : "";
+      if (strIn.includes(":") && strOut.includes(":")) {
+        const [h1, m1] = strIn.split(":").map(Number);
+        const [h2, m2] = strOut.split(":").map(Number);
+        if (!isNaN(h1) && !isNaN(h2)) {
+          const mins1 = h1 * 60 + (m1 || 0);
+          const mins2 = h2 * 60 + (m2 || 0);
+          if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+        }
       }
     }
 
     const st = String(a.status || "").toUpperCase();
-    if (st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID") {
+    if (st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID" && st !== "REJECTED") {
       if (typeof a.plannedHours === "number" && a.plannedHours > 0) return a.plannedHours;
       return 8;
     }
@@ -270,14 +300,12 @@ export function useBIDataAggregation({
       if (selectedBranchId !== "ALL" && rBranch && rBranch !== selectedBranchId) return false;
       if (selectedDeptId !== "ALL" && rDept && rDept !== selectedDeptId) return false;
 
-      // Period matching - check work period overlap with filter bounds
-      const pStart = rec.period_start || (rec as any).startDate || (rec as any).periodStart || (rec as any).generated_at || (rec as any).paymentDate || rec.created_at || (rec as any).createdAt;
-      const pEnd = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || (rec as any).effectiveAccountingDate || pStart;
+      // Period matching - require effective payment or accounting date or period end to fall within range
+      const pEffective = (rec as any).paymentDate || (rec as any).effectiveAccountingDate || rec.period_end || (rec as any).periodEnd || (rec as any).endDate;
       if (startDate && endDate) {
-        if (!pStart && !pEnd) return false;
-        const startStr = normalizeDateStr(pStart || pEnd);
-        const endStr = normalizeDateStr(pEnd || pStart);
-        if (!startStr || !endStr || endStr < startDate || startStr > endDate) {
+        if (!pEffective) return false;
+        const normDate = normalizeDateStr(pEffective);
+        if (!normDate || normDate < startDate || normDate > endDate) {
           return false;
         }
       }
@@ -335,6 +363,9 @@ export function useBIDataAggregation({
 
   // Payroll Aggregates calculated early as a source of truth
   const payrollAggregates: PayrollAggregates = useMemo(() => {
+    if (!isFiltered && biSnapshot?.payrollAggregates) {
+      return biSnapshot.payrollAggregates;
+    }
     const records = filteredPayrolls;
     const totalGross = records.reduce((sum, p: any) => sum + (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || (p.baseSalary || 0)), 0);
     const totalCommissions = records.reduce((sum, p: any) => sum + (p.commissions || (p.commission_cents ? p.commission_cents / 100 : 0) || p.commissionsHTG || 0), 0);
@@ -367,54 +398,57 @@ export function useBIDataAggregation({
       employerCharges = recordedEmployerCharges;
     }
 
-    const baseCost = isFiltered || !biSnapshot ? totalGross : (biSnapshot.payrollCost?.currentValue || totalGross);
-    const baseComm = isFiltered || !biSnapshot ? totalCommissions : (biSnapshot.commissionsPaid?.currentValue || totalCommissions);
-    const totalCost = isFiltered || !biSnapshot ? (totalGross + employerCharges) : (biSnapshot.payrollCost?.currentValue || (totalGross + employerCharges));
+    const totalCost = totalGross + employerCharges;
 
     return {
-      payrollPaid: Math.round(baseCost),
-      commissionsPaid: Math.round(baseComm),
+      payrollPaid: Math.round(totalGross),
+      commissionsPaid: Math.round(totalCommissions),
       cnssContributions: Math.round(totalCnss),
       cnsContributions: Math.round(totalCns),
       employerChargesSocials: Math.round(employerCharges),
       totalEmploymentCost: Math.round(totalCost),
     };
-  }, [biSnapshot, filteredPayrolls, isSocialTaxEnabled, isFiltered]);
+  }, [biSnapshot?.payrollAggregates, filteredPayrolls, isSocialTaxEnabled]);
 
   const totalRevenue = useMemo(() => {
-    if (isFiltered || !biSnapshot) {
-      return filteredTx
-        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID")
-        .reduce((s, t) => s + getTxAmount(t), 0);
+    if (!isFiltered && biSnapshot?.revenue?.currentValue !== undefined) {
+      return biSnapshot.revenue.currentValue;
     }
-    return biSnapshot?.revenue?.currentValue || 0;
+    return filteredTx
+      .filter((t) => (t.type === "INCOME" || (t.type as any) === "REVENUE") && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+      .reduce((s, t) => s + getTxAmount(t), 0);
   }, [isFiltered, biSnapshot?.revenue?.currentValue, filteredTx]);
 
   const totalExpenses = useMemo(() => {
-    if (isFiltered || !biSnapshot) {
-      const directExp = filteredTx
-        .filter((t) => {
-          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
-          if (t.type === "PAYROLL") return true;
-          if (t.type === "EXPENSE") {
-            if (t.metadata?.payrollCycleId || (t as any).metadata?.payroll_cycle_id) return false;
-            return true;
-          }
-          return false;
-        })
-        .reduce((s, t) => s + getTxAmount(t), 0);
-
-      const hasPayrollTx = filteredTx.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
-      const payrollExp = hasPayrollTx ? 0 : payrollAggregates.totalEmploymentCost;
-      return directExp + payrollExp;
+    if (!isFiltered && biSnapshot?.expenses?.currentValue !== undefined) {
+      return biSnapshot.expenses.currentValue;
     }
-    return biSnapshot?.expenses?.currentValue || 0;
+    const directExp = filteredTx
+      .filter((t) => {
+        if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+        if (t.type === "PAYROLL") return true;
+        if (t.type === "EXPENSE") {
+          if (t.metadata?.payrollCycleId || (t as any).metadata?.payroll_cycle_id) return false;
+          const cat = (t.category || "").toLowerCase();
+          const desc = (t.description || "").toLowerCase();
+          if (cat.includes("paie") || cat.includes("payroll") || desc.includes("salaire") || desc.includes("payroll")) {
+            return false;
+          }
+          return true;
+        }
+        return false;
+      })
+      .reduce((s, t) => s + getTxAmount(t), 0);
+
+    const hasPayrollTx = filteredTx.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
+    const payrollExp = hasPayrollTx ? 0 : payrollAggregates.totalEmploymentCost;
+    return directExp + payrollExp;
   }, [isFiltered, biSnapshot?.expenses?.currentValue, filteredTx, payrollAggregates.totalEmploymentCost]);
 
-  const netProfit = totalRevenue - totalExpenses;
-  const profitMarginPercentage = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
-  const financialStressScore = totalRevenue > 0 ? Math.min(100, Math.max(0, (totalExpenses / totalRevenue) * 100)) : 100;
-  const totalAdvancesPending = biSnapshot?.advanceExposure?.currentValue || 0;
+  const netProfit = (!isFiltered && biSnapshot?.profit?.currentValue !== undefined) ? biSnapshot.profit.currentValue : (totalRevenue - totalExpenses);
+  const profitMarginPercentage = (!isFiltered && biSnapshot?.profitMargin !== undefined) ? Math.round(biSnapshot.profitMargin) : (totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0);
+  const financialStressScore = totalRevenue > 0 ? Math.min(100, Math.max(0, Math.round((totalExpenses / totalRevenue) * 100))) : 100;
+  const totalAdvancesPending = (!isFiltered && biSnapshot?.advanceExposure?.currentValue !== undefined) ? biSnapshot.advanceExposure.currentValue : 0;
   const activePresentEmpIds = useMemo(() => {
     return new Set(
       filteredAttendance
@@ -424,9 +458,20 @@ export function useBIDataAggregation({
     );
   }, [filteredAttendance]);
 
-  const activeEmployeesCount = isFiltered ? activePresentEmpIds.size : (biSnapshot?.activeStaff?.currentValue ?? activePresentEmpIds.size);
+  const activeEmployeesCount = (!isFiltered && biSnapshot?.activeStaff?.currentValue !== undefined) ? biSnapshot.activeStaff.currentValue : (activePresentEmpIds.size > 0 ? activePresentEmpIds.size : filteredEmployees.length);
 
   const attendanceAggregates = useMemo(() => {
+    if (!isFiltered && biSnapshot?.attendanceRate?.currentValue !== undefined) {
+      console.debug("[useBIDataAggregation] Using biSnapshot attendanceRate SSOT:", biSnapshot.attendanceRate.currentValue);
+      return {
+        attendanceRate: biSnapshot.attendanceRate.currentValue ?? 0,
+        latenessRate: biSnapshot.latenessRate?.currentValue ?? 0,
+        absenceRate: biSnapshot.absenceRate?.currentValue ?? 0,
+        avgHours: biSnapshot.avgHoursWorked?.currentValue ?? 0,
+        overrides: 0,
+      };
+    }
+
     if (filteredAttendance.length > 0) {
       const staffCount = filteredEmployees.length > 0 ? filteredEmployees.length : (employees.length > 0 ? employees.length : 1);
       const expectedHoursPerEmployee = (startDate && endDate) 
@@ -443,8 +488,8 @@ export function useBIDataAggregation({
       if (expectedTotalHours > 0 && totalWorkedHours > 0) {
         attRate = Math.min(100, Math.max(0, Math.round((totalWorkedHours / expectedTotalHours) * 100)));
       } else if (totalRecords > 0) {
-        const presentCount = filteredAttendance.filter((a) => a.status !== "ABSENT").length;
-        attRate = Math.round((presentCount / Math.max(totalRecords, staffCount)) * 100);
+        const presentCount = filteredAttendance.filter((a) => (a.status as string) !== "ABSENT" && (a.status as string) !== "CANCELLED" && (a.status as string) !== "VOID" && (a.status as string) !== "REJECTED").length;
+        attRate = Math.min(100, Math.max(0, Math.round((presentCount / totalRecords) * 100)));
       }
 
       const explicitAbsenceRate = totalRecords > 0 ? Math.round((absents / totalRecords) * 100) : 0;
@@ -452,6 +497,13 @@ export function useBIDataAggregation({
       const computedAbsenceRate = Math.max(0, Math.min(100, Math.max(explicitAbsenceRate, hoursDeficitAbsenceRate)));
       const latenessRate = totalRecords > 0 ? Math.max(0, Math.min(100, Math.round((lates / totalRecords) * 100))) : 0;
       const avgHours = totalRecords > 0 ? Math.round((totalWorkedHours / totalRecords) * 10) / 10 : 0;
+
+      console.debug("[useBIDataAggregation] Calculated fallback attendance aggregates:", {
+        staffCount,
+        expectedTotalHours,
+        totalWorkedHours,
+        attRate,
+      });
 
       return {
         attendanceRate: attRate,
@@ -462,28 +514,8 @@ export function useBIDataAggregation({
       };
     }
 
-    if (filteredEmployees.length > 0 && (startDate || endDate || selectedBranchId !== "ALL" || selectedDeptId !== "ALL")) {
-      return {
-        attendanceRate: 0,
-        latenessRate: 0,
-        absenceRate: 100,
-        avgHours: 0,
-        overrides: 0,
-      };
-    }
-
-    if (!biSnapshot?.attendanceRate) {
-      return { attendanceRate: 0, latenessRate: 0, absenceRate: 100, avgHours: 0, overrides: 0 };
-    }
-
-    return {
-      attendanceRate: biSnapshot.attendanceRate.currentValue ?? 0,
-      latenessRate: biSnapshot.latenessRate?.currentValue ?? 0,
-      absenceRate: biSnapshot.absenceRate?.currentValue ?? 0,
-      avgHours: biSnapshot.avgHoursWorked?.currentValue ?? 0,
-      overrides: 0,
-    };
-  }, [filteredAttendance, filteredEmployees.length, employees.length, startDate, endDate, selectedBranchId, selectedDeptId, biSnapshot]);
+    return { attendanceRate: 0, latenessRate: 0, absenceRate: 100, avgHours: 0, overrides: 0 };
+  }, [biSnapshot, filteredAttendance, filteredEmployees.length, employees.length, startDate, endDate]);
 
   // Branch Performance Details
   const branchMetrics: EnrichedBranchMetric[] = useMemo(() => {
@@ -508,7 +540,7 @@ export function useBIDataAggregation({
       const bAtt = filteredAttendance.filter((a) => a.branchId === br.id || (a as any).branch_id === br.id);
 
       const rev = bTxs
-        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+        .filter((t) => (t.type === "INCOME" || (t.type as any) === "REVENUE") && t.status !== "REVERSED" && (t.status as any) !== "VOID")
         .reduce((sum, t) => sum + getTxAmount(t), 0);
 
       const directExp = bTxs
@@ -551,7 +583,7 @@ export function useBIDataAggregation({
         efficiencyScore: margin > 15 ? 90 : 75,
       };
     });
-  }, [isFiltered, biSnapshot?.branchPerformance, branches, currentBusiness?.id, filteredEmployees, filteredTx, filteredAttendance, filteredPayrolls, employees]);
+  }, [biSnapshot?.branchPerformance, branches, currentBusiness?.id, filteredEmployees, filteredTx, filteredAttendance, filteredPayrolls, employees]);
 
   const chartBranchData = useMemo(() => {
     return branchMetrics.map((bm) => {
@@ -598,6 +630,30 @@ export function useBIDataAggregation({
   const departmentMetrics = biSnapshot?.departmentPerformance || [];
 
   const enrichedDepartmentMetrics: EnrichedDepartmentMetric[] = useMemo(() => {
+    if (!isFiltered && biSnapshot?.departmentPerformance && biSnapshot.departmentPerformance.length > 0) {
+      return biSnapshot.departmentPerformance.map((dm: any) => {
+        const rev = dm.revenue || 0;
+        const exp = dm.expenses || 0;
+        const margin = dm.margin !== undefined ? dm.margin : (rev > 0 ? Math.round(((rev - exp) / rev) * 100) : 0);
+        return {
+          departmentId: dm.departmentId,
+          departmentName: dm.departmentName,
+          name: dm.departmentName,
+          employeeCount: dm.employeeCount,
+          totalStaff: dm.employeeCount,
+          averageHours: dm.averageHours || 0,
+          avgHours: dm.averageHours || 0,
+          attendanceRate: dm.attendanceRate || 0,
+          productivityScore: dm.attendanceRate > 0 ? Math.round(dm.attendanceRate * 0.8 + (margin > 10 ? 20 : 10)) : 0,
+          revenue: rev,
+          expenses: exp,
+          margin: margin,
+          formattedRevenue: formatCurrencyValue(rev),
+          formattedExpenses: formatCurrencyValue(exp),
+        };
+      });
+    }
+
     if (!currentBusiness?.id) return [];
     const targetDepts = departments.filter((d) => !currentBusiness?.id || d.business_id === currentBusiness.id);
 
@@ -617,7 +673,7 @@ export function useBIDataAggregation({
       });
 
       const revenue = deptTxs
-        .filter((t) => t.type === "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+        .filter((t) => (t.type === "INCOME" || (t.type as any) === "REVENUE") && t.status !== "REVERSED" && (t.status as any) !== "VOID")
         .reduce((s, t) => s + getTxAmount(t), 0);
 
       const directExp = deptTxs
@@ -683,7 +739,7 @@ export function useBIDataAggregation({
         formattedExpenses: formatCurrencyValue(expenses),
       };
     });
-  }, [departments, filteredEmployees, filteredTx, filteredPayrolls, employees, currentBusiness?.id, formatCurrencyValue]);
+  }, [biSnapshot?.departmentPerformance, departments, filteredEmployees, filteredTx, filteredPayrolls, employees, currentBusiness?.id, formatCurrencyValue]);
 
   // Ranked Employees
   const effectiveRankMetric = rankBy || employeeRankMetric || "productivity";
@@ -698,11 +754,11 @@ export function useBIDataAggregation({
 
   // Cashflow Timeline
   const cashflowTimeline = useMemo(() => {
-    if (!isFiltered && (biSnapshot as any)?.historicalCashflow?.length) {
-      return (biSnapshot as any).historicalCashflow.map((t: any) => ({
-        date: t.date,
-        Revenus: t.revenue,
-        Dépenses: t.expenses,
+    if (!isFiltered && biSnapshot?.historicalTrends && biSnapshot.historicalTrends.length > 0) {
+      return biSnapshot.historicalTrends.map((t) => ({
+        date: t.label || t.key,
+        Revenus: t.gross,
+        Dépenses: t.gross - t.net,
         Net: t.net,
       }));
     }
@@ -715,7 +771,7 @@ export function useBIDataAggregation({
         dateMap[d] = { date: d, Revenus: 0, Dépenses: 0, Net: 0 };
       }
       const amt = getTxAmount(tx);
-      if (tx.type === "INCOME" && tx.status !== "REVERSED" && (tx.status as any) !== "VOID") {
+      if ((tx.type === "INCOME" || (tx.type as any) === "REVENUE") && tx.status !== "REVERSED" && (tx.status as any) !== "VOID") {
         dateMap[d].Revenus += amt;
       } else if (
         tx.status !== "REVERSED" &&
@@ -730,20 +786,6 @@ export function useBIDataAggregation({
       }
     });
 
-    const hasPayrollTx = filteredTx.some(t => t.type === "PAYROLL" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED");
-    if (!hasPayrollTx && filteredPayrolls.length > 0) {
-      filteredPayrolls.forEach((p: any) => {
-        const d = (p.period_end || p.endDate || p.effectiveAccountingDate || p.period_start || p.startDate || p.generated_at || "").split("T")[0];
-        if (d) {
-          if (!dateMap[d]) {
-            dateMap[d] = { date: d, Revenus: 0, Dépenses: 0, Net: 0 };
-          }
-          const pCost = (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || (p.baseSalary || 0));
-          dateMap[d].Dépenses += pCost;
-        }
-      });
-    }
-
     const items = Object.values(dateMap)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((item) => ({
@@ -751,9 +793,8 @@ export function useBIDataAggregation({
         Net: item.Revenus - item.Dépenses,
       }));
 
-    if (items.length > 0) return items;
-    return (biSnapshot as any)?.historicalCashflow || [];
-  }, [isFiltered, biSnapshot, filteredTx, filteredPayrolls]);
+    return items;
+  }, [biSnapshot?.historicalTrends, filteredTx]);
 
   // Expense Categories
   const expenseCategoryChartData = useMemo(() => {
@@ -783,7 +824,7 @@ export function useBIDataAggregation({
     }));
 
     return entries.length > 0 ? entries : [{ name: "Aucune Dépense", value: 1 }];
-  }, [isFiltered, biSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost]);
+  }, [biSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost]);
 
   // Dashboard Chart Data
   const dashboardChartData = useMemo(() => {

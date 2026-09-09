@@ -53,10 +53,10 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
   language = "fr",
 }) => {
   const periods: Array<{ id: PICPeriod; label: string }> = [
-    { id: "7d", label: language === "ht" ? "7 Jou" : language === "en" ? "7 Days" : "7 Jours" },
-    { id: "30d", label: language === "ht" ? "30 Jou" : language === "en" ? "30 Days" : "30 Jours" },
+    { id: "all", label: language === "ht" ? "Tout Dat" : language === "en" ? "All Dates" : "Toutes les dates" },
     { id: "this_month", label: language === "ht" ? "Mwa Sa a" : language === "en" ? "This Month" : "Ce mois" },
     { id: "last_month", label: language === "ht" ? "Mwa Pase" : language === "en" ? "Last Month" : "Mois dernier" },
+    { id: "30d", label: language === "ht" ? "30 Jou" : language === "en" ? "30 Days" : "30 Jours" },
     { id: "quarter", label: language === "ht" ? "Trimès" : language === "en" ? "Quarter" : "Trimestre" },
     { id: "custom", label: language === "ht" ? "Pèsonalize" : language === "en" ? "Custom" : "Personnalisé" },
   ];

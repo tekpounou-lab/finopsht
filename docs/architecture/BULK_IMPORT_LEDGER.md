@@ -48,7 +48,7 @@ EventBus.publish(EventBus.createEvent({
 
 ## 3. CSV Date Normalization Engine (`normalizeCsvDate`)
 
-To support heterogeneous CSV templates (such as US `M/D/YYYY` from QuickBooks/Excel exports like `7/15/2026`, European `DD/MM/YYYY` like `15/07/2026`, and ISO `YYYY-MM-DD`), the import pipeline uses a universal normalizer (`src/utils/dateUtils.ts`):
+To support heterogeneous CSV templates (such as US `M/D/YYYY` from QuickBooks/Excel exports like `7/15/2026`, European `DD/MM/YYYY` like `15/07/2026`, and ISO `YYYY-MM-DD`), the import pipeline uses the universal date normalizer (`src/utils/dateNormalization.ts`):
 
 1. **Format Priority Order**:
    - **ISO Format (`YYYY-MM-DD` / `YYYY/MM/DD`)**: Detected via regex `^(\d{4})[-/](\d{1,2})[-/](\d{1,2})`.

@@ -400,8 +400,11 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             {normalizedActiveTab === "employeeSpace" && (
               <MyWorkspace
                 employee={
-                  employees.find((e) => e.firebase_uid === authUser?.uid || (e.email && authUser?.email && e.email.toLowerCase() === authUser.email.toLowerCase())) ||
-                  employees[0]
+                  employees.find((e) => 
+                    (e.firebase_uid && authUser?.uid && e.firebase_uid === authUser.uid) || 
+                    (e.id && authUser?.uid && e.id === authUser.uid) ||
+                    (e.email && authUser?.email && e.email.toLowerCase().trim() === authUser.email.toLowerCase().trim())
+                  )
                 }
                 employees={employees}
                 branches={liveBranches}

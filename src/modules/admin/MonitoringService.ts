@@ -61,13 +61,17 @@ export class MonitoringService {
 
   private startReporting() {
     setInterval(async () => {
-      const health: ModuleHealth = {
-        name: "MONITORING_SERVICE",
-        status: this.metrics.errorsCaught > 0 ? "YELLOW" : "GREEN",
-        lastUpdate: new Date().toISOString(),
-        metrics: { ...this.metrics }
-      };
-      await AdminRepository.reportHealth(health);
+      try {
+        const health: ModuleHealth = {
+          name: "MONITORING_SERVICE",
+          status: this.metrics.errorsCaught > 0 ? "YELLOW" : "GREEN",
+          lastUpdate: new Date().toISOString(),
+          metrics: { ...this.metrics }
+        };
+        await AdminRepository.reportHealth(health);
+      } catch {
+        // Prevent background interval error from bubbling up
+      }
     }, 60000); // Report every minute
   }
 }

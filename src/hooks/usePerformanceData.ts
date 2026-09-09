@@ -13,6 +13,7 @@ import {
   selectExpertMetrics,
 } from "../domains/performance/selectors";
 import { useBusinessContext } from "../contexts/BusinessContext";
+import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
 
 /**
  * Calculates start and end dates from a standard period preset
@@ -23,22 +24,27 @@ export function calculateDateRangeForPeriod(period: PICPeriod): { startDate: str
   const start = new Date(today);
 
   switch (period) {
+    case "all":
+      return { startDate: "", endDate: "" };
     case "7d":
       start.setDate(today.getDate() - 7);
       return { startDate: start.toISOString().split("T")[0], endDate: endIso };
     case "30d":
       start.setDate(today.getDate() - 30);
       return { startDate: start.toISOString().split("T")[0], endDate: endIso };
-    case "this_month":
+    case "this_month": {
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      return { startDate: startOfMonth.toISOString().split("T")[0], endDate: endIso };
-    case "last_month":
+      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { startDate: startOfMonth.toISOString().split("T")[0], endDate: endOfMonth.toISOString().split("T")[0] };
+    }
+    case "last_month": {
       const firstOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       const lastOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
       return {
         startDate: firstOfLastMonth.toISOString().split("T")[0],
         endDate: lastOfLastMonth.toISOString().split("T")[0],
       };
+    }
     case "quarter":
       start.setDate(today.getDate() - 90);
       return { startDate: start.toISOString().split("T")[0], endDate: endIso };
@@ -47,8 +53,7 @@ export function calculateDateRangeForPeriod(period: PICPeriod): { startDate: str
       return { startDate: start.toISOString().split("T")[0], endDate: endIso };
     case "custom":
     default:
-      start.setDate(today.getDate() - 30);
-      return { startDate: start.toISOString().split("T")[0], endDate: endIso };
+      return { startDate: "", endDate: "" };
   }
 }
 
@@ -73,6 +78,35 @@ export function usePerformanceData(businessIdProp?: string) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshIndex, setRefreshIndex] = useState<number>(0);
+
+  const { setFilters: setExecutiveFilters } = useExecutiveFilters();
+
+  // Harmonize ExecutiveFilterContext whenever PIC filters update
+  useEffect(() => {
+    setExecutiveFilters((prev) => {
+      if (
+        prev.branchId === filters.branchId &&
+        prev.departmentId === filters.departmentId &&
+        prev.startDate === filters.startDate &&
+        prev.endDate === filters.endDate
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        branchId: filters.branchId,
+        departmentId: filters.departmentId,
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      };
+    });
+  }, [
+    filters.branchId,
+    filters.departmentId,
+    filters.startDate,
+    filters.endDate,
+    setExecutiveFilters,
+  ]);
 
   const [rawDataSet, setRawDataSet] = useState<RawPerformanceDataSet>({
     employees: [],
@@ -237,6 +271,42 @@ export function usePerformanceData(businessIdProp?: string) {
     return selectExpertMetrics(rawDataSet, filters);
   }, [rawDataSet, filters]);
 
+  const branches = useMemo(() => {
+    const list = [...(rawDataSet.branches.length > 0 ? rawDataSet.branches : (ctxBranches || []))];
+    const existingIds = new Set(list.map((b) => b.id));
+
+    const checkAndAdd = (id?: string, name?: string) => {
+      if (id && id !== "ALL" && !existingIds.has(id)) {
+        existingIds.add(id);
+        list.push({ id, name: name || id, business_id: businessId || "" } as any);
+      }
+    };
+
+    (rawDataSet.employees || []).forEach((e: any) => checkAndAdd(e.branchId || e.branch_id, e.branchName || e.branch_name));
+    (rawDataSet.payrollRecords || []).forEach((p: any) => checkAndAdd(p.branchId || p.branch_id, p.branchName || p.branch_name));
+    (rawDataSet.transactions || []).forEach((t: any) => checkAndAdd(t.branchId || t.branch_id, t.branchName || t.branch_name));
+
+    return list;
+  }, [rawDataSet, ctxBranches, businessId]);
+
+  const departments = useMemo(() => {
+    const list = [...(rawDataSet.departments.length > 0 ? rawDataSet.departments : (ctxDepartments || []))];
+    const existingIds = new Set(list.map((d) => d.id));
+
+    const checkAndAdd = (id?: string, name?: string) => {
+      if (id && id !== "ALL" && !existingIds.has(id)) {
+        existingIds.add(id);
+        list.push({ id, name: name || id, business_id: businessId || "" } as any);
+      }
+    };
+
+    (rawDataSet.employees || []).forEach((e: any) => checkAndAdd(e.departmentId || e.department_id, e.departmentName || e.department_name));
+    (rawDataSet.payrollRecords || []).forEach((p: any) => checkAndAdd(p.departmentId || p.department_id, p.departmentName || p.department_name));
+    (rawDataSet.transactions || []).forEach((t: any) => checkAndAdd(t.departmentId || t.department_id, t.departmentName || t.department_name));
+
+    return list;
+  }, [rawDataSet, ctxDepartments, businessId]);
+
   return {
     filters,
     setPeriod,
@@ -252,7 +322,7 @@ export function usePerformanceData(businessIdProp?: string) {
     rawDataSet,
     simplifiedMetrics,
     expertMetrics,
-    branches: rawDataSet.branches.length > 0 ? rawDataSet.branches : (ctxBranches || []),
-    departments: rawDataSet.departments.length > 0 ? rawDataSet.departments : (ctxDepartments || []),
+    branches,
+    departments,
   };
 }

@@ -609,7 +609,7 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
             className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 focus:outline-none focus:border-cyan-500"
           >
             <option value="ALL">Tous les Départements</option>
-            {departments.filter((d) => !business || d.business_id === business.id).map((d) => (
+            {departments.filter((d) => !business || d.business_id === business.id || (d as any).businessId === business.id).map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
               </option>
@@ -623,7 +623,7 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
             className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 focus:outline-none focus:border-cyan-500"
           >
             <option value="ALL">Toutes les Succursales</option>
-            {branches.filter((b) => !business || b.business_id === business.id).map((b) => (
+            {branches.filter((b) => !business || b.business_id === business.id || (b as any).businessId === business.id).map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>

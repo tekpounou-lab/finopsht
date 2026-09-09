@@ -171,7 +171,7 @@ export function usePayrollRuns({
     ];
 
     return combinedRecords.filter((r) => {
-      const isCycleMatch = r.cycleId === activeCycle.id || r.payroll_cycle_id === activeCycle.id;
+      const isCycleMatch = r.cycleId === activeCycle.id || r.payroll_cycle_id === activeCycle.id || (r as any).cycle_id === activeCycle.id;
       if (!isCycleMatch) return false;
       if ((r as any).deleted || (r as any).deleted === "true") return false;
       if (r.isExcluded) return false;

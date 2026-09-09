@@ -143,17 +143,10 @@ export function useAttendanceRecords(business_id: string | undefined) {
 
 export function usePayrollRecords(business_id: string | undefined) {
   const { identity } = useIdentity();
-  const filters = useMemo(() => {
+  const filters: QueryFilter[] = useMemo(() => {
     if (!business_id) return [];
-    const arr: QueryFilter[] = [{ field: "business_id", operator: "==", value: business_id }];
-    if (identity?.role === "EMPLOYEE") {
-      const empId = identity.employee?.id || identity.user_uid;
-      if (empId) {
-        arr.push({ field: "employeeId", operator: "==", value: empId });
-      }
-    }
-    return arr;
-  }, [business_id, identity?.role, identity?.employee?.id, identity?.user_uid]);
+    return [{ field: "business_id", operator: "==", value: business_id }];
+  }, [business_id]);
 
   const { data } = useRealtimeSubscription<PayrollRecord>(
     "payroll_records",
@@ -164,9 +157,25 @@ export function usePayrollRecords(business_id: string | undefined) {
       deps: [identity?.user_uid]
     }
   );
+
   return useMemo(() => {
-    return (data || []).filter((r) => !(r as any).deleted && (r as any).deleted !== "true");
-  }, [data]);
+    const rawList = (data || []).filter((r) => !(r as any).deleted && (r as any).deleted !== "true");
+    
+    // RBAC Scope Check for EMPLOYEE role
+    if (identity?.role === "EMPLOYEE") {
+      const empId = identity.employee?.id || identity.user_uid;
+      const userEmail = (identity.employee?.email || identity.email || "").toLowerCase().trim();
+      
+      return rawList.filter((r) => 
+        r.employeeId === empId || 
+        r.employee_id === empId || 
+        (r as any).user_uid === empId ||
+        (userEmail && (r as any).employee_email && (r as any).employee_email.toLowerCase().trim() === userEmail)
+      );
+    }
+
+    return rawList;
+  }, [data, identity?.role, identity?.employee?.id, identity?.employee?.email, identity?.user_uid, identity?.email]);
 }
 
 export function useEvents(business_id: string | undefined) {

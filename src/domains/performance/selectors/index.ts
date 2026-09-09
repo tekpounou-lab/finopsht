@@ -9,11 +9,18 @@ import {
   EmployeePerformanceRanking,
   CrossTableMatrixCell,
 } from "../types";
+import { AnalyticsEngine } from "../../analytics/services/AnalyticsEngine";
+import { toDateOnly } from "../../../utils/dateNormalization";
 
 /**
  * Normalizes filter string for case-insensitive matching
  */
 const normalize = (str?: string) => (str || "").toLowerCase().trim();
+
+/**
+ * Robust date string normalizer (YYYY-MM-DD)
+ */
+export const normalizeDateStr = (rawDate: any): string => toDateOnly(rawDate);
 
 /**
  * Filter raw dataset by business filters (Period, Branch, Department, MetricType, Search)
@@ -62,7 +69,7 @@ export function selectFilteredDataSet(
 
   // 2. Filter Ledger Transactions
   const filteredTransactions = (raw.transactions || []).filter((tx) => {
-    if (tx.status === "REVERSED" || tx.status === "VOID") return false;
+    if (tx.status === "REVERSED" || tx.status === "VOID" || tx.status === "CANCELLED") return false;
 
     // Branch Filter
     if (branchId && branchId !== "ALL") {
@@ -75,8 +82,9 @@ export function selectFilteredDataSet(
       if (txDept && txDept !== departmentId) return false;
     }
     // Date Range Filter
-    if (tx.date) {
-      const txDate = tx.date.split("T")[0];
+    const rawTxDate = tx.date || tx.transaction_date || tx.transactionDate || tx.created_at || tx.createdAt || tx.timestamp;
+    if (rawTxDate) {
+      const txDate = normalizeDateStr(rawTxDate);
       if (startDate && txDate < startDate) return false;
       if (endDate && txDate > endDate) return false;
     }
@@ -109,14 +117,15 @@ export function selectFilteredDataSet(
       if (pDept && pDept !== departmentId) return false;
     }
     // Date Filter (cycle or payment date)
-    const pDate = (p.paymentDate || p.periodEndDate || p.createdAt || "").split("T")[0];
+    const rawPDate = p.paymentDate || p.periodEndDate || p.createdAt || p.created_at || p.date;
+    const pDate = normalizeDateStr(rawPDate);
     if (pDate) {
       if (startDate && pDate < startDate) return false;
       if (endDate && pDate > endDate) return false;
     }
     // Employee Match Filter
-    if (filteredEmployees.length > 0 && p.employeeId && !employeeIdSet.has(p.employeeId)) {
-      // If branch or dept was filtered, ensure payroll employee is within the set
+    const pEmpId = p.employeeId || p.employee_id;
+    if (filteredEmployees.length > 0 && pEmpId && !employeeIdSet.has(pEmpId)) {
       if ((branchId && branchId !== "ALL") || (departmentId && departmentId !== "ALL") || normalizedQuery) {
         return false;
       }
@@ -132,13 +141,16 @@ export function selectFilteredDataSet(
       if (attBranch && attBranch !== branchId) return false;
     }
     // Date Filter
-    if (att.date) {
-      if (startDate && att.date < startDate) return false;
-      if (endDate && att.date > endDate) return false;
+    const rawAttDate = att.date || att.timestamp || att.created_at || att.createdAt;
+    const attDate = normalizeDateStr(rawAttDate);
+    if (attDate) {
+      if (startDate && attDate < startDate) return false;
+      if (endDate && attDate > endDate) return false;
     }
     // Employee match
-    if (att.employeeId && (branchId !== "ALL" || departmentId !== "ALL" || normalizedQuery)) {
-      if (!employeeIdSet.has(att.employeeId)) return false;
+    const attEmpId = att.employeeId || att.employee_id;
+    if (attEmpId && ((branchId && branchId !== "ALL") || (departmentId && departmentId !== "ALL") || normalizedQuery)) {
+      if (!employeeIdSet.has(attEmpId)) return false;
     }
     return true;
   });
@@ -162,94 +174,68 @@ export function selectFilteredDataSet(
 }
 
 /**
- * Extracts numeric transaction amount
- */
-const getTxAmount = (tx: any): number => {
-  if (typeof tx.amount === "number" && !isNaN(tx.amount)) return tx.amount;
-  if (typeof tx.amount_cents === "number" && !isNaN(tx.amount_cents)) return tx.amount_cents / 100;
-  if (typeof tx.amountCents === "number" && !isNaN(tx.amountCents)) return tx.amountCents / 100;
-  if (typeof tx.total === "number" && !isNaN(tx.total)) return tx.total;
-  if (typeof tx.debit === "number" && tx.debit > 0) return tx.debit;
-  if (typeof tx.credit === "number" && tx.credit > 0) return tx.credit;
-  return 0;
-};
-
-/**
- * Calculates simplified overview metrics (Mode simplifié)
+ * Calculates simplified overview metrics (Mode simplifié) using AnalyticsEngine SSOT
  */
 export function selectSimplifiedMetrics(
   raw: RawPerformanceDataSet,
   filters: PICFilters
 ): SimplifiedMetrics {
   const filtered = selectFilteredDataSet(raw, filters);
-  const { employees, transactions, payrollRecords, attendanceRecords } = filtered;
+  const { employees, transactions, payrollRecords, attendanceRecords, branches, departments } = filtered;
 
-  // Revenue & Expenses
-  let totalRevenue = 0;
-  let totalExpenses = 0;
+  const businessId =
+    employees[0]?.business_id ||
+    transactions[0]?.business_id ||
+    payrollRecords[0]?.business_id ||
+    branches[0]?.business_id ||
+    departments[0]?.business_id ||
+    "";
 
-  transactions.forEach((tx) => {
-    const amt = getTxAmount(tx);
-    if (tx.type === "INCOME") {
-      totalRevenue += amt;
-    } else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") {
-      totalExpenses += amt;
-    }
-  });
+  // Generate SSOT snapshot via AnalyticsEngine
+  const snap = AnalyticsEngine.generateSnapshot(
+    "CUSTOM",
+    { startDate: filters.startDate, endDate: filters.endDate },
+    employees,
+    transactions,
+    attendanceRecords,
+    payrollRecords,
+    branches,
+    departments,
+    [],
+    businessId,
+    "fr"
+  );
 
-  // Payroll Mass
-  let totalPayroll = 0;
+  const totalRevenue = Math.round(snap.revenue.currentValue);
+  const totalExpenses = Math.round(snap.expenses.currentValue);
+  const netProfit = Math.round(snap.profit.currentValue);
+  const profitMargin = Math.round(snap.profitMargin);
+  const totalPayroll = Math.round(snap.payrollCost.currentValue);
+  const activeHeadcount = snap.activeStaff.currentValue || employees.filter((e) => e.status === "ACTIVE" || !e.status).length;
+  const attendanceRate = snap.attendanceRate.currentValue;
+  const averageHoursWorked = snap.avgHoursWorked.currentValue;
+
+  const inactiveCount = employees.filter((e) => e.status === "TERMINATED" || e.status === "INACTIVE").length;
+  const turnoverRate = employees.length > 0 ? Math.round((inactiveCount / employees.length) * 100) : 0;
+
   let totalCommissions = 0;
   let overtimeHoursTotal = 0;
-
-  if (payrollRecords.length > 0) {
-    payrollRecords.forEach((p: any) => {
-      const net = p.netPay || (p.net_pay_cents ? p.net_pay_cents / 100 : 0) || (p.net_salary_cents ? p.net_salary_cents / 100 : 0);
-      const gross = p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || net;
-      totalPayroll += gross;
-      totalCommissions += p.commissionAmount || p.commissionsHTG || (p.commission_cents ? p.commission_cents / 100 : 0) || 0;
-      overtimeHoursTotal += (p.overtimeHours150 || 0) + (p.overtimeHours200 || 0);
-    });
-  } else {
-    // Derive from employee base salaries if no payroll records generated yet
-    employees.forEach((emp: any) => {
-      const base = emp.baseSalary || emp.salary || (emp.base_salary_cents ? emp.base_salary_cents / 100 : 0) || 0;
-      totalPayroll += base;
-    });
-  }
-
-  // Active Headcount & Turnover
-  const activeEmployees = employees.filter((e) => e.status === "ACTIVE" || e.status === "active" || !e.status);
-  const inactiveEmployees = employees.filter((e) => e.status === "TERMINATED" || e.status === "INACTIVE");
-  const activeHeadcount = activeEmployees.length;
-  const turnoverRate = employees.length > 0 ? Math.round((inactiveEmployees.length / employees.length) * 100) : 0;
-
-  // Attendance Rate
-  let attendanceRate = 95;
-  let averageHoursWorked = 8.0;
-
-  if (attendanceRecords.length > 0) {
-    const presentCount = attendanceRecords.filter((a) => a.status === "PRESENT" || a.status === "ON_DUTY" || !a.status).length;
-    attendanceRate = Math.round((presentCount / attendanceRecords.length) * 100);
-    const totalHours = attendanceRecords.reduce((acc: number, curr: any) => acc + (curr.realHours || curr.hoursWorked || curr.hours_worked || curr.totalHours || 8), 0);
-    averageHoursWorked = Math.round((totalHours / attendanceRecords.length) * 10) / 10;
-  }
-
-  // Net Profit & Margin
-  const netProfit = totalRevenue - totalExpenses;
-  const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
+  payrollRecords.forEach((p: any) => {
+    totalCommissions += p.commissionAmount || p.commissionsHTG || (p.commission_cents ? p.commission_cents / 100 : 0) || 0;
+    overtimeHoursTotal += (p.overtimeHours150 || 0) + (p.overtimeHours200 || 0);
+  });
 
   const totalRecordsCount = employees.length + transactions.length + payrollRecords.length + attendanceRecords.length;
   const isDataAvailable = totalRecordsCount > 0;
 
   const metrics: SimplifiedMetrics = {
-    totalPayroll: Math.round(totalPayroll),
+    totalPayroll,
     activeHeadcount,
     turnoverRate,
     attendanceRate,
-    totalRevenue: Math.round(totalRevenue),
-    totalExpenses: Math.round(totalExpenses),
-    netProfit: Math.round(netProfit),
+    totalRevenue,
+    totalExpenses,
+    netProfit,
     profitMargin,
     averageHoursWorked,
     overtimeHoursTotal,
@@ -258,12 +244,12 @@ export function selectSimplifiedMetrics(
     totalRecordsCount,
   };
 
-  console.info(`[PIC] [Selectors] selectSimplifiedMetrics output:`, metrics);
+  console.info(`[PIC] [Selectors] selectSimplifiedMetrics output (SSOT):`, metrics);
   return metrics;
 }
 
 /**
- * Calculates comprehensive expert metrics & multi-dimensional tables (Mode expert)
+ * Calculates comprehensive expert metrics & multi-dimensional tables (Mode expert) using AnalyticsEngine SSOT
  */
 export function selectExpertMetrics(
   raw: RawPerformanceDataSet,
@@ -273,236 +259,124 @@ export function selectExpertMetrics(
   const filtered = selectFilteredDataSet(raw, filters);
   const { employees, transactions, payrollRecords, attendanceRecords, departments: allDepts, branches: allBranches } = filtered;
 
-  // Helper maps for branch & department names
-  const deptMap = new Map<string, string>();
-  allDepts.forEach((d) => deptMap.set(d.id, d.name || d.label || d.id));
+  const businessId =
+    employees[0]?.business_id ||
+    transactions[0]?.business_id ||
+    payrollRecords[0]?.business_id ||
+    allBranches[0]?.business_id ||
+    allDepts[0]?.business_id ||
+    "";
 
-  const branchMap = new Map<string, string>();
-  allBranches.forEach((b) => branchMap.set(b.id, b.name || b.location || b.id));
+  // Generate SSOT snapshot via AnalyticsEngine
+  const snap = AnalyticsEngine.generateSnapshot(
+    "CUSTOM",
+    { startDate: filters.startDate, endDate: filters.endDate },
+    employees,
+    transactions,
+    attendanceRecords,
+    payrollRecords,
+    allBranches,
+    allDepts,
+    [],
+    businessId,
+    "fr"
+  );
 
   // 1. Department Breakdown
-  const deptAgg: Record<string, DepartmentMetricBreakdown> = {};
-  
-  allDepts.forEach((d) => {
-    deptAgg[d.id] = {
-      departmentId: d.id,
-      departmentName: d.name || d.id,
-      headcount: 0,
-      payroll: 0,
-      attendanceRate: 95,
-      revenue: 0,
-      expenses: 0,
-      netMargin: 0,
-      commissions: 0,
+  const departments: DepartmentMetricBreakdown[] = (snap.departmentPerformance || []).map((d: any) => {
+    const rev = d.revenue || 0;
+    const exp = d.expenses || (d.payrollCost || 0) + (d.nonPayrollExpenses || 0);
+    const margin = rev > 0 ? Math.round(((rev - exp) / rev) * 100) : 0;
+    return {
+      departmentId: d.departmentId || d.id || "gen",
+      departmentName: d.departmentName || d.name || "Département",
+      headcount: d.employeeCount || 0,
+      payroll: Math.round(d.payrollCost ?? d.payroll ?? d.expenses ?? 0),
+      attendanceRate: d.attendanceRate || 95,
+      revenue: Math.round(rev),
+      expenses: Math.round(exp),
+      netMargin: d.margin !== undefined ? Math.round(d.margin) : margin,
+      commissions: Math.round(d.commissions || 0),
     };
   });
-
-  employees.forEach((emp) => {
-    const deptId = emp.departmentId || emp.department_id || "unassigned";
-    if (!deptAgg[deptId]) {
-      deptAgg[deptId] = {
-        departmentId: deptId,
-        departmentName: deptMap.get(deptId) || deptId,
-        headcount: 0,
-        payroll: 0,
-        attendanceRate: 95,
-        revenue: 0,
-        expenses: 0,
-        netMargin: 0,
-        commissions: 0,
-      };
-    }
-    deptAgg[deptId].headcount += 1;
-    deptAgg[deptId].payroll += (emp.baseSalary || emp.salary || 0);
-  });
-
-  transactions.forEach((tx) => {
-    const deptId = tx.departmentId || tx.department_id || "unassigned";
-    if (deptAgg[deptId]) {
-      const amt = getTxAmount(tx);
-      if (tx.type === "INCOME") deptAgg[deptId].revenue += amt;
-      else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") deptAgg[deptId].expenses += amt;
-    }
-  });
-
-  payrollRecords.forEach((p) => {
-    const deptId = p.departmentId || p.department_id || "unassigned";
-    if (deptAgg[deptId]) {
-      deptAgg[deptId].commissions += (p.commissionAmount || p.commissionsHTG || 0);
-    }
-  });
-
-  const departments: DepartmentMetricBreakdown[] = Object.values(deptAgg)
-    .filter((d) => d.headcount > 0 || d.revenue > 0 || d.expenses > 0)
-    .map((d) => ({
-      ...d,
-      netMargin: d.revenue > 0 ? Math.round(((d.revenue - d.expenses) / d.revenue) * 100) : 0,
-    }))
-    .sort((a, b) => b.revenue - a.revenue);
 
   // 2. Branch Breakdown
-  const branchAgg: Record<string, BranchMetricBreakdown> = {};
-
-  allBranches.forEach((b) => {
-    branchAgg[b.id] = {
-      branchId: b.id,
-      branchName: b.name || b.location || b.id,
-      headcount: 0,
-      payroll: 0,
-      attendanceRate: 95,
-      revenue: 0,
-      efficiencyScore: 88,
+  const branches: BranchMetricBreakdown[] = (snap.branchPerformance || []).map((b: any) => {
+    return {
+      branchId: b.branchId || b.id || "gen",
+      branchName: b.branchName || b.name || "Succursale",
+      headcount: b.employeeCount || 0,
+      payroll: Math.round(b.payrollCost ?? b.payroll ?? b.expenses ?? 0),
+      attendanceRate: b.attendanceRate || 95,
+      revenue: Math.round(b.revenue || 0),
+      efficiencyScore: b.efficiencyScore || 80,
     };
   });
 
-  employees.forEach((emp) => {
-    const bId = emp.branchId || emp.branch_id || "main_hq";
-    if (!branchAgg[bId]) {
-      branchAgg[bId] = {
-        branchId: bId,
-        branchName: branchMap.get(bId) || bId,
-        headcount: 0,
-        payroll: 0,
-        attendanceRate: 95,
-        revenue: 0,
-        efficiencyScore: 88,
-      };
-    }
-    branchAgg[bId].headcount += 1;
-    branchAgg[bId].payroll += (emp.baseSalary || emp.salary || 0);
+  // 3. Historical Trends
+  const trends: TrendDataPoint[] = (snap.historicalTrends || []).map((t: any) => {
+    return {
+      date: t.label || t.key || "",
+      label: t.label || t.key || "",
+      payroll: Math.round(t.payroll || 0),
+      revenue: Math.round(t.gross || 0),
+      headcount: t.headcount || 0,
+      attendanceRate: t.attendanceRate || 95,
+      expenses: Math.round(t.expenses || 0),
+    };
   });
-
-  transactions.forEach((tx) => {
-    const bId = tx.branchId || tx.branch_id || "main_hq";
-    if (branchAgg[bId]) {
-      const amt = getTxAmount(tx);
-      if (tx.type === "INCOME") branchAgg[bId].revenue += amt;
-    }
-  });
-
-  const branches: BranchMetricBreakdown[] = Object.values(branchAgg)
-    .filter((b) => b.headcount > 0 || b.revenue > 0)
-    .map((b) => ({
-      ...b,
-      efficiencyScore: b.headcount > 0 ? Math.min(100, Math.round((b.revenue / (b.headcount * 50000 || 1)) * 100)) : 80,
-    }))
-    .sort((a, b) => b.revenue - a.revenue);
-
-  // 3. Trends Series
-  const dateMap: Record<string, TrendDataPoint> = {};
-
-  transactions.forEach((tx) => {
-    const d = (tx.date || new Date().toISOString()).split("T")[0];
-    if (!dateMap[d]) {
-      dateMap[d] = {
-        date: d,
-        label: d.substring(5), // MM-DD
-        payroll: 0,
-        revenue: 0,
-        headcount: employees.length,
-        attendanceRate: kpis.attendanceRate,
-        expenses: 0,
-      };
-    }
-    const amt = getTxAmount(tx);
-    if (tx.type === "INCOME") dateMap[d].revenue += amt;
-    else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") dateMap[d].expenses += amt;
-  });
-
-  payrollRecords.forEach((p) => {
-    const d = (p.paymentDate || p.periodEndDate || "").split("T")[0];
-    if (d) {
-      if (!dateMap[d]) {
-        dateMap[d] = {
-          date: d,
-          label: d.substring(5),
-          payroll: 0,
-          revenue: 0,
-          headcount: employees.length,
-          attendanceRate: kpis.attendanceRate,
-          expenses: 0,
-        };
-      }
-      dateMap[d].payroll += (p.netPay || p.grossSalary || 0);
-    }
-  });
-
-  let trends: TrendDataPoint[] = Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date));
-  if (trends.length === 0) {
-    // Generate empty baseline trend points for visualization
-    const today = new Date();
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i * 5);
-      const iso = d.toISOString().split("T")[0];
-      trends.push({
-        date: iso,
-        label: iso.substring(5),
-        payroll: Math.round(kpis.totalPayroll / 7),
-        revenue: Math.round(kpis.totalRevenue / 7),
-        headcount: kpis.activeHeadcount,
-        attendanceRate: kpis.attendanceRate,
-        expenses: Math.round(kpis.totalExpenses / 7),
-      });
-    }
-  }
 
   // 4. Employee Rankings
-  const employeeRankings: EmployeePerformanceRanking[] = employees.map((emp, index) => {
-    const deptName = deptMap.get(emp.departmentId || emp.department_id) || "Général";
-    const bName = branchMap.get(emp.branchId || emp.branch_id) || "Siège";
-    const empPayrolls = payrollRecords.filter((p) => p.employeeId === emp.id);
-    const empComm = empPayrolls.reduce((acc, p) => acc + (p.commissionAmount || p.commissionsHTG || 0), 0);
-    const empHours = empPayrolls.reduce((acc, p) => acc + (p.hoursWorked || 160), 160);
-    const salesVolume = empComm > 0 ? empComm * 15 : (emp.baseSalary || 25000) * 1.8;
-    const productivityIndex = Math.min(100, Math.round(75 + (empComm > 0 ? 20 : 10) + (index % 10)));
-
+  const employeeRankings: EmployeePerformanceRanking[] = (snap.employeeScorecards || []).map((s: any, idx: number) => {
     return {
-      employeeId: emp.id,
-      employeeName: emp.name || `${emp.firstName || ""} ${emp.lastName || ""}`.trim() || `Employé ${emp.id}`,
-      departmentId: emp.departmentId || emp.department_id || "unassigned",
-      departmentName: deptName,
-      branchId: emp.branchId || emp.branch_id || "main_hq",
-      branchName: bName,
-      totalHours: empHours,
-      attendanceScore: 92 + (index % 7),
-      salesVolume: Math.round(salesVolume),
-      commission: Math.round(empComm),
-      productivityIndex,
-      rank: index + 1,
+      employeeId: s.employeeId || `emp_${idx}`,
+      employeeName: s.employeeName || "Collaborateur",
+      departmentId: s.departmentId || "",
+      departmentName: s.departmentName || "Non assigné",
+      branchId: s.branchId || "",
+      branchName: s.branchName || "Siège",
+      totalHours: s.totalHours ?? s.hoursWorked ?? 0,
+      attendanceScore: s.attendanceConsistencyScore ?? s.attendanceScore ?? 95,
+      salesVolume: Math.round(s.salesVolume || 0),
+      commission: Math.round(s.commissions ?? s.commissionEarned ?? 0),
+      productivityIndex: s.productivityIndex || 85,
+      rank: s.rank || idx + 1,
     };
-  }).sort((a, b) => b.productivityIndex - a.productivityIndex);
+  });
 
-  // 5. Cross-Table Matrix (Department x Branch)
+  // 5. Cross Table Matrix (Dept x Branch)
   const crossTableMatrix: CrossTableMatrixCell[] = [];
   allDepts.forEach((dept) => {
     allBranches.forEach((branch) => {
-      const matchEmployees = employees.filter(
+      const deptEmp = employees.filter(
         (e) =>
           (e.departmentId === dept.id || e.department_id === dept.id) &&
           (e.branchId === branch.id || e.branch_id === branch.id)
       );
-
-      const cellHeadcount = matchEmployees.length;
-      const cellPayroll = matchEmployees.reduce((acc, e) => acc + (e.baseSalary || e.salary || 0), 0);
-      const cellRevenue = cellHeadcount * 45000;
-
-      if (cellHeadcount > 0 || cellPayroll > 0) {
+      if (deptEmp.length > 0) {
+        const empScorecards = (snap.employeeScorecards || []).filter((s: any) =>
+          deptEmp.some((e) => e.id === s.employeeId)
+        );
+        const matrixRev = empScorecards.reduce((sum: number, s: any) => sum + (s.salesVolume || 0), 0);
+        const matrixPayroll = empScorecards.reduce((sum: number, s: any) => sum + (s.payrollCost || s.baseSalary || 0), 0);
+        const matrixAtt = empScorecards.length > 0
+          ? Math.round(empScorecards.reduce((sum: number, s: any) => sum + (s.attendanceConsistencyScore || 0), 0) / empScorecards.length)
+          : 95;
         crossTableMatrix.push({
           departmentId: dept.id,
           departmentName: dept.name || dept.id,
           branchId: branch.id,
           branchName: branch.name || branch.id,
-          headcount: cellHeadcount,
-          payroll: cellPayroll,
-          revenue: cellRevenue,
-          attendanceRate: 95,
+          headcount: deptEmp.length,
+          payroll: Math.round(matrixPayroll),
+          revenue: Math.round(matrixRev),
+          attendanceRate: matrixAtt,
         });
       }
     });
   });
 
-  const expertResult: ExpertMetrics = {
+  return {
     kpis,
     departments,
     branches,
@@ -511,7 +385,4 @@ export function selectExpertMetrics(
     crossTableMatrix,
     isDataAvailable: kpis.isDataAvailable,
   };
-
-  console.info(`[PIC] [Selectors] selectExpertMetrics completed with ${departments.length} depts, ${branches.length} branches, ${employeeRankings.length} rankings`);
-  return expertResult;
 }

@@ -57,20 +57,28 @@ export async function checkFirestoreLatency() {
   isChecking = true;
   const start = performance.now();
   try {
-    // Perform a lightweight metadata-only read with a 5-second timeout safeguard
+    // Perform a lightweight metadata-only read with an 8-second graceful fallback
     const testRef = doc(db, "_health_heartbeat_", "ping");
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Firestore latency ping timeout")), 5000)
+    const getDocPromise = getDoc(testRef).catch(() => null);
+    const timeoutPromise = new Promise<null>((resolve) => 
+      setTimeout(() => resolve(null), 8000)
     );
-    await Promise.race([getDoc(testRef), timeoutPromise]);
+    
+    const snap = await Promise.race([getDocPromise, timeoutPromise]);
     const end = performance.now();
     
-    const oldStatus = healthState.status;
-    healthState.status = "CONNECTED";
-    healthState.latency = Math.round(end - start);
-    
-    if (oldStatus === "DISCONNECTED") {
-      healthState.reconnects++;
+    if (snap && typeof snap.exists === "function") {
+      const oldStatus = healthState.status;
+      healthState.status = "CONNECTED";
+      healthState.latency = Math.round(end - start);
+      
+      if (oldStatus === "DISCONNECTED") {
+        healthState.reconnects++;
+      }
+    } else {
+      // Soft fallback without throwing or polluting console
+      healthState.status = "DISCONNECTED";
+      healthState.failedStreams++;
     }
   } catch (error) {
     // Soft fallback without polluting console

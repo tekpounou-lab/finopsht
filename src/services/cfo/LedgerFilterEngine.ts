@@ -1,5 +1,6 @@
 import { LedgerTransaction, Branch, Department, Employee, Role } from "../../types";
 import { LedgerFilterParams } from "../../components/ledger/types";
+import { toDateOnly, normalizeDateFilter, extractTxDateString as extractDateStr } from "../../utils/dateNormalization";
 
 export type { LedgerFilterParams };
 
@@ -25,37 +26,10 @@ export interface LedgerFilterContext {
 
 /**
  * Safe date string extractor handling ISO strings, Firestore Timestamps, and timestamps.
+ * Delegated to SSOT dateNormalization module.
  */
 export function extractTxDateString(rawDate: any): string {
-  if (!rawDate) return '';
-  if (typeof rawDate === 'string') {
-    if (rawDate.includes('T')) return rawDate.split('T')[0];
-    if (rawDate.length >= 10 && /^\d{4}[-/]\d{2}[-/]\d{2}/.test(rawDate)) {
-      return rawDate.substring(0, 10).replace(/\//g, '-');
-    }
-    const d = new Date(rawDate);
-    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-    return rawDate;
-  }
-  if (typeof rawDate === 'number') {
-    const d = new Date(rawDate);
-    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-  }
-  if (rawDate && typeof rawDate.toDate === 'function') {
-    const d = rawDate.toDate();
-    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-  }
-  if (rawDate && typeof rawDate.seconds === 'number') {
-    const d = new Date(rawDate.seconds * 1000);
-    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-  }
-  try {
-    const d = new Date(rawDate);
-    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-  } catch {
-    // ignore
-  }
-  return '';
+  return toDateOnly(rawDate);
 }
 
 /**
@@ -167,21 +141,19 @@ export function filterLedgerTransactions(
 
     // 9. Precedence Rule: Explicit Date Range overrides Accounting Period
     const rawDate = tx.date || (tx as any).transaction_date || (tx as any).transactionDate || (tx as any).createdAt;
-    const txDateStr = extractTxDateString(rawDate);
+    const txDateStr = toDateOnly(rawDate);
 
-    const hasCustomDateRange = Boolean(
-      (filters.startDate && filters.startDate.trim() !== '') || 
-      (filters.endDate && filters.endDate.trim() !== '')
-    );
+    const normFilter = normalizeDateFilter(filters.startDate, filters.endDate);
+    const hasCustomDateRange = Boolean(normFilter.startDate || normFilter.endDate);
 
     if (hasCustomDateRange) {
-      if (filters.startDate && filters.startDate.trim() !== '') {
-        if (!txDateStr || txDateStr < filters.startDate.trim()) {
+      if (normFilter.startDate) {
+        if (!txDateStr || txDateStr < normFilter.startDate) {
           return false;
         }
       }
-      if (filters.endDate && filters.endDate.trim() !== '') {
-        if (!txDateStr || txDateStr > filters.endDate.trim()) {
+      if (normFilter.endDate) {
+        if (!txDateStr || txDateStr > normFilter.endDate) {
           return false;
         }
       }

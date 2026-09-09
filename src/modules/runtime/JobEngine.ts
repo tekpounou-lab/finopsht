@@ -85,12 +85,16 @@ class EnterpriseJobEngine {
 
     // Health Reporting
     setInterval(async () => {
-      await AdminRepository.reportHealth({
-        name: "JOB_ENGINE",
-        status: "GREEN",
-        lastUpdate: new Date().toISOString(),
-        metrics: { queueSize: this.queue.length, isProcessing: this.isProcessing }
-      });
+      try {
+        await AdminRepository.reportHealth({
+          name: "JOB_ENGINE",
+          status: "GREEN",
+          lastUpdate: new Date().toISOString(),
+          metrics: { queueSize: this.queue.length, isProcessing: this.isProcessing }
+        });
+      } catch {
+        // Prevent background interval error from bubbling up
+      }
     }, 60000);
   }
 

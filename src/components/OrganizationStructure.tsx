@@ -17,6 +17,9 @@ import { OrganizationTreeView } from "./org/components/OrganizationTreeView";
 import { OrganizationNodeDetails } from "./org/components/OrganizationNodeDetails";
 import { OrganizationEditModal } from "./org/components/OrganizationEditModal";
 import { OrganizationBulkImportModal } from "./org/components/OrganizationBulkImportModal";
+import { DepartmentAssignmentManager } from "./organization/DepartmentAssignmentManager";
+import { DepartmentMappingReviewModal } from "./organization/DepartmentMappingReviewModal";
+import { InvitationManagement } from "./organization/InvitationManagement";
 import { 
   Building2, 
   MapPin, 
@@ -28,8 +31,14 @@ import {
   FileText, 
   Search,
   Sparkles,
-  Users
+  Users,
+  Network,
+  GitFork,
+  CheckSquare,
+  Tag,
+  Mail
 } from "lucide-react";
+import { toast } from "sonner";
 
 interface OrganizationStructureProps {
   currentRole: Role;
@@ -66,6 +75,8 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
     branches,
     departments,
     employees,
+    invitations = [],
+    setInvitations,
     branchDepartmentLinks,
     employeeBadges,
     setEmployeeBadges,
@@ -129,6 +140,10 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
 
   const [modalType, setModalType] = useState<"BRANCH" | "DEPARTMENT" | null>(null);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+  const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
+  const [selectedEmpForAssignmentId, setSelectedEmpForAssignmentId] = useState<string>(employees[0]?.id || "");
+
+  const selectedEmpForAssignment = employees.find(e => e.id === selectedEmpForAssignmentId) || employees[0];
 
   return (
     <div className="space-y-6 text-slate-100">
@@ -166,6 +181,13 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
               className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium rounded-xl flex items-center gap-1.5 shadow-lg shadow-sky-900/20"
             >
               <Plus className="w-4 h-4" /> Département
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsMappingModalOpen(true)}
+              className="px-3 py-2 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/30 text-emerald-400 text-xs font-medium rounded-xl flex items-center gap-1.5"
+            >
+              <Tag className="w-4 h-4" /> Mappage SSOT
             </button>
             <button
               type="button"
@@ -213,50 +235,170 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
         </div>
       </div>
 
-      {/* Main Grid: Tree View + Node Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-5 space-y-3">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Rechercher une entité ou un collaborateur..."
-              className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+      {/* Sub-Tab Navigation Bar */}
+      <div className="flex flex-wrap items-center gap-2 bg-slate-900/80 p-1.5 rounded-xl border border-slate-800">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("structures")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+            activeSubTab === "structures"
+              ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+              : "text-slate-400 hover:text-white hover:bg-slate-800"
+          }`}
+        >
+          <Network className="w-4 h-4" />
+          <span>Arborescence & Organigramme</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("invitations")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+            activeSubTab === "invitations"
+              ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+              : "text-slate-400 hover:text-white hover:bg-slate-800"
+          }`}
+        >
+          <Mail className="w-4 h-4" />
+          <span>Gestion des Invitations</span>
+          {invitations.length > 0 && (
+            <span className="bg-slate-800 border border-slate-700 text-indigo-300 text-[10px] px-1.5 py-0.2 rounded-full font-mono ml-1">
+              {invitations.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("import")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+            activeSubTab === "import"
+              ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+              : "text-slate-400 hover:text-white hover:bg-slate-800"
+          }`}
+        >
+          <GitFork className="w-4 h-4" />
+          <span>Allocations Multi-Départements</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setIsMappingModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-emerald-400 hover:bg-slate-800 transition cursor-pointer ml-auto"
+        >
+          <Tag className="w-4 h-4 text-emerald-400" />
+          <span>Mappage SSOT & Aliases</span>
+        </button>
+      </div>
+
+      {/* Main Content Area Based on Sub-Tab */}
+      {activeSubTab === "invitations" && (
+        <InvitationManagement
+          currentBusiness={currentBusiness}
+          branches={businessBranches}
+          departments={businessDepts}
+          invitations={invitations}
+          currentRole={currentRole}
+          currentUser={currentUser || { name: "Administrateur", id: "usr_1" }}
+          setInvitations={setInvitations}
+        />
+      )}
+      {activeSubTab === "structures" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div className="lg:col-span-5 space-y-3">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Rechercher une entité ou un collaborateur..."
+                className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <OrganizationTreeView
+              treeData={treeData}
+              selectedNode={selectedNode}
+              onSelectNode={(node) => setSelectedNode(node)}
+              searchQuery={searchQuery}
             />
           </div>
 
-          <OrganizationTreeView
-            treeData={treeData}
-            selectedNode={selectedNode}
-            onSelectNode={(node) => setSelectedNode(node)}
-            searchQuery={searchQuery}
-          />
+          <div className="lg:col-span-7">
+            <OrganizationNodeDetails
+              selectedNode={selectedNode}
+              editingDeptId={editingDeptId}
+              editDeptName={editDeptName}
+              editDeptCode={editDeptCode}
+              setEditDeptName={setEditDeptName}
+              setEditDeptCode={setEditDeptCode}
+              onStartEditDept={(dept) => {
+                setEditingDeptId(dept.id);
+                setEditDeptName(dept.name);
+                setEditDeptCode(dept.code || "");
+              }}
+              onCancelEditDept={() => setEditingDeptId(null)}
+              onSaveEditDept={handleSaveDeptEdit}
+              onRegenerateBadge={handleRegenerateBadge}
+              onOpenEmployeeProfile={setFocusedEmployeeIdForProfile}
+              badges={employeeBadges}
+              contracts={employeeContracts}
+            />
+          </div>
         </div>
+      )}
 
-        <div className="lg:col-span-7">
-          <OrganizationNodeDetails
-            selectedNode={selectedNode}
-            editingDeptId={editingDeptId}
-            editDeptName={editDeptName}
-            editDeptCode={editDeptCode}
-            setEditDeptName={setEditDeptName}
-            setEditDeptCode={setEditDeptCode}
-            onStartEditDept={(dept) => {
-              setEditingDeptId(dept.id);
-              setEditDeptName(dept.name);
-              setEditDeptCode(dept.code || "");
-            }}
-            onCancelEditDept={() => setEditingDeptId(null)}
-            onSaveEditDept={handleSaveDeptEdit}
-            onRegenerateBadge={handleRegenerateBadge}
-            onOpenEmployeeProfile={setFocusedEmployeeIdForProfile}
-            badges={employeeBadges}
-            contracts={employeeContracts}
-          />
+      {activeSubTab === "import" && (
+        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <GitFork className="w-5 h-5 text-indigo-400" />
+                <span>Gestionnaire d'Allocations Multi-Départements</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Affectez un collaborateur à un département principal et plusieurs départements secondaires avec calcul des pourcentages de ventilation budgétaire.
+              </p>
+            </div>
+
+            {employees.length > 0 && (
+              <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5">
+                <Users className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs text-slate-400 font-semibold uppercase">Employé:</span>
+                <select
+                  value={selectedEmpForAssignment?.id || ""}
+                  onChange={(e) => setSelectedEmpForAssignmentId(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-200 outline-none cursor-pointer max-w-[220px]"
+                >
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id} className="bg-slate-900 text-slate-200">
+                      {emp.name} ({emp.position || "Collaborateur"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {selectedEmpForAssignment ? (
+            <DepartmentAssignmentManager
+              employee={selectedEmpForAssignment}
+              departments={businessDepts}
+              onSaveAssignments={async (updatedEmp) => {
+                if (props.setEmployees) {
+                  props.setEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
+                }
+                toast.success("Allocations départementales enregistrées avec succès.");
+              }}
+            />
+          ) : (
+            <div className="p-8 text-center text-xs text-slate-500 font-mono">
+              Aucun employé disponible pour l'allocation multi-départements.
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Modals */}
       {modalType && (
@@ -283,6 +425,19 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
           departments={businessDepts}
           onSuccess={() => {}}
           onClose={() => setIsBulkImportOpen(false)}
+        />
+      )}
+
+      {isMappingModalOpen && (
+        <DepartmentMappingReviewModal
+          isOpen={isMappingModalOpen}
+          onClose={() => setIsMappingModalOpen(false)}
+          unmappedItems={businessDepts.map(d => ({ rawLabel: d.name, count: 1 }))}
+          departments={businessDepts}
+          onConfirmMappings={(confirmed, aliases) => {
+            toast.success(`${Object.keys(confirmed).length} correspondances enregistrées.`);
+            setIsMappingModalOpen(false);
+          }}
         />
       )}
     </div>

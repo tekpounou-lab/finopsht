@@ -348,10 +348,10 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-6" id="personnel-grid">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="personnel-grid">
         {/* EMPLOYEE DIRECTORY TABLE */}
         <div 
-          className="w-full transition-all duration-300" 
+          className={`transition-all duration-300 ${selectedEmployee ? 'lg:col-span-7' : 'lg:col-span-12'}`} 
           id="personnel-employees-pane"
         >
           <EmployeeDirectory
@@ -379,8 +379,8 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
           />
         </div>
 
-        {/* RIGHT PANE: INLINE EMPLOYEE PROFILE DISPLAY (REMOVED) */}
-        {false && selectedEmployee && (
+        {/* RIGHT PANE: INLINE EMPLOYEE PROFILE DISPLAY */}
+        {selectedEmployee && (
           <div className="lg:col-span-5 transition-all duration-300" id="personnel-profile-pane">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col gap-5 sticky top-4">
               

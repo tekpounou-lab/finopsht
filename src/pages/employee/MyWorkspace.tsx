@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { 
   Employee, 
+  Role,
   AttendanceRecord, 
   EmployeeBadge, 
   EmployeeContract, 
@@ -40,6 +41,8 @@ import { MetricsCards } from "./components/MetricsCards";
 import { InteractiveQrBadge } from "./components/InteractiveQrBadge";
 import { LeaveWorkflowManager } from "./components/LeaveWorkflowManager";
 import { LeaveRequestModal } from "./components/LeaveRequestModal";
+
+import { useIdentity } from "../../modules/identity/IdentityContext";
 
 import { MyProfileSection } from "./components/MyProfileSection";
 import { MyEmploymentSection } from "./components/MyEmploymentSection";
@@ -143,19 +146,79 @@ export function MyWorkspace({
     setLocalTransactions(transactions);
   }, [transactions]);
 
-  const safeEmployeeList = employees || [];
-  const baseEmployee = employee || safeEmployeeList[0] || defaultEmployee;
+  const identityContext = useIdentity();
+  const identity = identityContext?.identity;
+
+  const safeEmployeeList = useMemo(() => employees || [], [employees]);
 
   // Single Source of Truth Identity Resolution
-  const resolvedEmployee: Employee =
-    safeEmployeeList.find(
-      (e) =>
-        (e.id && baseEmployee.id && e.id === baseEmployee.id) ||
-        ((e as any).employee_id && (e as any).employee_id === baseEmployee.id) ||
-        (e.id && (baseEmployee as any).employee_id && e.id === (baseEmployee as any).employee_id) ||
-        (e.firebase_uid && (baseEmployee as any).firebase_uid && e.firebase_uid === (baseEmployee as any).firebase_uid) ||
-        (e.email && baseEmployee.email && e.email.toLowerCase().trim() === baseEmployee.email.toLowerCase().trim())
-    ) || baseEmployee;
+  const resolvedEmployee: Employee = useMemo(() => {
+    const curUid = identity?.user_uid;
+    const curEmail = identity?.email?.toLowerCase().trim();
+    const identityEmpId = identity?.employee?.id;
+
+    // A. Priority 1: Check if identity snapshot has a resolved employee record that matches safeEmployeeList
+    if (identity?.employee) {
+      const matchInList = safeEmployeeList.find(
+        (e) =>
+          e.id === identity.employee?.id ||
+          (e as any).employee_id === identity.employee?.id ||
+          (e.firebase_uid && identity.employee?.firebase_uid && e.firebase_uid === identity.employee.firebase_uid) ||
+          (e.email && identity.employee?.email && e.email.toLowerCase().trim() === identity.employee.email.toLowerCase().trim())
+      );
+      if (matchInList) return matchInList;
+      return identity.employee;
+    }
+
+    // B. Priority 2: Match logged-in user in safeEmployeeList by user_uid, firebase_uid, employee_id, or email
+    if (curUid || curEmail || identityEmpId) {
+      const matched = safeEmployeeList.find(
+        (e) =>
+          (curUid && (e.firebase_uid === curUid || e.id === curUid)) ||
+          (identityEmpId && (e.id === identityEmpId || (e as any).employee_id === identityEmpId)) ||
+          (curEmail && e.email && e.email.toLowerCase().trim() === curEmail)
+      );
+      if (matched) return matched;
+    }
+
+    // C. Priority 3: Check if employee prop matches current user or is explicitly provided
+    if (
+      employee &&
+      ((curUid && (employee.firebase_uid === curUid || employee.id === curUid)) ||
+       (curEmail && employee.email && employee.email.toLowerCase().trim() === curEmail) ||
+       !safeEmployeeList.length)
+    ) {
+      return employee;
+    }
+
+    // D. Priority 4: Synthesize profile for logged-in user (OWNER/ADMIN/MANAGER)
+    const fallbackBizId = identity?.business?.id || employee?.business_id || "BIZ_MAIN";
+    return {
+      id: identityEmpId || curUid || employee?.id || "emp_owner_self",
+      name: identity?.displayName || identity?.userProfile?.name || curEmail?.split("@")[0] || employee?.name || "Propriétaire",
+      email: curEmail || employee?.email || "collaborateur@finops.erp",
+      role: (identity?.role || employee?.role || "OWNER") as Role,
+      position: (identity?.role || employee?.role) === "OWNER" ? "Propriétaire / Direction Générale" : "Membre de la Direction",
+      departmentId: employee?.departmentId || "dept_exec",
+      branchId: employee?.branchId || fallbackBizId,
+      hireDate: employee?.hireDate || new Date().toISOString().split("T")[0],
+      status: "ACTIVE",
+      isActive: true,
+      baseSalary: employee?.baseSalary || 0,
+      paymentModel: employee?.paymentModel || "FIXED",
+      business_id: fallbackBizId,
+      firebase_uid: curUid || employee?.firebase_uid,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }, [identity, safeEmployeeList, employee]);
+
+  // Audit Log
+  React.useEffect(() => {
+    console.debug(
+      `[MyWorkspace] Loading workspace data for employeeId: ${resolvedEmployee.id}, email: ${resolvedEmployee.email}, businessId: ${resolvedEmployee.business_id}, role: ${resolvedEmployee.role}`
+    );
+  }, [resolvedEmployee.id, resolvedEmployee.email, resolvedEmployee.business_id, resolvedEmployee.role]);
 
   // Single Source of Truth Badge Resolution
   const activeBadge =
@@ -163,11 +226,8 @@ export function MyWorkspace({
     employeeBadges.find(
       (b) =>
         b.id === resolvedEmployee.badgeId ||
-        b.id === baseEmployee.badgeId ||
         b.employeeId === resolvedEmployee.id ||
         (b as any).employee_id === resolvedEmployee.id ||
-        b.employeeId === baseEmployee.id ||
-        (b as any).employee_id === baseEmployee.id ||
         (resolvedEmployee.email && (b as any).email && (b as any).email.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim())
     );
 
@@ -178,8 +238,6 @@ export function MyWorkspace({
       (c) =>
         c.employeeId === resolvedEmployee.id ||
         (c as any).employee_id === resolvedEmployee.id ||
-        c.employeeId === baseEmployee.id ||
-        (c as any).employee_id === baseEmployee.id ||
         (resolvedEmployee.email && (c as any).email && (c as any).email.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim())
     );
 
@@ -199,13 +257,11 @@ export function MyWorkspace({
     resolvedEmployee.role === "OWNER" ||
     resolvedEmployee.role === "SUPER_ADMIN";
 
-  // Filtered Personal Data Sets (Single Source of Truth)
+  // Filtered Personal Data Sets Strictly Scoped to Resolved Employee
   const myAttendance = (attendanceRecords || []).filter(
     (a) =>
       a.employeeId === resolvedEmployee.id ||
       (a as any).employee_id === resolvedEmployee.id ||
-      a.employeeId === baseEmployee.id ||
-      (a as any).employee_id === baseEmployee.id ||
       (resolvedEmployee.email && (a as any).employee_email && (a as any).employee_email.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim())
   );
 
@@ -214,29 +270,25 @@ export function MyWorkspace({
       (
         p.employeeId === resolvedEmployee.id ||
         (p as any).employee_id === resolvedEmployee.id ||
-        p.employeeId === baseEmployee.id ||
-        (p as any).employee_id === baseEmployee.id ||
-        (p as any).employeeId === baseEmployee.id ||
+        (p as any).employeeId === resolvedEmployee.id ||
+        (resolvedEmployee.id && (p as any).user_uid === resolvedEmployee.id) ||
         (resolvedEmployee.email && (p as any).employee_email && (p as any).employee_email.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim())
       ) &&
       (
         !p.business_id || 
         !resolvedEmployee.business_id || 
         p.business_id === resolvedEmployee.business_id || 
-        p.business_id === (baseEmployee as any).business_id || 
         p.business_id === (resolvedEmployee as any).businessId ||
         p.business_id === (resolvedEmployee as any).business_id
       ) &&
-      ["VALIDATED", "APPROVED", "PAID", "LOCKED", "DRAFT", "PENDING", "CORRECTED"].includes(p.status || "")
+      ["SEALED", "CALCULATED", "POSTED", "COMPLETED", "VALIDATED", "APPROVED", "PAID", "LOCKED", "DRAFT", "PENDING", "CORRECTED"].includes(p.status || "")
   );
 
   const myShifts = (shifts || []).filter(
     (s) =>
       s.employeeId === resolvedEmployee.id ||
       (s as any).employee_id === resolvedEmployee.id ||
-      s.employeeId === baseEmployee.id ||
-      (s as any).employee_id === baseEmployee.id ||
-      (s.employeeIds && (s.employeeIds.includes(resolvedEmployee.id) || s.employeeIds.includes(baseEmployee.id))) ||
+      (s.employeeIds && s.employeeIds.includes(resolvedEmployee.id)) ||
       (s.departmentId && s.departmentId === resolvedEmployee.departmentId)
   );
 
@@ -244,8 +296,6 @@ export function MyWorkspace({
     (l) =>
       l.employeeId === resolvedEmployee.id ||
       (l as any).employee_id === resolvedEmployee.id ||
-      l.employeeId === baseEmployee.id ||
-      (l as any).employee_id === baseEmployee.id ||
       (resolvedEmployee.email && (l as any).employee_email && (l as any).employee_email.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim())
   );
 
@@ -255,8 +305,6 @@ export function MyWorkspace({
       (t as any).employee_id === resolvedEmployee.id ||
       (t as any).createdBy === resolvedEmployee.id ||
       (t as any).created_by === resolvedEmployee.id ||
-      (t as any).createdBy === baseEmployee.id ||
-      (t as any).created_by === baseEmployee.id ||
       (resolvedEmployee.email && (t as any).createdBy && (t as any).createdBy.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim()) ||
       (resolvedEmployee.email && (t as any).created_by && (t as any).created_by.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim()) ||
       (resolvedEmployee.email && (t as any).employee_email && (t as any).employee_email.toLowerCase().trim() === resolvedEmployee.email.toLowerCase().trim()) ||
