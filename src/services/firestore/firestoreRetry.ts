@@ -66,7 +66,7 @@ export function isRetriableFirestoreError(error: any): boolean {
     return true;
   }
 
-  // Transient Transport / Availability checks
+  // Transient Transport / Availability / Deserialization checks
   if (
     message.includes("unavailable") ||
     message.includes("client is offline") ||
@@ -76,6 +76,12 @@ export function isRetriableFirestoreError(error: any): boolean {
     message.includes("aborted") ||
     message.includes("network error") ||
     message.includes("networkrequestfailed") ||
+    message.includes("nullvalue") ||
+    message.includes("cannot use 'in' operator") ||
+    message.includes("search for 'nullvalue'") ||
+    message.includes("interruption temporaire") ||
+    message.includes("internal assertion") ||
+    message.includes("ping timeout") ||
     code.includes("unavailable") ||
     code.includes("deadline-exceeded") ||
     code.includes("aborted") ||

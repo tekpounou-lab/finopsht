@@ -6,8 +6,10 @@ import { formatDepartmentName } from "../templates/documents/utils";
 import EditEmployeeDialog from "./staff/EditEmployeeDialog";
 import EmployeeLedgerViewer from "./staff/EmployeeLedgerViewer";
 import { CommissionEngine } from "../services/CommissionEngine";
+import { TaxPolicyEngine } from "../services/payroll/TaxPolicyEngine";
 import { useBusinessContext } from "../contexts/BusinessContext";
-import { BusinessAdministrationRepository } from "../services/business/BusinessAdministrationRepository";
+import { BusinessAdministrationRepository as BusinessAdminService } from "../services/business/BusinessAdministrationRepository";
+import { BusinessAdministrationRepository as BusinessAdminRepo } from "../repositories/BusinessAdministrationRepository";
 import { 
   User, 
   MapPin, 
@@ -73,12 +75,8 @@ export default function EmployeeTechnicalSheet({
   // Connect to Business Context to get authoritative company tax settings
   const { businessSettings, currentBusiness } = useBusinessContext();
 
-  // Social Tax compliance switch resolved from business settings (Default: OFF if not configured)
-  const isCompanyTaxEnabled = businessSettings?.payroll?.taxes?.enabled !== undefined
-    ? Boolean(businessSettings.payroll.taxes.enabled)
-    : (businessSettings?.payroll?.enable_social_taxes !== undefined
-        ? Boolean(businessSettings.payroll.enable_social_taxes)
-        : false);
+  // Social Tax compliance switch resolved from business settings (Default: OFF if disabled)
+  const isCompanyTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
 
   // Check if employee or contract has tax eligibility (defaults to true)
   const isEmployeeTaxEligible = (contract as any)?.social_tax_eligible !== false && (employee as any)?.social_tax_eligible !== false;
@@ -122,17 +120,40 @@ export default function EmployeeTechnicalSheet({
     setIsTogglingTax(true);
     try {
       const nextVal = !isCompanyTaxEnabled;
-      await BusinessAdministrationRepository.updateSettings(currentBusiness.id, {
+      await BusinessAdminService.updateSettings(currentBusiness.id, {
         ...businessSettings,
         payroll: {
           ...(businessSettings?.payroll || {}),
           enable_social_taxes: nextVal,
+          enableTaxes: nextVal,
           taxes: {
             ...(businessSettings?.payroll?.taxes || {}),
             enabled: nextVal
           }
+        },
+        payroll_policies: {
+          ...(businessSettings?.payroll_policies || {}),
+          enableTaxes: nextVal,
+          enable_social_taxes: nextVal
+        },
+        tax_config: {
+          ...(businessSettings?.tax_config || {}),
+          enableTaxes: nextVal,
+          enabled: nextVal,
+          enable_social_taxes: nextVal
         }
       });
+      await BusinessAdminRepo.updateTaxConfiguration(
+        currentBusiness.id,
+        {
+          enableTaxes: nextVal,
+          cnssRateEmployee: nextVal ? cnssEmpRate : 0,
+          cnssRateEmployer: nextVal ? cnssEmployerRate : 0,
+          cnsRateEmployee: nextVal ? cnsEmpRate : 0,
+          cnsRateEmployer: nextVal ? ofatmaEmployerRate : 0,
+        },
+        "usr_admin"
+      );
     } catch (err) {
       console.error("[EmployeeTechnicalSheet] Failed to toggle company taxes:", err);
     } finally {

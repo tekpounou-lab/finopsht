@@ -1,20 +1,23 @@
 import React from "react";
 import { FileCheck, Printer, Trash2 } from "lucide-react";
 import { PayrollRecord } from "../types";
+import { useTaxPolicy } from "../../../hooks/useTaxPolicy";
 
 export interface PayslipsTabProps {
   computedRecords: PayrollRecord[];
-  enableSocialTaxes: boolean;
+  enableSocialTaxes?: boolean;
   onSetFocusedRecord: (rec: PayrollRecord) => void;
   onDeletePayrollRecord?: (id: string) => void;
 }
 
 export const PayslipsTab: React.FC<PayslipsTabProps> = ({
   computedRecords,
-  enableSocialTaxes,
+  enableSocialTaxes: propEnableSocialTaxes,
   onSetFocusedRecord,
   onDeletePayrollRecord
 }) => {
+  const { isSocialTaxEnabled: contextEnableSocialTaxes } = useTaxPolicy();
+  const enableSocialTaxes = propEnableSocialTaxes !== undefined ? propEnableSocialTaxes : contextEnableSocialTaxes;
   return (
     <div className="flex flex-col gap-6 animate-fadeIn" id="payslips-tab-content">
       <div className="glass p-5 rounded-2xl border border-slate-800/60">

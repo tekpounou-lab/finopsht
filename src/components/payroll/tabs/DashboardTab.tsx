@@ -111,7 +111,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               <span className="font-semibold text-slate-300">
                 Enterprise SSOT Pipeline: <span className="text-cyan-400 font-mono">PayrollInputSnapshot</span> Active
               </span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${activeCycle.status === "LOCKED" || activeCycle.status === "PAID" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"}`}>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                activeCycle.status === "SEALED"
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : activeCycle.status === "LOCKED" || activeCycle.status === "PAID"
+                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                  : "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+              }`}>
                 {activeCycle.status || "DRAFT"}
               </span>
             </div>

@@ -119,7 +119,7 @@ export const runReconciliation = (transactions: LedgerTransaction[], business_id
  */
 export const isOrphanTransaction = (tx: Partial<LedgerTransaction>): boolean => {
   if (!tx.business_id) return true;
-  const costCenter = (tx as any).cost_center_id || (tx as any).costCenterId;
+  const costCenter = (tx as any).cost_center_id || (tx as any).costCenterId || (tx as any).branchId || (tx as any).branch_id;
   const hasNoCostCenter = !costCenter || costCenter === "none" || costCenter === "ORPHAN" || costCenter === "UNASSIGNED";
   const hasNoAccounts = !tx.debit_account || !tx.credit_account;
   return hasNoCostCenter || hasNoAccounts;

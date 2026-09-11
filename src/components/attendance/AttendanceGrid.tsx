@@ -44,7 +44,7 @@ export default function AttendanceGrid({
   const { t } = useI18n();
 
   return (
-    <div className="mt-4 glass rounded-xl overflow-hidden backdrop-blur-md bg-slate-900/40 border border-slate-800/60">
+    <div id="attendance-records-grid" className="mt-4 glass rounded-xl overflow-hidden backdrop-blur-md bg-slate-900/40 border border-slate-800/60">
       
       {/* DESKTOP TABLE */}
       <div className="overflow-x-auto hidden md:block">

@@ -106,8 +106,8 @@ export default function AttendanceLedger({
     branchId: 'ALL',
     departmentId: 'ALL',
     employeeId: 'ALL',
-    date: getDeviceLocalDate(new Date()),
-    endDate: getDeviceLocalDate(new Date()),
+    date: '',
+    endDate: '',
     status: 'ALL',
     search: ''
   });
@@ -273,34 +273,31 @@ export default function AttendanceLedger({
     }
     
     // UI Branch Filter
-    if (
-      filters.branchId !== 'ALL' && 
-      recBranchId && 
-      recBranchId !== filters.branchId && 
-      recBranchId !== "BRANCH_DEFAULT"
-    ) {
-      return false;
+    if (filters.branchId !== 'ALL') {
+      const recBranchId = rec.branchId || (rec as any).branch_id || emp?.branchId || "BRANCH_DEFAULT";
+      if (recBranchId !== filters.branchId) {
+        return false;
+      }
     }
 
     // UI Department Filter
-    const recDeptId = rec.departmentId || (rec as any).department_id || emp?.departmentId;
-    if (
-      filters.departmentId !== 'ALL' && 
-      recDeptId && 
-      recDeptId !== filters.departmentId && 
-      recDeptId !== "DEPT_DEFAULT"
-    ) {
-      return false;
+    if (filters.departmentId !== 'ALL') {
+      const recDeptId = rec.departmentId || (rec as any).department_id || emp?.departmentId || "DEPT_DEFAULT";
+      if (recDeptId !== filters.departmentId) {
+        return false;
+      }
     }
 
     // UI Employee Filter
-    if (
-      filters.employeeId && 
-      filters.employeeId !== 'ALL' && 
-      rec.employeeId !== filters.employeeId && 
-      emp?.id !== filters.employeeId
-    ) {
-      return false;
+    if (filters.employeeId && filters.employeeId !== 'ALL') {
+      const matchesEmp = 
+        rec.employeeId === filters.employeeId ||
+        (rec as any).employee_id === filters.employeeId ||
+        emp?.id === filters.employeeId ||
+        (emp as any)?.user_uid === filters.employeeId;
+      if (!matchesEmp) {
+        return false;
+      }
     }
 
     // Check Date Range Filter
@@ -308,19 +305,25 @@ export default function AttendanceLedger({
       const recDateStr = normalizeDateStr(rec.date);
       const fDate = normalizeDateStr(filters.date);
       const eDate = normalizeDateStr(filters.endDate);
-      if (recDateStr) {
-        if (fDate && recDateStr < fDate) return false;
-        if (eDate && recDateStr > eDate) return false;
-      }
+      if (!recDateStr) return false;
+      if (fDate && recDateStr < fDate) return false;
+      if (eDate && recDateStr > eDate) return false;
     }
     
     // Quick status mapping
     if (filters.status !== 'ALL') {
       const isPresent = Boolean(rec.checkIn && !rec.checkOut);
       const recStatus = (rec.status as string) || (isPresent ? "NORMAL" : "ABSENT");
-      if (filters.status === 'NORMAL' && recStatus !== 'NORMAL' && recStatus !== 'PENDING_VERIFICATION' && recStatus !== 'ACTIVE' && recStatus !== 'PRÉSENT' && !isPresent) return false;
-      if (filters.status === 'LATE' && recStatus !== 'LATE') return false;
-      if (filters.status === 'ABSENT' && recStatus !== 'ABSENT' && isPresent) return false;
+      if (filters.status === 'NORMAL') {
+        const isNormal = recStatus === 'NORMAL' || recStatus === 'PENDING_VERIFICATION' || recStatus === 'ACTIVE' || recStatus === 'PRÉSENT' || recStatus === 'PRESENT' || isPresent;
+        if (!isNormal) return false;
+      } else if (filters.status === 'LATE') {
+        if (recStatus !== 'LATE') return false;
+      } else if (filters.status === 'ABSENT') {
+        if (recStatus !== 'ABSENT' || isPresent) return false;
+      } else if (recStatus !== filters.status) {
+        return false;
+      }
     }
 
     if (filters.search) {
@@ -328,7 +331,8 @@ export default function AttendanceLedger({
       const name = (emp?.name || rec.employeeName || (rec as any).name || "").toLowerCase();
       const id = (rec.employeeId || "").toLowerCase();
       const badge = String((emp as any)?.badgeNumber || (rec as any).badgeNumber || "").toLowerCase();
-      if (!name.includes(sq) && !id.includes(sq) && !badge.includes(sq)) return false;
+      const reg = String((emp as any)?.registrationNumber || (emp as any)?.code || "").toLowerCase();
+      if (!name.includes(sq) && !id.includes(sq) && !badge.includes(sq) && !reg.includes(sq)) return false;
     }
 
     return true;
@@ -340,6 +344,16 @@ export default function AttendanceLedger({
     const timeB = b.checkIn || "";
     return timeB.localeCompare(timeA);
   });
+
+  const hasActiveFilters = Boolean(
+    filters.branchId !== 'ALL' ||
+    filters.departmentId !== 'ALL' ||
+    (filters.employeeId && filters.employeeId !== 'ALL') ||
+    filters.status !== 'ALL' ||
+    Boolean(filters.search && filters.search.trim()) ||
+    Boolean(filters.date) ||
+    Boolean(filters.endDate)
+  );
 
   const todayLocal = getDeviceLocalDate(new Date());
   const onlineCount = attendanceRecords.filter(r => (r.date === todayLocal || r.date === new Date().toISOString().split('T')[0]) && r.checkIn && !r.checkOut).length;
@@ -955,13 +969,21 @@ export default function AttendanceLedger({
         onFilterChange={setFilters}
       />
 
-      {localAttendanceRecords.length > 0 && filteredRecords.length === 0 && (
-        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between text-amber-300 text-xs my-2">
+      {hasActiveFilters && localAttendanceRecords.length > 0 && filteredRecords.length === 0 && (
+        <div id="attendance-filter-alert" className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between text-amber-300 text-xs my-2">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
               {language === 'fr'
-                ? `${localAttendanceRecords.length} pointage(s) existent dans le système, mais aucun ne correspond à vos filtres actuels (Date: ${filters.date || 'Toutes'}, Succursale, Statut ou Recherche).`
+                ? `${localAttendanceRecords.length} pointage(s) existent dans le système, mais aucun ne correspond à vos filtres actifs (${[
+                    filters.date ? `Date: ${filters.date}` : '',
+                    filters.endDate ? `au ${filters.endDate}` : '',
+                    filters.branchId !== 'ALL' ? 'Succursale' : '',
+                    filters.departmentId !== 'ALL' ? 'Département' : '',
+                    filters.employeeId && filters.employeeId !== 'ALL' ? 'Employé' : '',
+                    filters.status !== 'ALL' ? `Statut: ${filters.status}` : '',
+                    filters.search ? `Recherche: "${filters.search}"` : ''
+                  ].filter(Boolean).join(', ')}).`
                 : `${localAttendanceRecords.length} attendance record(s) exist in the system, but none match your active filters.`}
             </span>
           </div>

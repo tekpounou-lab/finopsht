@@ -18,10 +18,11 @@ vi.mock("firebase/firestore", async () => {
 });
 
 import { FirestoreRealtimeManager } from "../../services/firestore/FirestoreRealtimeManager";
+import { EventBus } from "../../modules/runtime/EventBus";
 
 describe("FirestoreRealtimeManager Deduplication & Lifecycle Test", () => {
   beforeEach(() => {
-    // Clear status or reset states if needed
+    FirestoreRealtimeManager.clearAll();
   });
 
   it("should prevent duplicate listener registration for the same key", () => {
@@ -71,5 +72,96 @@ describe("FirestoreRealtimeManager Deduplication & Lifecycle Test", () => {
     
     const stats = FirestoreRealtimeManager.getListenerStats();
     expect(stats.cleanupsExecuted).toBeGreaterThanOrEqual(1);
+    expect(FirestoreRealtimeManager.getActiveListenerCount()).toBe(0);
+  });
+
+  it("should keep active listeners alive even if safety timer fires when subscribers are active", () => {
+    vi.useFakeTimers();
+    try {
+      const dummyQuery = { type: "mock_query" } as any;
+      const callback = vi.fn();
+
+      const unsub = FirestoreRealtimeManager.registerListener(
+        "employees:biz_keepalive",
+        "employees",
+        dummyQuery,
+        callback
+      );
+
+      expect(FirestoreRealtimeManager.getActiveListenerCount()).toBe(1);
+
+      // Advance time past the 5-minute safety threshold
+      vi.advanceTimersByTime(350000);
+
+      // The listener should STILL be active because a subscriber is mounted!
+      expect(FirestoreRealtimeManager.getActiveListenerCount()).toBe(1);
+
+      unsub();
+      expect(FirestoreRealtimeManager.getActiveListenerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("should renew all active listeners on EventBus Heartbeat", () => {
+    const dummyQuery = { type: "mock_query" } as any;
+    const callback = vi.fn();
+
+    const unsub = FirestoreRealtimeManager.registerListener(
+      "transactions:biz_heartbeat",
+      "transactions",
+      dummyQuery,
+      callback
+    );
+
+    const initialEntry = FirestoreRealtimeManager.listenerRegistry.get("transactions:biz_heartbeat");
+    expect(initialEntry).toBeDefined();
+    const registeredTime = initialEntry!.lastActivity;
+
+    // Simulate time passing
+    initialEntry!.lastActivity = registeredTime - 10000;
+
+    // Publish heartbeat on EventBus
+    EventBus.publish(
+      EventBus.createEvent({
+        type: "Heartbeat",
+        module: "RUNTIME",
+        aggregate: "HEALTH",
+        payload: { timestamp: Date.now() },
+        businessId: "global"
+      })
+    );
+
+    const updatedEntry = FirestoreRealtimeManager.listenerRegistry.get("transactions:biz_heartbeat");
+    expect(updatedEntry!.lastActivity).toBeGreaterThan(registeredTime - 10000);
+
+    unsub();
+  });
+
+  it("should clean up only listeners for a specific tenant on cleanupBusinessListeners", () => {
+    const dummyQuery = { type: "mock_query" } as any;
+
+    const unsub1 = FirestoreRealtimeManager.registerListener(
+      "employees:biz_A",
+      "employees",
+      dummyQuery,
+      () => {}
+    );
+    const unsub2 = FirestoreRealtimeManager.registerListener(
+      "employees:biz_B",
+      "employees",
+      dummyQuery,
+      () => {}
+    );
+
+    expect(FirestoreRealtimeManager.getActiveListenerCount()).toBe(2);
+
+    FirestoreRealtimeManager.cleanupBusinessListeners("biz_A");
+
+    expect(FirestoreRealtimeManager.getActiveListenerCount()).toBe(1);
+    expect(FirestoreRealtimeManager.listenerRegistry.has("employees:biz_A")).toBe(false);
+    expect(FirestoreRealtimeManager.listenerRegistry.has("employees:biz_B")).toBe(true);
+
+    unsub2();
   });
 });

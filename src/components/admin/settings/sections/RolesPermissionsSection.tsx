@@ -10,7 +10,8 @@ import {
   RefreshCw, 
   AlertTriangle,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  Key
 } from "lucide-react";
 import { useBusinessContext } from "../../../../contexts/BusinessContext";
 import { useBusinessAdmin } from "../../../../hooks/useBusinessAdmin";
@@ -100,11 +101,17 @@ export default function RolesPermissionsSection() {
   const handleToggleModule = (role: string, moduleId: string) => {
     if (role === "SUPER_ADMIN" || role === "OWNER") return;
 
+    const mod = ERP_MODULES.find(m => m.id === moduleId);
+    if (mod?.isPlatformSystemOnly) {
+      showToast("Ce module d'infrastructure est strictement réservé au Super Administrateur.", "error");
+      return;
+    }
+
     setLocalRoleModuleMatrix(prev => {
       const currentRoleConfig = prev[role] || {};
       const currentVal = currentRoleConfig[moduleId] !== undefined
         ? currentRoleConfig[moduleId]
-        : ERP_MODULES.find(m => m.id === moduleId)?.defaultRoles.includes(role) || false;
+        : mod?.defaultRoles.includes(role) || false;
 
       const updated = {
         ...prev,
@@ -126,9 +133,12 @@ export default function RolesPermissionsSection() {
   const handleBulkSetRoleModules = (role: string, moduleIds: string[], enable: boolean) => {
     if (role === "SUPER_ADMIN" || role === "OWNER") return;
 
+    // Filter out platform-exclusive modules
+    const delegatableIds = moduleIds.filter(id => !ERP_MODULES.find(m => m.id === id)?.isPlatformSystemOnly);
+
     setLocalRoleModuleMatrix(prev => {
       const currentRoleConfig = { ...(prev[role] || {}) };
-      moduleIds.forEach(id => {
+      delegatableIds.forEach(id => {
         currentRoleConfig[id] = enable;
       });
 
@@ -319,7 +329,11 @@ export default function RolesPermissionsSection() {
     DEFAULT_CORE_ROLES.forEach(r => {
       defaultMatrix[r] = {};
       ERP_MODULES.forEach(m => {
-        defaultMatrix[r][m.id] = m.defaultRoles.includes(r);
+        if (m.isPlatformSystemOnly && r !== "SUPER_ADMIN") {
+          defaultMatrix[r][m.id] = false;
+        } else {
+          defaultMatrix[r][m.id] = m.defaultRoles.includes(r);
+        }
       });
     });
 
@@ -349,6 +363,7 @@ export default function RolesPermissionsSection() {
           </motion.div>
         )}
       </AnimatePresence>
+
       {/* Top Banner Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 bg-slate-900/60 border border-slate-800/80 rounded-3xl relative overflow-hidden">
         <div className="flex items-center gap-4">
@@ -401,6 +416,24 @@ export default function RolesPermissionsSection() {
               <span>{loading ? "Enregistrement..." : "Enregistrer la Matrice"}</span>
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Delegation & Confidentiality Explanatory Banner */}
+      <div className="p-4 bg-gradient-to-r from-cyan-950/30 via-slate-900/50 to-slate-900/40 border border-cyan-500/20 rounded-2xl flex items-start gap-3.5 text-xs">
+        <div className="w-8 h-8 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0 mt-0.5">
+          <Key className="w-4 h-4" />
+        </div>
+        <div className="space-y-1">
+          <h4 className="font-bold text-slate-200 flex items-center gap-2">
+            <span>Délégation de Pouvoirs & Cloisonnement Strict de Confidentialité</span>
+            <span className="text-[10px] px-2 py-0.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 rounded-full font-mono">Multi-Tenant Sécurisé</span>
+          </h4>
+          <p className="text-slate-400 leading-relaxed text-[11px]">
+            <strong className="text-slate-200">Super Administrateur :</strong> Gouvernance et supervision globale de tous les tenants et de l'infrastructure SRE.
+            <br />
+            <strong className="text-slate-200">Propriétaire d'Entreprise :</strong> Contrôle souverain sur votre organisation. Vous déléguez manuellement l'accès à chaque module (RH, Paie, Finances, Présences) aux rôles de vos collaborateurs en cochant ou décochant les fonctionnalités ci-dessous. Vos employés accèdent strictement à leur périmètre autorisé.
+          </p>
         </div>
       </div>
 

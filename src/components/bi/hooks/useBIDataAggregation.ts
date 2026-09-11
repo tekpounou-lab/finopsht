@@ -8,6 +8,7 @@ import { RankMetricType } from "./useBIUIState";
 import { EnrichedDepartmentMetric, EnrichedBranchMetric, EmployeeScorecard, PayrollAggregates } from "../types";
 import { filterOperationalEmployees } from "../../../services/workforce/EmployeeEligibilityService";
 import { useDeepCompareMemo } from "../../../hooks/useDeepCompareMemo";
+import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 
 interface UseBIDataAggregationParams {
   currentBusiness?: Business;
@@ -54,43 +55,7 @@ export function useBIDataAggregation({
   const [usdToHtgRate, setUsdToHtgRate] = useState<number>(135.0);
 
   const isSocialTaxEnabled = useMemo(() => {
-    if (businessSettings?.payroll_policies?.enableTaxes !== undefined) {
-      return Boolean(businessSettings.payroll_policies.enableTaxes);
-    }
-    if (businessSettings?.payrollPolicies?.enableTaxes !== undefined) {
-      return Boolean(businessSettings.payrollPolicies.enableTaxes);
-    }
-    if (businessSettings?.tax_config?.enableTaxes !== undefined) {
-      return Boolean(businessSettings.tax_config.enableTaxes);
-    }
-    if (businessSettings?.taxConfig?.enableTaxes !== undefined) {
-      return Boolean(businessSettings.taxConfig.enableTaxes);
-    }
-    if (businessSettings?.payroll?.taxes?.enabled !== undefined) {
-      return Boolean(businessSettings.payroll.taxes.enabled);
-    }
-    if (businessSettings?.payroll?.enable_social_taxes !== undefined) {
-      return Boolean(businessSettings.payroll.enable_social_taxes);
-    }
-    if (businessSettings?.payroll?.enableTaxes !== undefined) {
-      return Boolean(businessSettings.payroll.enableTaxes);
-    }
-    if (businessSettings?.enable_social_taxes !== undefined) {
-      return Boolean(businessSettings.enable_social_taxes);
-    }
-    if (businessSettings?.enableTaxes !== undefined) {
-      return Boolean(businessSettings.enableTaxes);
-    }
-    if ((currentBusiness as any)?.settings?.payroll_policies?.enableTaxes !== undefined) {
-      return Boolean((currentBusiness as any).settings.payroll_policies.enableTaxes);
-    }
-    if ((currentBusiness as any)?.settings?.payroll?.taxes?.enabled !== undefined) {
-      return Boolean((currentBusiness as any).settings.payroll.taxes.enabled);
-    }
-    if ((currentBusiness as any)?.settings?.payroll?.enable_social_taxes !== undefined) {
-      return Boolean((currentBusiness as any).settings.payroll.enable_social_taxes);
-    }
-    return false;
+    return TaxPolicyEngine.isSocialTaxEnabled({ ...businessSettings, ...currentBusiness?.settings });
   }, [businessSettings, currentBusiness]);
 
   useEffect(() => {

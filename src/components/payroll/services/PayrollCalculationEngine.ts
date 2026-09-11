@@ -4,6 +4,7 @@
  */
 
 import { BusinessTaxConfiguration } from "../../../repositories/BusinessAdministrationRepository";
+import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 import {
   STATUTORY_TAX_RATES,
   SURVIVAL_FLOOR_HTG,
@@ -68,7 +69,7 @@ export function resolveTaxRatesForDate(
   }
 
   // If taxes are disabled at the business config level, zero out all tax rates
-  if (config.enableTaxes === false || (config as any).enabled === false) {
+  if (!TaxPolicyEngine.isSocialTaxEnabled(config)) {
     return {
       cnssRateEmployee: 0,
       cnssRateEmployer: 0,
@@ -324,7 +325,8 @@ export function calculatePayrollFromSnapshot(
   const rates = resolveTaxRatesForDate(taxConfig || null, targetDate);
 
   // Government Taxes applied AFTER Gross Pay
-  const taxDeductions = enableTaxes
+  const isTaxActive = enableTaxes && TaxPolicyEngine.isSocialTaxEnabled(taxConfig);
+  const taxDeductions = isTaxActive
     ? calculateTaxDeductions(grossPay, rates)
     : { employeeCNSS: 0, employerCNSS: 0, employeeCNS: 0, employerCNS: 0, totalDeductions: 0 };
 

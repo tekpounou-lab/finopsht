@@ -54,25 +54,29 @@ export const RoleDetailConfig: React.FC<RoleDetailConfigProps> = ({
   const [activeSubTab, setActiveSubTab] = useState<"modules" | "permissions" | "presets">("modules");
   
   const normalizedSelectedRole = getRoleKey(selectedRole);
-  const isSuperOrOwner = normalizedSelectedRole === "SUPER_ADMIN" || normalizedSelectedRole === "OWNER";
+  const isSuperAdminRole = normalizedSelectedRole === "SUPER_ADMIN";
+  const isOwnerRole = normalizedSelectedRole === "OWNER";
+  const isSuperOrOwner = isSuperAdminRole || isOwnerRole;
   const roleMeta = getRoleMetadata(normalizedSelectedRole);
 
   const isModuleActive = (moduleId: string): boolean => {
-    if (isSuperOrOwner) return true;
+    const mod = ERP_MODULES.find(m => m.id === moduleId);
+    if (isSuperAdminRole) return true;
+    if (mod?.isPlatformSystemOnly) return false;
+    if (isOwnerRole) return true;
+
     const config = roleModuleMatrix[normalizedSelectedRole];
     if (config && config[moduleId] !== undefined) {
       return Boolean(config[moduleId]);
     }
-    const mod = ERP_MODULES.find(m => m.id === moduleId);
     return mod ? mod.defaultRoles.includes(normalizedSelectedRole) : false;
   };
 
   const isPermissionEnabled = (permId: string): boolean => {
-    if (isSuperOrOwner) return true;
+    if (isSuperAdminRole || isOwnerRole) return true;
     const perms = permissionMatrix[normalizedSelectedRole] || [];
     return perms.includes(permId);
   };
-
 
   const activeModuleCount = ERP_MODULES.filter(m => isModuleActive(m.id)).length;
   const activePermCount = AVAILABLE_PERMISSIONS.filter(p => isPermissionEnabled(p.id)).length;
@@ -249,10 +253,20 @@ export const RoleDetailConfig: React.FC<RoleDetailConfigProps> = ({
                           </div>
                         </div>
 
-                        {isSuperOrOwner ? (
-                          <div className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
+                        {isSuperAdminRole ? (
+                          <div className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[10px] font-bold flex items-center gap-1">
                             <Lock className="w-2.5 h-2.5" />
-                            <span>Verrouillé</span>
+                            <span>Plateforme</span>
+                          </div>
+                        ) : module.isPlatformSystemOnly ? (
+                          <div className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-500 text-[10px] font-medium flex items-center gap-1 cursor-not-allowed" title="Module système non délégable">
+                            <Lock className="w-2.5 h-2.5" />
+                            <span>Non délégable</span>
+                          </div>
+                        ) : isOwnerRole ? (
+                          <div className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold flex items-center gap-1">
+                            <Lock className="w-2.5 h-2.5" />
+                            <span>Propriétaire</span>
                           </div>
                         ) : (
                           <button

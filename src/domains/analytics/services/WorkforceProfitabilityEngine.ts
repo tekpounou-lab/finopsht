@@ -18,6 +18,7 @@ import {
 } from "../types/workforceProfitability";
 import { filterOperationalEmployees } from "../../../services/workforce/EmployeeEligibilityService";
 import { RevenueAttributionService } from "../../../services/RevenueAttributionService";
+import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 
 export class WorkforceProfitabilityEngine {
   /**
@@ -38,25 +39,7 @@ export class WorkforceProfitabilityEngine {
     endDate?: string,
     businessSettings?: any
   ): WorkforceProfitabilitySnapshot {
-    const isSocialTaxEnabled = businessSettings?.payroll_policies?.enableTaxes !== undefined
-      ? Boolean(businessSettings.payroll_policies.enableTaxes)
-      : (businessSettings?.payrollPolicies?.enableTaxes !== undefined
-          ? Boolean(businessSettings.payrollPolicies.enableTaxes)
-          : (businessSettings?.tax_config?.enableTaxes !== undefined
-              ? Boolean(businessSettings.tax_config.enableTaxes)
-              : (businessSettings?.taxConfig?.enableTaxes !== undefined
-                  ? Boolean(businessSettings.taxConfig.enableTaxes)
-                  : (businessSettings?.payroll?.taxes?.enabled !== undefined
-                      ? Boolean(businessSettings.payroll.taxes.enabled)
-                      : (businessSettings?.payroll?.enable_social_taxes !== undefined
-                          ? Boolean(businessSettings.payroll.enable_social_taxes)
-                          : (businessSettings?.payroll?.enableTaxes !== undefined
-                              ? Boolean(businessSettings.payroll.enableTaxes)
-                              : (businessSettings?.enable_social_taxes !== undefined
-                                  ? Boolean(businessSettings.enable_social_taxes)
-                                  : (businessSettings?.enableTaxes !== undefined
-                                      ? Boolean(businessSettings.enableTaxes)
-                                      : false))))))));
+    const isSocialTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
 
     const matchesBusiness = (item: any) => {
       if (!businessId) return true;

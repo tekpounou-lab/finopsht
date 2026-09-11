@@ -41,6 +41,8 @@ interface EmployeeDirectoryProps {
   onAction?: (action: string, employee: Employee) => void;
   currentUserId?: string;
   currentUserEmail?: string;
+  externalSearchQuery?: string;
+  onSearchQueryChange?: (q: string) => void;
 }
 
 const dirDict = {
@@ -171,7 +173,9 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   currentBusiness,
   onAction,
   currentUserId,
-  currentUserEmail
+  currentUserEmail,
+  externalSearchQuery,
+  onSearchQueryChange
 }) => {
   const { language } = useI18n();
   const d = dirDict[(language === "ht" || language === "en") ? language : "fr"];
@@ -208,6 +212,21 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     scannerFeedback, setScannerFeedback,
     recentScans, setRecentScans,
   } = useEmployeeDirectoryUIState();
+
+  // Sync external search query if provided
+  useEffect(() => {
+    if (externalSearchQuery !== undefined) {
+      setSearchQuery(externalSearchQuery);
+    }
+  }, [externalSearchQuery, setSearchQuery]);
+
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setSearchQuery(val);
+    if (onSearchQueryChange) {
+      onSearchQueryChange(val);
+    }
+  };
 
   const [isKioskModalOpen, setIsKioskModalOpen] = useState(false);
   const [kioskPreSelectedId, setKioskPreSelectedId] = useState<string | undefined>(undefined);
@@ -751,13 +770,16 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                 type="text" 
                 placeholder={d.searchPlaceholder}
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={handleSearchInputChange}
                 className="w-full bg-slate-950 border-2 border-slate-800 focus:border-cyan-500/80 text-slate-100 text-xs sm:text-sm rounded-xl pl-10 pr-9 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all font-mono shadow-inner"
               />
               {searchQuery && (
                 <button 
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition p-1"
+                  onClick={() => {
+                    setSearchQuery("");
+                    if (onSearchQueryChange) onSearchQueryChange("");
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition p-1 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>

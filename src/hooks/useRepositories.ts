@@ -195,7 +195,7 @@ export function useEvents(business_id: string | undefined) {
 
 export function useForensicLogs(business_id: string | undefined) {
   const { data } = useRealtimeSubscription<ForensicLog>(
-    "audit_logs",
+    "forensic_logs",
     business_id ? [{ field: "business_id", operator: "==", value: business_id }] : [],
     { 
       enabled: Boolean(business_id), 

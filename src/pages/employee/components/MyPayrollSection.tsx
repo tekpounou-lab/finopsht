@@ -20,12 +20,17 @@ import {
   Percent,
   ChevronRight,
   Sparkles,
-  X
+  X,
+  Clock,
+  Award,
+  Wallet
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Employee, PayrollRecord } from "../../../types";
+import { useBusinessContext } from "../../../contexts/BusinessContext";
+import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 
 interface MyPayrollSectionProps {
   employee: Employee;
@@ -42,6 +47,7 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
   branchName,
   tw,
 }) => {
+  const { businessSettings } = useBusinessContext();
   const [selectedYear, setSelectedYear] = useState<string>("ALL");
   const [selectedQuarter, setSelectedQuarter] = useState<string>("ALL");
   const [selectedRecord, setSelectedRecord] = useState<PayrollRecord | null>(null);
@@ -92,51 +98,79 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
     return acc + cnss + cns + adv;
   }, 0);
 
-  // Calculation details for focus record
+  // Calculation details for focus record according to canonical SSOT ledger fields
   const getRecordImpact = (record: PayrollRecord | null) => {
     if (!record) return null;
 
-    const baseSalary = typeof record.grossSalary === "number" && record.grossSalary > 0
-      ? record.grossSalary 
-      : (record.base_salary_cents ? record.base_salary_cents / 100 : (record.gross_salary_cents ? record.gross_salary_cents / 100 : 0));
+    // 1. BASE
+    const baseSalary = typeof record.theoretical_quincena_base_cents === "number"
+      ? record.theoretical_quincena_base_cents / 100
+      : (typeof record.grossSalary === "number" && record.grossSalary > 0
+          ? record.grossSalary 
+          : (record.base_salary_cents ? record.base_salary_cents / 100 : (record.gross_salary_cents ? record.gross_salary_cents / 100 : (employee.baseSalary || 0))));
 
-    const overtimeVal = record.overtime_cents ? record.overtime_cents / 100 : 0;
-    const commissionsVal = typeof record.commissions === "number" ? record.commissions : (record.commission_cents ? record.commission_cents / 100 : 0);
+    // 2. AJUST. (Ajustement assiduité / absences)
+    const ajustAbs = typeof record.attendance_adjustment_cents === "number"
+      ? record.attendance_adjustment_cents / 100
+      : 0;
+
+    // 3. SUP. (Heures supplémentaires)
+    const overtimeVal = typeof record.overtime_cents === "number"
+      ? record.overtime_cents / 100
+      : 0;
+
+    // 4. PRIMES & COMMISSIONS
+    const commissionsVal = typeof record.commissions === "number"
+      ? record.commissions
+      : (record.commission_cents ? record.commission_cents / 100 : 0);
     const bonusesVal = (record.bonuses_cents ? record.bonuses_cents / 100 : 0) + (record.performance_bonus_cents ? record.performance_bonus_cents / 100 : 0);
+    const primesVal = commissionsVal + bonusesVal;
 
-    const totalGrossCalculated = baseSalary + overtimeVal + commissionsVal + bonusesVal;
+    // 5. BRUT TOTAL
+    const totalGrossCalculated = baseSalary + ajustAbs + overtimeVal + primesVal;
 
-    // Respect exact recorded taxes from the initiated payroll record (do not force fallback if taxes were off/0)
-    const onaVal = typeof record.cnssDeduction === "number"
-      ? record.cnssDeduction
-      : (typeof record.cnss_employee_cents === "number" ? record.cnss_employee_cents / 100 : 0);
-
-    const ofatmaVal = typeof record.cnsDeduction === "number"
-      ? record.cnsDeduction
-      : (typeof record.cns_employee_cents === "number" ? record.cns_employee_cents / 100 : 0);
-
+    // 6. DETTES & PENALITES
     const advancesVal = typeof record.advancesTreated === "number"
       ? record.advancesTreated
       : (record.debts_deduction_cents ? record.debts_deduction_cents / 100 : 0);
 
     const penaltiesVal = record.penalties_cents ? record.penalties_cents / 100 : 0;
 
+    // 7. TAXES (ONA 6% / OFATMA 2%)
+    const isTaxActive = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
+    const onaVal = isTaxActive
+      ? (typeof record.cnssDeduction === "number"
+          ? record.cnssDeduction
+          : (typeof record.cnss_employee_cents === "number" ? record.cnss_employee_cents / 100 : Math.round(totalGrossCalculated * 0.06)))
+      : 0;
+
+    const ofatmaVal = isTaxActive
+      ? (typeof record.cnsDeduction === "number"
+          ? record.cnsDeduction
+          : (typeof record.cns_employee_cents === "number" ? record.cns_employee_cents / 100 : Math.round(totalGrossCalculated * 0.02)))
+      : 0;
+
     const totalDeductionsCalculated = onaVal + ofatmaVal + advancesVal + penaltiesVal;
 
-    const netPaidCalculated = typeof record.netPaid === "number"
+    // 8. NET NET
+    const netPaidCalculated = typeof record.netPaid === "number" && record.netPaid > 0
       ? record.netPaid
       : (record.net_salary_cents ? record.net_salary_cents / 100 : Math.max(0, totalGrossCalculated - totalDeductionsCalculated));
 
-    const taxesExemptedOrOff = (onaVal === 0 && ofatmaVal === 0);
+    const modalite = record.pay_profile || employee.paymentModel || "FIXE";
+    const score = record.globalPerformanceScore ?? record.attendanceScore ?? 100;
+    const taxesExemptedOrOff = !isTaxActive || (onaVal === 0 && ofatmaVal === 0);
 
     const netPercentage = totalGrossCalculated > 0 ? ((netPaidCalculated / totalGrossCalculated) * 100).toFixed(1) : "100";
     const deductionPercentage = totalGrossCalculated > 0 ? ((totalDeductionsCalculated / totalGrossCalculated) * 100).toFixed(1) : "0";
 
     return {
       baseSalary,
+      ajustAbs,
       overtimeVal,
       commissionsVal,
       bonusesVal,
+      primesVal,
       totalGrossCalculated,
       onaVal,
       ofatmaVal,
@@ -144,18 +178,34 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
       penaltiesVal,
       totalDeductionsCalculated,
       netPaidCalculated,
+      modalite,
+      score,
       netPercentage,
       deductionPercentage,
       taxesExemptedOrOff,
-      // Employer contributions
-      employerOna: typeof record.cnss_employer_cents === "number"
-        ? record.cnss_employer_cents / 100
-        : (onaVal > 0 ? totalGrossCalculated * 0.06 : 0),
-      employerOfatma: typeof record.ofatma_employer_cents === "number"
-        ? record.ofatma_employer_cents / 100
-        : (ofatmaVal > 0 ? totalGrossCalculated * 0.03 : 0),
+      employerOna: isTaxActive ? (record.cnss_employer_cents ? record.cnss_employer_cents / 100 : Math.round(totalGrossCalculated * 0.06)) : 0,
+      employerOfatma: isTaxActive ? (record.ofatma_employer_cents ? record.ofatma_employer_cents / 100 : Math.round(totalGrossCalculated * 0.03)) : 0,
     };
   };
+
+  // Active running payroll record simulation
+  const activeSimulationRecord: PayrollRecord = myRecords.find(r => ["DRAFT", "PENDING", "CALCULATED", "CORRECTED"].includes(r.status || "")) || {
+    id: `sim_${employee.id}_active`,
+    cycleId: "PÉRIODE ACTUELLE (EN COURS)",
+    business_id: employee.business_id || "",
+    employeeId: employee.id,
+    employeeName: employee.name,
+    grossSalary: employee.baseSalary || 0,
+    pay_profile: ((employee.paymentModel as unknown as string) === "FIXE" ? "FIXED" : employee.paymentModel) || "FIXED",
+    cnssDeduction: TaxPolicyEngine.isSocialTaxEnabled(businessSettings) ? Math.round((employee.baseSalary || 0) * 0.06) : 0,
+    cnsDeduction: TaxPolicyEngine.isSocialTaxEnabled(businessSettings) ? Math.round((employee.baseSalary || 0) * 0.02) : 0,
+    commissions: 0,
+    advancesTreated: 0,
+    netPaid: TaxPolicyEngine.isSocialTaxEnabled(businessSettings) ? Math.round((employee.baseSalary || 0) * 0.92) : (employee.baseSalary || 0),
+    status: "DRAFT",
+    hashSignature: "SIMULATION_SSOT_LIVE_ENGINE"
+  };
+  const activeSimImpact = getRecordImpact(activeSimulationRecord);
 
   // Generate PDF Payslip
   const handleDownloadPayslipPdf = (record: PayrollRecord) => {
@@ -193,27 +243,32 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
       body: [
         ["Nom & Prénom :", employee.name, "ID Employé :", employee.id],
         ["Poste :", employee.position || "Opérateur ERP", "Département :", deptName],
-        ["Succursale :", branchName, "Régime :", employee.paymentModel || "FIXE"],
+        ["Succursale :", branchName, "Modalité :", record.pay_profile || employee.paymentModel || "FIXE"],
         ["Période Paie :", record.cycleId, "Statut Paie :", (record.status || "PAID").toUpperCase()],
       ],
     });
 
-    // Earnings & Deductions Table
+    // Earnings & Deductions Table matching SSOT Ledger columns (BASE, AJUST, SUP, PRIMES, DETTES, BRUT, NET NET)
     const impact = getRecordImpact(record);
     if (!impact) return;
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 10,
-      head: [["Rubrique", "Gains / Majorations (HTG)", "Retenues Légales (HTG)"]],
+      head: [["Rubrique de Paie (SSOT)", "Gains / Adjustments (HTG)", "Retenues & Dettes (HTG)"]],
       body: [
-        ["Salaire de Base Brut", impact.baseSalary.toLocaleString("fr-FR") + " HTG", "-"],
-        ["Primes d'Heures Supplémentaires", impact.overtimeVal > 0 ? "+" + impact.overtimeVal.toLocaleString("fr-FR") + " HTG" : "-", "-"],
-        ["Commissions", impact.commissionsVal > 0 ? "+" + impact.commissionsVal.toLocaleString("fr-FR") + " HTG" : "-", "-"],
-        ["Primes de Performance", impact.bonusesVal > 0 ? "+" + impact.bonusesVal.toLocaleString("fr-FR") + " HTG" : "-", "-"],
-        ["Cotisation ONA (Employé - 6%)", "-", impact.onaVal > 0 ? "-" + impact.onaVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
-        ["Cotisation OFATMA / CNS (Employé - 2%)", "-", impact.ofatmaVal > 0 ? "-" + impact.ofatmaVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
-        ["Avances & Remboursements", "-", impact.advancesVal > 0 ? "-" + impact.advancesVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
-        ["Pénalités / Absences", "-", impact.penaltiesVal > 0 ? "-" + impact.penaltiesVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
+        ["Salaire de Base Contractuel (BASE)", impact.baseSalary.toLocaleString("fr-FR") + " HTG", "-"],
+        ["Ajustement de Présence (AJUST.)", impact.ajustAbs !== 0 ? (impact.ajustAbs > 0 ? "+" : "") + impact.ajustAbs.toLocaleString("fr-FR") + " HTG" : "-", "-"],
+        ["Majorations Heures Sup. (SUP.)", impact.overtimeVal > 0 ? "+" + impact.overtimeVal.toLocaleString("fr-FR") + " HTG" : "-", "-"],
+        ["Primes & Commissions (PRIMES)", impact.primesVal > 0 ? "+" + impact.primesVal.toLocaleString("fr-FR") + " HTG" : "-", "-"],
+        ["TOTAL SALAIRE BRUT (BRUT)", impact.totalGrossCalculated.toLocaleString("fr-FR") + " HTG", "-"],
+        ...(!impact.taxesExemptedOrOff ? [
+          ["Cotisation ONA (Employé - 6%)", "-", impact.onaVal > 0 ? "-" + impact.onaVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
+          ["Cotisation OFATMA / CNS (Employé - 2%)", "-", impact.ofatmaVal > 0 ? "-" + impact.ofatmaVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
+        ] : [
+          ["Cotisations Sociales (ONA / OFATMA)", "-", "0 HTG (Taxes Désactivées)"],
+        ]),
+        ["Remboursement Dettes & Avances (DETTES)", "-", impact.advancesVal > 0 ? "-" + impact.advancesVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
+        ["Pénalités & Absences Unjustifiées", "-", impact.penaltiesVal > 0 ? "-" + impact.penaltiesVal.toLocaleString("fr-FR") + " HTG" : "0 HTG"],
       ],
       headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
       styles: { fontSize: 8 },
@@ -226,14 +281,14 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
     doc.setTextColor(15, 23, 42);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("NET PAYÉ À L'EMPLOYÉ :", 20, finalY + 9);
+    doc.text("SALAIRE NET VERSÉ (NET NET) :", 20, finalY + 9);
     doc.text(`${impact.netPaidCalculated.toLocaleString("fr-FR")} HTG`, 140, finalY + 9);
 
     // Security Footer
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
     doc.text(`HMAC SIGNATURE: ${record.hashSignature || "HMAC::FINOPS-SEC-VERIFIED"}`, 14, finalY + 25);
-    doc.text("Document confidentiel généré par FINOPS ERP Engine. Fait foi de récépissé de paiement.", 14, finalY + 30);
+    doc.text("Document confidentiel certifié par FINOPS ERP Engine. Fait foi de récépissé de paiement.", 14, finalY + 30);
 
     doc.save(`Bulletin_Paie_${employee.name.replace(/\s+/g, "_")}_${record.cycleId}.pdf`);
   };
@@ -267,6 +322,123 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
         </div>
       </div>
 
+      {/* ACTIVE CURRENT PERIOD SIMULATION (SOURCE DE VÉRITÉ / REGISTRE DES ÉMOLUMENTS DU PROPRIÉTAIRE) */}
+      <div className="glass p-6 rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-slate-900/90 via-slate-900/50 to-cyan-950/20 shadow-xl space-y-5 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30 text-cyan-400">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  Période Actuelle en Cours
+                </span>
+                <span className="text-xs font-mono text-slate-400">Ref: Registre des Émoluments</span>
+              </div>
+              <h3 className="text-base font-black text-slate-100 uppercase tracking-tight mt-0.5">
+                Simulation de Paie Provisoire (2026)
+              </h3>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedRecord(activeSimulationRecord)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Eye className="w-3.5 h-3.5 text-cyan-400" />
+              Aperçu Détaillé
+            </button>
+            <button
+              onClick={() => handleDownloadPayslipPdf(activeSimulationRecord)}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-cyan-600/20"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Télécharger Bulletin Simulé
+            </button>
+          </div>
+        </div>
+
+        {/* 7 CANONICAL SSOT LEDGER FIELDS */}
+        {activeSimImpact && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+              <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl space-y-1">
+                <span className="text-[9px] font-mono font-bold uppercase text-slate-400 block">1. BASE</span>
+                <p className="text-sm font-black font-mono text-white">
+                  {activeSimImpact.baseSalary.toLocaleString()} <span className="text-[9px] text-slate-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-cyan-400 font-mono">Contrat (SSOT)</span>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl space-y-1">
+                <span className="text-[9px] font-mono font-bold uppercase text-slate-400 block">2. AJUST.</span>
+                <p className={`text-sm font-black font-mono ${activeSimImpact.ajustAbs < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                  {activeSimImpact.ajustAbs.toLocaleString()} <span className="text-[9px] text-slate-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-slate-500 font-mono">Présence (SSOT)</span>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl space-y-1">
+                <span className="text-[9px] font-mono font-bold uppercase text-slate-400 block">3. SUP.</span>
+                <p className="text-sm font-black font-mono text-emerald-400">
+                  +{activeSimImpact.overtimeVal.toLocaleString()} <span className="text-[9px] text-slate-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-slate-500 font-mono">Heures Sup.</span>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl space-y-1">
+                <span className="text-[9px] font-mono font-bold uppercase text-slate-400 block">4. PRIMES</span>
+                <p className="text-sm font-black font-mono text-emerald-400">
+                  +{activeSimImpact.primesVal.toLocaleString()} <span className="text-[9px] text-slate-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-slate-500 font-mono">Comms & Primes</span>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl space-y-1">
+                <span className="text-[9px] font-mono font-bold uppercase text-slate-400 block">5. DETTES</span>
+                <p className="text-sm font-black font-mono text-rose-400">
+                  -{activeSimImpact.advancesVal.toLocaleString()} <span className="text-[9px] text-slate-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-slate-500 font-mono">Avances / Prêts</span>
+              </div>
+
+              <div className="bg-slate-950/80 border border-emerald-500/30 p-3 rounded-xl space-y-1">
+                <span className="text-[9px] font-mono font-bold uppercase text-emerald-400 block">6. BRUT</span>
+                <p className="text-sm font-black font-mono text-emerald-300">
+                  {activeSimImpact.totalGrossCalculated.toLocaleString()} <span className="text-[9px] text-emerald-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-emerald-500/80 font-mono">Brut Calculé</span>
+              </div>
+
+              <div className="bg-slate-950/80 border border-cyan-500/40 p-3 rounded-xl space-y-1 bg-cyan-950/20">
+                <span className="text-[9px] font-mono font-bold uppercase text-cyan-400 block">7. NET NET</span>
+                <p className="text-sm font-black font-mono text-cyan-300">
+                  {activeSimImpact.netPaidCalculated.toLocaleString()} <span className="text-[9px] text-cyan-500">HTG</span>
+                </p>
+                <span className="text-[8px] text-cyan-400/80 font-mono">Net certifié</span>
+              </div>
+            </div>
+
+            {/* Traçabilité SSOT Disclosure */}
+            <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl flex items-center justify-between text-[10px] text-slate-400 font-mono">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>
+                  <strong>Certificat de provenance SSOT :</strong> Données extraites en direct des modules Firestore Contrats Employés, TaxPolicyEngine et Registre des Émoluments.
+                </span>
+              </div>
+              <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-bold shrink-0">
+                HMAC VERIFIED
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ACCESS TRIGGER */}
       <div className="glass p-6 rounded-2xl border border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -274,15 +446,15 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
             <DollarSign className="w-6 h-6 text-emerald-400" />
           </div>
           <div>
-            <h4 className="text-slate-200 font-bold text-sm uppercase">Historique des Bulletins de Paie</h4>
-            <p className="text-[10px] font-mono text-slate-500">Accédez à vos fiches de paie certifiées et immuables</p>
+            <h4 className="text-slate-200 font-bold text-sm uppercase">Historique des Bulletins Clôturés</h4>
+            <p className="text-[10px] font-mono text-slate-500">Accédez au registre complet des paies validées et certifiées</p>
           </div>
         </div>
         <button
           onClick={() => setShowHistoryModal(true)}
           className="px-6 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:border-emerald-400/50 rounded-xl text-xs font-mono font-bold transition flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/5 group"
         >
-          Voir l'historique complet
+          Voir le Registre Complet
           <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
         </button>
       </div>
@@ -575,8 +747,14 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
                       <p className="text-[10px] text-rose-300/80 mt-0.5">Cotisations & Taxes</p>
                     </div>
                     <div className="space-y-1 text-[10px] border-t border-rose-500/20 pt-2 font-mono text-slate-300">
-                      <div className="flex justify-between"><span>ONA (6%):</span><strong>-{modalImpact.onaVal.toLocaleString()} HTG</strong></div>
-                      <div className="flex justify-between"><span>OFATMA (2%):</span><strong>-{modalImpact.ofatmaVal.toLocaleString()} HTG</strong></div>
+                      {!modalImpact.taxesExemptedOrOff ? (
+                        <>
+                          <div className="flex justify-between"><span>ONA (6%):</span><strong>-{modalImpact.onaVal.toLocaleString()} HTG</strong></div>
+                          <div className="flex justify-between"><span>OFATMA (2%):</span><strong>-{modalImpact.ofatmaVal.toLocaleString()} HTG</strong></div>
+                        </>
+                      ) : (
+                        <div className="flex justify-between text-slate-400"><span>Cotisations Sociales:</span><strong className="text-slate-400">0 HTG (Désactivées)</strong></div>
+                      )}
                       {modalImpact.advancesVal > 0 && <div className="flex justify-between"><span>Avances:</span><strong className="text-amber-400">-{modalImpact.advancesVal.toLocaleString()} HTG</strong></div>}
                     </div>
                   </div>

@@ -19,6 +19,7 @@ import EnterpriseErrorBoundary from "./ui/ErrorBoundary";
 import { EditProfileModal } from "./profile/EditProfileModal";
 import { EmployeeRepository } from "../repositories/EmployeeRepository";
 import { PayrollRepository } from "../repositories/PayrollRepository";
+import EmployeeProfileDialog from "./staff/EmployeeProfileDialog";
 import { db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
@@ -117,6 +118,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+  const [focusedEmployeeIdForProfile, setFocusedEmployeeIdForProfile] = useState<string | null>(null);
 
   // Real-time Notifications Hook
   const { unreadCount: realTimeUnreadCount } = useNotifications(
@@ -220,9 +222,10 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 handleAddForensicLog={() => {}}
                 currentBusiness={liveBusiness}
                 ledgerTransactions={ledgerTransactions}
-                employeeContracts={[]}
+                payrollRecords={payrollRecords}
+                employeeContracts={employeeContracts || []}
                 language="fr"
-                setFocusedEmployeeIdForProfile={() => {}}
+                setFocusedEmployeeIdForProfile={setFocusedEmployeeIdForProfile}
                 setActiveTab={setActiveTab}
               />
             )}
@@ -584,6 +587,18 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             </div>
           </div>
         </div>
+      )}
+
+      {/* Employee Profile Modal */}
+      {focusedEmployeeIdForProfile && (
+        <EmployeeProfileDialog
+          employee={employees.find((e) => e.id === focusedEmployeeIdForProfile) || null}
+          isOpen={!!focusedEmployeeIdForProfile}
+          onClose={() => setFocusedEmployeeIdForProfile(null)}
+          businessName={liveBusiness?.name || "Tek Pou Nou S.A."}
+          payrollRecords={payrollRecords}
+          ledgerTransactions={ledgerTransactions}
+        />
       )}
     </div>
   );

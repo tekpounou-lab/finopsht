@@ -731,6 +731,7 @@ export default function FinanceLedger({
           transactions={ledgerSummary.transactionsWithBalance}
           rawCount={ledgerTransactions.length}
           currentRole={currentRole}
+          employees={employees}
           onViewDetails={(tx) => {}}
           onReverse={handleReverseTransaction}
           onBatchReverse={handleBatchReverseTransactions}

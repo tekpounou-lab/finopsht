@@ -8,6 +8,7 @@ import { getFirestoreHealth } from "../health/firestoreHealth";
 import { realtimeManager } from "../firestore/realtimeManager";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
 import { OutboxMetricsTracker } from "../../modules/runtime/EnterpriseMessageQueue";
+import { isOrphanTransaction } from "../AccountingEngine";
 
 class ObservabilityServiceClass {
   private currentBusinessId: string = "biz_default";
@@ -130,7 +131,7 @@ class ObservabilityServiceClass {
     // 5. Gather Financial Integrity Metrics (Live Calculations)
     const incomeSum = ledgerTransactions.filter(t => t.type === "INCOME").reduce((s, t) => s + (Number(t.amount) || 0), 0);
     const expenseSum = ledgerTransactions.filter(t => t.type === "EXPENSE" || t.type === "ADVANCE").reduce((s, t) => s + (Number(t.amount) || 0), 0);
-    const orphanTxCount = ledgerTransactions.filter(t => !t.departmentId || departments.every(d => d.id !== t.departmentId)).length;
+    const orphanTxCount = ledgerTransactions.filter(t => isOrphanTransaction(t)).length;
     const isLedgerBalanced = Math.abs(incomeSum - expenseSum) >= 0; // double-entry zero-sum invariant check
 
     const financialMetrics = {

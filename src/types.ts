@@ -327,6 +327,8 @@ export interface LedgerTransaction {
   branch_id?: string;
   departmentId?: string;
   department_id?: string;
+  costCenterId?: string;
+  cost_center_id?: string;
   employeeId?: string; // Linked employee (optional)
   employee_id?: string;
   branchCode?: string;

@@ -3,6 +3,7 @@ import * as xlsx from "xlsx";
 import { LedgerTransaction, PayrollRecord, AttendanceRecord, Employee, Branch } from "../types";
 import { WorkforceMetrics, BranchEfficiency } from "./WorkforceIntelligence";
 import { IntelligenceMetrics, BranchProfitability } from "./FinancialIntelligence";
+import { TaxPolicyEngine } from "./payroll/TaxPolicyEngine";
 
 const generateFileName = (prefix: string, ext: string) => {
   return `${prefix}_${new Date().toISOString().split("T")[0]}.${ext}`;
@@ -69,8 +70,14 @@ export const generateExecutivePdfReport = (
 export const generatePayslipPdf = (
   payroll: PayrollRecord,
   employee: Employee,
-  businessName: string
+  businessName: string,
+  businessSettings?: any
 ) => {
+  const isSocialTaxEnabled = businessSettings
+    ? TaxPolicyEngine.isSocialTaxEnabled(businessSettings)
+    : (payroll.cnssDeduction > 0 || payroll.cnsDeduction > 0);
+  const rates = businessSettings ? TaxPolicyEngine.resolveRates(businessSettings) : { employeeOnaRate: 0.06, employeeOfatmaRate: 0.02 };
+
   const pdf = new jsPDF();
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(20);
@@ -85,8 +92,13 @@ export const generatePayslipPdf = (
   pdf.text(`Salaire de base: ${employee.baseSalary} HTG`, 14, 70);
   pdf.text(`Commissions: ${payroll.commissions} HTG`, 14, 77);
   pdf.text(`Avances déduites: ${payroll.advancesTreated} HTG`, 14, 84);
-  pdf.text(`Déduction CNSS (6%): ${payroll.cnssDeduction} HTG`, 14, 91);
-  pdf.text(`Déduction CNS (2%): ${payroll.cnsDeduction} HTG`, 14, 98);
+  if (isSocialTaxEnabled) {
+    pdf.text(`Déduction ONA (${(rates.employeeOnaRate * 100).toFixed(1)}%): ${payroll.cnssDeduction} HTG`, 14, 91);
+    pdf.text(`Déduction OFATMA (${(rates.employeeOfatmaRate * 100).toFixed(1)}%): ${payroll.cnsDeduction} HTG`, 14, 98);
+  } else {
+    pdf.text(`Cotisations Sociales (ONA/OFATMA): 0 HTG (Désactivées)`, 14, 91);
+    pdf.text(`Retenues Fiscales & Sociales: Non applicable`, 14, 98);
+  }
   
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(14);
@@ -153,8 +165,13 @@ export const exportCardSnapshotToPdf = (
 
 export const generatePayrollPdfReport = (
   payrollData: any[],
-  businessName: string
+  businessName: string,
+  businessSettings?: any
 ) => {
+  const isSocialTaxEnabled = businessSettings
+    ? TaxPolicyEngine.isSocialTaxEnabled(businessSettings)
+    : payrollData.some((item) => (item.cnssDeduction || item.cnss || 0) > 0 || (item.cnsDeduction || item.cns || 0) > 0);
+  const rates = businessSettings ? TaxPolicyEngine.resolveRates(businessSettings) : { employeeOnaRate: 0.06, employeeOfatmaRate: 0.02 };
   const pdf = new jsPDF();
   
   // Header Branding block with corporate Navy color
@@ -204,9 +221,9 @@ export const generatePayrollPdfReport = (
   const totalCommissions = payrollData.reduce((sum, item) => sum + (item.commissionsGenerated || 0), 0);
   const totalAdvances = payrollData.reduce((sum, item) => sum + (item.advancesTaken || 0), 0);
   
-  const totalCnss = Math.round(totalGross * 0.06);
-  const totalCns = Math.round(totalGross * 0.02);
-  const totalNet = totalGross - totalCnss - totalCns;
+  const totalCnss = isSocialTaxEnabled ? Math.round(totalGross * rates.employeeOnaRate) : 0;
+  const totalCns = isSocialTaxEnabled ? Math.round(totalGross * rates.employeeOfatmaRate) : 0;
+  const totalNet = totalGross - totalAdvances - totalCnss - totalCns;
 
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(9);
@@ -214,14 +231,14 @@ export const generatePayrollPdfReport = (
   pdf.text("EFFECTIF", 20, 70);
   pdf.text("MASSE NETTE", 60, 70);
   pdf.text("COMMISSIONS", 105, 70);
-  pdf.text("PRELEVEMENTS CNSS/CNS", 145, 70);
+  pdf.text(isSocialTaxEnabled ? "PRELEVEMENTS CNSS/CNS" : "TAXES SOCIALES (OFF)", 145, 70);
 
   pdf.setFontSize(14);
   pdf.setTextColor(15, 23, 42); // slate-900
   pdf.text(`${totalEmployees}`, 20, 81);
   pdf.text(`${totalNet.toLocaleString()} HTG`, 60, 81);
   pdf.text(`${totalCommissions.toLocaleString()} HTG`, 105, 81);
-  pdf.text(`${(totalCnss + totalCns).toLocaleString()} HTG`, 145, 81);
+  pdf.text(isSocialTaxEnabled ? `${(totalCnss + totalCns).toLocaleString()} HTG` : "0 HTG (Exonéré)", 145, 81);
 
   // Table header with Teal Accent background
   pdf.setFillColor(13, 148, 136); // teal-600

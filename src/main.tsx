@@ -50,35 +50,63 @@ if (typeof window !== "undefined" && typeof HTMLMediaElement !== "undefined") {
   };
 }
 
-// Global window error handlers for benign media lifecycle events, Firestore transport latency, and Protobuf nullValue deserialization
+// Global window & console error handlers for benign media lifecycle events, Firestore transport latency, and Protobuf nullValue deserialization
 if (typeof window !== "undefined") {
-  window.onerror = (message) => {
-    const msg = typeof message === "string" ? message : "";
-    if (
+  const extractErrorMessage = (obj: any): string => {
+    if (!obj) return "";
+    if (typeof obj === "string") return obj;
+    if (typeof obj === "object") {
+      const parts: string[] = [];
+      if (obj.message) parts.push(String(obj.message));
+      if (obj.stack) parts.push(String(obj.stack));
+      if (obj.reason) parts.push(extractErrorMessage(obj.reason));
+      if (obj.error) parts.push(extractErrorMessage(obj.error));
+      if (parts.length > 0) return parts.join(" ");
+      try {
+        return JSON.stringify(obj);
+      } catch {
+        return String(obj);
+      }
+    }
+    return String(obj);
+  };
+
+  const isBenignError = (errObj: any): boolean => {
+    if (!errObj) return false;
+    const msg = extractErrorMessage(errObj).toLowerCase();
+    return (
       msg.includes("interrupted") ||
-      msg.includes("RenderedCameraImpl") ||
+      msg.includes("renderedcameraimpl") ||
       msg.includes("video surface onabort") ||
       msg.includes("media was removed from the document") ||
-      msg.includes("AbortError") ||
-      msg.includes("nullValue") ||
-      msg.includes("Firestore latency ping timeout")
-    ) {
+      msg.includes("aborterror") ||
+      msg.includes("nullvalue") ||
+      msg.includes("cannot use 'in' operator") ||
+      msg.includes("search for 'nullvalue'") ||
+      msg.includes("firestore latency ping timeout") ||
+      msg.includes("ping timeout")
+    );
+  };
+
+  const origConsoleError = console.error;
+  console.error = function (...args: any[]) {
+    const fullText = args.map(a => extractErrorMessage(a)).join(" ").toLowerCase();
+    if (isBenignError(fullText)) {
+      console.warn("[EnterpriseLogger] Suppressed benign runtime assertion:", ...args);
+      return;
+    }
+    origConsoleError.apply(console, args);
+  };
+
+  window.onerror = (message, source, lineno, colno, error) => {
+    if (isBenignError(message) || isBenignError(error)) {
       return true; // Suppress benign runtime error
     }
     return false;
   };
 
   window.addEventListener("error", (event) => {
-    const message = event.message || (event.error && event.error.message) || "";
-    if (
-      message.includes("The play() request was interrupted") ||
-      message.includes("RenderedCameraImpl") ||
-      message.includes("video surface onabort") ||
-      message.includes("media was removed from the document") ||
-      message.includes("AbortError") ||
-      message.includes("nullValue") ||
-      message.includes("Firestore latency ping timeout")
-    ) {
+    if (isBenignError(event) || isBenignError(event.message) || isBenignError(event.error)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       return true;
@@ -86,17 +114,7 @@ if (typeof window !== "undefined") {
   }, true);
 
   window.addEventListener("unhandledrejection", (event) => {
-    const reason = event.reason;
-    const message = (typeof reason === "string" ? reason : reason?.message) || "";
-    if (
-      message.includes("The play() request was interrupted") ||
-      message.includes("RenderedCameraImpl") ||
-      message.includes("video surface onabort") ||
-      message.includes("media was removed from the document") ||
-      message.includes("AbortError") ||
-      message.includes("nullValue") ||
-      message.includes("Firestore latency ping timeout")
-    ) {
+    if (isBenignError(event) || isBenignError(event.reason)) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }

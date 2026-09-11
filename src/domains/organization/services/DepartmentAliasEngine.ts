@@ -48,33 +48,36 @@ export class DepartmentAliasEngine {
     if (!query || !query.trim()) {
       return { rawInput: query || "", department: null, confidence: "UNMAPPED" };
     }
+    if (!departments || !Array.isArray(departments)) {
+      return { rawInput: query || "", department: null, confidence: "UNMAPPED" };
+    }
 
     const raw = query.trim();
     const normalized = this.normalizeString(raw);
     const upperRaw = raw.toUpperCase();
 
     // 1. Direct ID match
-    const byId = departments.find(d => d.id === raw || d.id.toLowerCase() === raw.toLowerCase());
+    const byId = departments.find(d => d && d.id && (d.id === raw || String(d.id).toLowerCase() === raw.toLowerCase()));
     if (byId) {
       return { rawInput: raw, department: byId, confidence: "EXACT_ID", matchedBy: byId.id };
     }
 
     // 2. Direct Code match
-    const byCode = departments.find(d => d.code && (d.code.trim().toUpperCase() === upperRaw || this.normalizeString(d.code) === normalized));
+    const byCode = departments.find(d => d && d.code && (d.code.trim().toUpperCase() === upperRaw || this.normalizeString(d.code) === normalized));
     if (byCode) {
       return { rawInput: raw, department: byCode, confidence: "EXACT_CODE", matchedBy: byCode.code };
     }
 
     // 3. Exact Name match
-    const byName = departments.find(d => this.normalizeString(d.name) === normalized);
+    const byName = departments.find(d => d && d.name && this.normalizeString(d.name) === normalized);
     if (byName) {
       return { rawInput: raw, department: byName, confidence: "EXACT_NAME", matchedBy: byName.name };
     }
 
     // 4. Registered Alias match
     for (const dept of departments) {
-      if (dept.aliases && Array.isArray(dept.aliases)) {
-        const matchedAlias = dept.aliases.find(a => this.normalizeString(a) === normalized);
+      if (dept && dept.aliases && Array.isArray(dept.aliases)) {
+        const matchedAlias = dept.aliases.find(a => a && this.normalizeString(a) === normalized);
         if (matchedAlias) {
           return { rawInput: raw, department: dept, confidence: "ALIAS_MATCH", matchedBy: matchedAlias };
         }

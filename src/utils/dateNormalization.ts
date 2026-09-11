@@ -338,7 +338,7 @@ export function normalizeDatesInObject<T>(
       const isDateKey = /date|timestamp/i.test(key);
 
       if (isDateKey && val !== null && val !== undefined) {
-        if (typeof val === 'object' && ('seconds' in val || 'toDate' in val)) {
+        if (typeof val === 'object' && val !== null && ('seconds' in val || 'toDate' in val)) {
           result[key] = toDateOnly(val as DateInput);
         } else if (typeof val !== 'object') {
           const normalized = toDateOnly(val as DateInput);

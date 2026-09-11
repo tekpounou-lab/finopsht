@@ -1,5 +1,15 @@
 # FINOPS ERP — Architectural Changelog
 
+## [2.9.0] - 2026-09-10
+### Fixed & Enhanced (Personnel Profile Actions & Official Payslip Generation)
+- **Personnel Profile Pane Action Buttons Integration**:
+  - Connected the "Fiche HR Complète" button in `ConnectedPersonnel.tsx` directly to the `EmployeeProfileDialog` modal component, supported at both the local module layer and the parent `DashboardShell` orchestrator layer.
+  - Replaced the no-op state setter in `DashboardShell.tsx` (`setFocusedEmployeeIdForProfile`) with an active state handler and rendered the full profile dialog with live employee, ledger, and payroll record bindings.
+  - Fixed defensive property resolution in `DepartmentAliasEngine.ts` and `EmployeeProfileDialog.tsx` to handle legacy documents gracefully without undefined attribute errors.
+- **Resilient Payslip PDF Generation (`exportPayslipPdf`)**:
+  - Upgraded PDF export with error handling, loading states, and direct blob URL download fallback when standard browser popups are blocked.
+  - Added user feedback toasts (`payslipToast`) notifying users upon successful PDF download or alerting them with explicit diagnostic messages.
+
 ## [2.8.0] - 2026-09-06
 ### Audited, Corrected & Documented (General Ledger / Grand Livre Comptable Module)
 - **General Ledger Full Forensic Audit**:

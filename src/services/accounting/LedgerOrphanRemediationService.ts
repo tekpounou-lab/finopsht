@@ -44,17 +44,16 @@ export class LedgerOrphanRemediationService {
    * (missing branchId/branch_id or departmentId/department_id).
    */
   public static isOrphan(tx: Partial<LedgerTransaction>): boolean {
-    const hasBranch = Boolean(
+    const hasBranchOrCostCenter = Boolean(
       (tx.branchId && tx.branchId.trim() !== "" && tx.branchId !== "none" && tx.branchId !== "ORPHAN" && tx.branchId !== "UNASSIGNED") ||
-      (tx.branch_id && tx.branch_id.trim() !== "" && tx.branch_id !== "none" && tx.branch_id !== "ORPHAN" && tx.branch_id !== "UNASSIGNED")
+      (tx.branch_id && tx.branch_id.trim() !== "" && tx.branch_id !== "none" && tx.branch_id !== "ORPHAN" && tx.branch_id !== "UNASSIGNED") ||
+      ((tx as any).cost_center_id && (tx as any).cost_center_id !== "none" && (tx as any).cost_center_id !== "ORPHAN" && (tx as any).cost_center_id !== "UNASSIGNED") ||
+      ((tx as any).costCenterId && (tx as any).costCenterId !== "none" && (tx as any).costCenterId !== "ORPHAN" && (tx as any).costCenterId !== "UNASSIGNED")
     );
 
-    const hasDepartment = Boolean(
-      (tx.departmentId && tx.departmentId.trim() !== "" && tx.departmentId !== "none" && tx.departmentId !== "ORPHAN" && tx.departmentId !== "UNASSIGNED") ||
-      (tx.department_id && tx.department_id.trim() !== "" && tx.department_id !== "none" && tx.department_id !== "ORPHAN" && tx.department_id !== "UNASSIGNED")
-    );
+    const hasAccounts = Boolean(tx.debit_account && tx.credit_account);
 
-    return !hasBranch || !hasDepartment;
+    return !hasBranchOrCostCenter || !hasAccounts;
   }
 
   /**

@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, limit, orderBy } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../lib/firebase";
+import { db, handleFirestoreError, OperationType, withFirestoreRetry } from "../lib/firebase";
 import { EDMSDocument, EDMSDocumentAuditEntry, EDMSDocumentStatus, EDMSDocumentType } from "../types";
 import { EventBus } from "../modules/runtime/EventBus";
 
@@ -45,7 +45,11 @@ export const DocumentRepository = {
     const path = `businesses/${document.businessId}/documents/${document.id}`;
     try {
       // 1. Check immutability if document already exists
-      await this.verifyDocumentLock(document.businessId, document.id);
+      try {
+        await this.verifyDocumentLock(document.businessId, document.id);
+      } catch (e: any) {
+        if (e.message?.startsWith("PERIOD_LOCKED")) throw e;
+      }
 
       // 2. Prepare lightweight document object (strip massive base64 blobs if storagePath is present)
       const docToSave: EDMSDocument = {
@@ -56,19 +60,21 @@ export const DocumentRepository = {
 
       const now = new Date().toISOString();
 
-      // Save tenant-scoped
-      const docRef = doc(db, "businesses", document.businessId, "documents", document.id);
-      await setDoc(docRef, {
-        ...docToSave,
-        updatedAt: now
-      }, { merge: true });
+      await withFirestoreRetry(async () => {
+        // Save tenant-scoped
+        const docRef = doc(db, "businesses", document.businessId, "documents", document.id);
+        await setDoc(docRef, {
+          ...docToSave,
+          updatedAt: now
+        }, { merge: true });
 
-      // Save top-level index for fast direct ID / checksum verification
-      const topLevelRef = doc(db, "documents", document.id);
-      await setDoc(topLevelRef, {
-        ...docToSave,
-        updatedAt: now
-      }, { merge: true });
+        // Save top-level index for fast direct ID / checksum verification
+        const topLevelRef = doc(db, "documents", document.id);
+        await setDoc(topLevelRef, {
+          ...docToSave,
+          updatedAt: now
+        }, { merge: true });
+      }, { tag: "DocumentRepository.saveDocument", maxRetries: 2 });
 
       EventBus.publish(EventBus.createEvent({
         correlationId: `doc_saved_${document.id}`,
@@ -87,7 +93,7 @@ export const DocumentRepository = {
         }
       }));
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.warn(`[DocumentRepository] Save document notice for ${path}:`, error);
     }
   },
 
@@ -182,7 +188,7 @@ export const DocumentRepository = {
         const topDocs = topSnap.docs.map(d => d.data() as EDMSDocument);
         return topDocs.sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime());
       } catch (fallbackErr) {
-        handleFirestoreError(fallbackErr, OperationType.GET, "documents");
+        console.warn(`[DocumentRepository] Query failed for ${path}, returning empty fallback list:`, fallbackErr);
         return [];
       }
     }

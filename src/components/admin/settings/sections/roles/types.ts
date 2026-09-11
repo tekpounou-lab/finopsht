@@ -31,6 +31,7 @@ export interface ErpModuleDefinition {
   icon: LucideIcon;
   color: string;
   defaultRoles: string[];
+  isPlatformSystemOnly?: boolean; // Reserved exclusively for Super Admin platform governance
 }
 
 export interface PermissionDefinition {
@@ -235,7 +236,8 @@ export const ERP_MODULES: ErpModuleDefinition[] = [
     categoryLabel: "Administration & Sécurité Système",
     icon: Activity,
     color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-    defaultRoles: ["SUPER_ADMIN"]
+    defaultRoles: ["SUPER_ADMIN"],
+    isPlatformSystemOnly: true
   },
   {
     id: "reliability",
@@ -247,7 +249,8 @@ export const ERP_MODULES: ErpModuleDefinition[] = [
     categoryLabel: "Administration & Sécurité Système",
     icon: Cpu,
     color: "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
-    defaultRoles: ["SUPER_ADMIN"]
+    defaultRoles: ["SUPER_ADMIN"],
+    isPlatformSystemOnly: true
   },
   {
     id: "recovery",
@@ -259,7 +262,8 @@ export const ERP_MODULES: ErpModuleDefinition[] = [
     categoryLabel: "Administration & Sécurité Système",
     icon: Database,
     color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
-    defaultRoles: ["SUPER_ADMIN"]
+    defaultRoles: ["SUPER_ADMIN"],
+    isPlatformSystemOnly: true
   },
 
   // 5. Administration & Security
@@ -280,52 +284,63 @@ export const ERP_MODULES: ErpModuleDefinition[] = [
 export const AVAILABLE_PERMISSIONS: PermissionDefinition[] = [
   { id: "employees.read", label: "Lecture Employés", desc: "Consulter les fiches techniques et matricules", category: "hr" },
   { id: "employees.write", label: "Modification Employés", desc: "Créer, modifier les contrats et informations RH", category: "hr" },
+  { id: "documents.upload", label: "Dépôt Documents RH", desc: "Téléverser des pièces d'identité et contrats", category: "hr" },
   { id: "attendance.scan", label: "Scanner Présence", desc: "Autoriser l'utilisation du scanner QR Code terrain", category: "ops" },
   { id: "attendance.manage", label: "Gestion des Temps", desc: "Corriger les anomalies, valider les retards", category: "ops" },
+  { id: "planning.write", label: "Édition des Plannings", desc: "Créer et modifier les grilles d'horaires et rotations", category: "ops" },
+  { id: "leaves.request", label: "Demande de Congés", desc: "Déposer une demande d'absence pour soi-même", category: "ops" },
   { id: "leaves.approve", label: "Approbation des Congés", desc: "Valider ou rejeter les demandes d'absence", category: "ops" },
+  { id: "payroll.view", label: "Consultation Paie", desc: "Consulter les fiches et cycles de paie de l'entreprise", category: "finance" },
   { id: "payroll.run", label: "Calcul de Paie", desc: "Générer les calculs salariaux et brouillons", category: "finance" },
   { id: "payroll.lock", label: "Clôture & Verrouillage Paie", desc: "Verrouiller une période et finaliser les décaissements", category: "finance" },
+  { id: "invoices.create", label: "Émission Factures/Devis", desc: "Créer et envoyer devis proformas et factures", category: "finance" },
   { id: "finance.view", label: "Visualisation Comptable", desc: "Consulter le grand livre et les journaux financiers", category: "finance" },
   { id: "finance.write", label: "Écritures Comptables", desc: "Passer des écritures manuelles au journal", category: "finance" },
   { id: "analytics.view", label: "Accès Analytics Exécutif", desc: "Accéder aux indicateurs décisionnels stratégiques", category: "intelligence" },
   { id: "admin.settings", label: "Administration Système", desc: "Gérer l'organisation, les rôles et configurations", category: "admin" }
 ];
 
-export const STANDARD_ROLE_METADATA: Record<string, { label: string; desc: string; isSystem?: boolean; badgeColor: string }> = {
+export const STANDARD_ROLE_METADATA: Record<string, { label: string; desc: string; isSystem?: boolean; tier: "platform" | "owner" | "tenant"; badgeColor: string }> = {
   "SUPER_ADMIN": {
     label: "Super Administrateur",
     desc: "Contrôle absolu et souverain de toute la plateforme, des infrastructures et des audits multi-entreprises.",
     isSystem: true,
+    tier: "platform",
     badgeColor: "bg-purple-500/10 text-purple-400 border-purple-500/30"
   },
   "OWNER": {
     label: "Propriétaire / CEO",
     desc: "Contrôle souverain et total de son entreprise (tous les modules, RH, paie, finances et configurations).",
     isSystem: true,
+    tier: "owner",
     badgeColor: "bg-amber-500/10 text-amber-400 border-amber-500/30"
   },
   "ADMIN": {
     label: "Administrateur Général",
     desc: "Pilotage complet de l'entreprise, des habilitations et des modules métiers.",
     isSystem: true,
+    tier: "tenant",
     badgeColor: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30"
   },
   "MANAGER": {
     label: "Manager Opérationnel",
     desc: "Supervision d'une succursale, gestion du personnel, plannings et validation paie.",
     isSystem: true,
+    tier: "tenant",
     badgeColor: "bg-blue-500/10 text-blue-400 border-blue-500/30"
   },
   "SUPERVISOR": {
     label: "Superviseur d'Équipe",
     desc: "Pointage terrain, suivi des shifts, des plannings et validation des présences.",
     isSystem: true,
+    tier: "tenant",
     badgeColor: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
   },
   "EMPLOYEE": {
     label: "Collaborateur / Salarié",
     desc: "Accès au portail collaborateur, consultation des fiches de paie et plannings.",
     isSystem: true,
+    tier: "tenant",
     badgeColor: "bg-slate-500/10 text-slate-400 border-slate-500/30"
   }
 };

@@ -36,7 +36,7 @@ export default function FilterToolbar({ branches, departments, employees, filter
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 p-4 mt-4 backdrop-blur-md bg-slate-900/40 border border-slate-800/60 rounded-xl">
+    <div id="attendance-filter-toolbar" className="flex flex-col md:flex-row gap-4 p-4 mt-4 backdrop-blur-md bg-slate-900/40 border border-slate-800/60 rounded-xl">
       <div className="relative flex-1">
         <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
         <input 
@@ -63,6 +63,14 @@ export default function FilterToolbar({ branches, departments, employees, filter
         >
           <option value="ALL">Tous départements</option>
           {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+        <select 
+          value={filters.employeeId || 'ALL'}
+          onChange={(e) => onFilterChange({ ...filters, employeeId: e.target.value })}
+          className="bg-slate-950 border border-slate-800 rounded px-2 py-2 text-xs text-slate-300 font-sans focus:border-cyan-500 outline-none w-36"
+        >
+          <option value="ALL">Tous employés</option>
+          {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
         </select>
         <select 
           value={filters.status}

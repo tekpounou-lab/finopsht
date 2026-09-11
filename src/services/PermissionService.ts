@@ -12,7 +12,6 @@ export interface LicenseCheckResult {
 }
 
 export const SUPER_ADMIN_SYSTEM_MODULES = [
-  "forensic",
   "health",
   "system_health",
   "reliability",
@@ -520,7 +519,16 @@ class PermissionServiceClass {
    * Updates the dynamic role-to-module matrix configured by the tenant Admin.
    */
   public setRoleModuleMatrix(matrix: Record<string, Record<string, boolean>>): void {
-    this.roleModuleMatrix = matrix || {};
+    const sanitized: Record<string, Record<string, boolean>> = {};
+    for (const [role, modMap] of Object.entries(matrix || {})) {
+      sanitized[role] = { ...modMap };
+      if (role !== "SUPER_ADMIN") {
+        for (const sysMod of SUPER_ADMIN_SYSTEM_MODULES) {
+          sanitized[role][sysMod] = false;
+        }
+      }
+    }
+    this.roleModuleMatrix = sanitized;
     this.capabilityCache = {};
   }
 

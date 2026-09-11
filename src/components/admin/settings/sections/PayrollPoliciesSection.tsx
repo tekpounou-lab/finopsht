@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { FileText, Calendar, Clock, Percent, DollarSign, ShieldAlert, Zap, ShieldCheck, TrendingUp } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useBusinessContext } from "../../../../contexts/BusinessContext";
 import { useBusinessAdmin } from "../../../../hooks/useBusinessAdmin";
 import { BusinessAdministrationRepository } from "../../../../repositories/BusinessAdministrationRepository";
+import { TaxPolicyEngine } from "../../../../services/payroll/TaxPolicyEngine";
 import { toast } from "sonner";
 import { isQuotaExceededError } from "../../../../utils/resilientFirestore";
 
@@ -13,55 +14,142 @@ export default function PayrollPoliciesSection() {
 
   const businessId = business?.id || "BIZ_MAIN";
 
-  const { register, handleSubmit, watch } = useForm({
+  const resolvedIsTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
+  const resolvedIsFloorEnabled = TaxPolicyEngine.isSurvivalFloorEnabled(businessSettings);
+  const resolvedFloorAmount = TaxPolicyEngine.getSurvivalFloorAmount(businessSettings);
+  const resolvedRates = TaxPolicyEngine.resolveRates(businessSettings);
+  const resolvedIsAttendanceRequired = TaxPolicyEngine.isAttendanceRequiredForPayroll(businessSettings);
+
+  const { register, handleSubmit, watch, reset } = useForm({
     defaultValues: {
-      frequency: "BIWEEKLY",
-      currency: "HTG",
-      ot_rate_normal: 1.5,
-      ot_rate_holiday: 2.0,
-      late_penalty_cents: 500,
-      absence_penalty_cents: 2500,
-      tax_cnss_employee: 6,
-      tax_cnss_employer: 6,
-      tax_cns_employee: 2,
-      tax_cns_employer: 3,
-      enable_social_taxes: true,
-      enable_survival_floor: true,
-      survival_floor_htg: 15000,
-      default_commission_rate: 5,
-      require_attendance_for_payroll: true,
+      frequency: businessSettings?.payroll?.frequency || businessSettings?.payroll_policies?.frequency || "BIWEEKLY",
+      currency: businessSettings?.payroll?.currency || businessSettings?.payroll_policies?.currency || "HTG",
+      ot_rate_normal: businessSettings?.payroll?.ot_rate_normal ?? businessSettings?.payroll_policies?.overtimeRate150 ?? 1.5,
+      ot_rate_holiday: businessSettings?.payroll?.ot_rate_holiday ?? businessSettings?.payroll_policies?.overtimeRate200 ?? 2.0,
+      late_penalty_cents: businessSettings?.payroll?.late_penalty_cents ?? 500,
+      absence_penalty_cents: businessSettings?.payroll?.absence_penalty_cents ?? 2500,
+      tax_cnss_employee: Math.round(resolvedRates.employeeOnaRate * 100),
+      tax_cnss_employer: Math.round(resolvedRates.employerOnaRate * 100),
+      tax_cns_employee: Math.round(resolvedRates.employeeOfatmaRate * 100),
+      tax_cns_employer: Math.round(resolvedRates.employerOfatmaRate * 100),
+      enable_social_taxes: resolvedIsTaxEnabled,
+      enable_survival_floor: resolvedIsFloorEnabled,
+      survival_floor_htg: resolvedFloorAmount,
+      default_commission_rate: (businessSettings?.payroll?.default_commission_rate ?? ((businessSettings?.payroll_policies?.defaultCommissionRate || 0.05) * 100)),
+      require_attendance_for_payroll: resolvedIsAttendanceRequired,
       ...(businessSettings?.payroll || {})
     }
   });
+
+  useEffect(() => {
+    if (businessSettings) {
+      const isTax = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
+      const isFloor = TaxPolicyEngine.isSurvivalFloorEnabled(businessSettings);
+      const floor = TaxPolicyEngine.getSurvivalFloorAmount(businessSettings);
+      const rates = TaxPolicyEngine.resolveRates(businessSettings);
+      const isAtt = TaxPolicyEngine.isAttendanceRequiredForPayroll(businessSettings);
+
+      reset({
+        frequency: businessSettings.payroll?.frequency || businessSettings.payroll_policies?.frequency || "BIWEEKLY",
+        currency: businessSettings.payroll?.currency || businessSettings.payroll_policies?.currency || "HTG",
+        ot_rate_normal: businessSettings.payroll?.ot_rate_normal ?? businessSettings.payroll_policies?.overtimeRate150 ?? 1.5,
+        ot_rate_holiday: businessSettings.payroll?.ot_rate_holiday ?? businessSettings.payroll_policies?.overtimeRate200 ?? 2.0,
+        late_penalty_cents: businessSettings.payroll?.late_penalty_cents ?? 500,
+        absence_penalty_cents: businessSettings.payroll?.absence_penalty_cents ?? 2500,
+        tax_cnss_employee: Math.round(rates.employeeOnaRate * 100),
+        tax_cnss_employer: Math.round(rates.employerOnaRate * 100),
+        tax_cns_employee: Math.round(rates.employeeOfatmaRate * 100),
+        tax_cns_employer: Math.round(rates.employerOfatmaRate * 100),
+        enable_social_taxes: isTax,
+        enable_survival_floor: isFloor,
+        survival_floor_htg: floor,
+        default_commission_rate: (businessSettings.payroll?.default_commission_rate ?? ((businessSettings.payroll_policies?.defaultCommissionRate || 0.05) * 100)),
+        require_attendance_for_payroll: isAtt,
+        ...(businessSettings.payroll || {})
+      });
+    }
+  }, [businessSettings, reset]);
 
   const isSocialTaxEnabled = watch("enable_social_taxes");
   const isSurvivalFloorEnabled = watch("enable_survival_floor");
 
   const onSubmit = async (data: any) => {
     try {
-      await updateSettings({ ...businessSettings, payroll: data });
+      const enableTaxes = !!data.enable_social_taxes;
+      const enableSurvivalFloor = !!data.enable_survival_floor;
+      const requireAttendance = !!data.require_attendance_for_payroll;
+      const survivalFloor = Number(data.survival_floor_htg) || 15000;
+
+      const updatedPayroll = {
+        ...businessSettings?.payroll,
+        ...data,
+        enable_social_taxes: enableTaxes,
+        enableTaxes: enableTaxes,
+        enable_survival_floor: enableSurvivalFloor,
+        enableSurvivalFloor: enableSurvivalFloor,
+        survival_floor_htg: survivalFloor,
+        survivalFloor: survivalFloor,
+        require_attendance_for_payroll: requireAttendance,
+        requireAttendanceForPayroll: requireAttendance,
+      };
+
+      const updatedPayrollPolicies = {
+        ...(businessSettings?.payroll_policies || {}),
+        frequency: data.frequency,
+        currency: data.currency,
+        enableTaxes: enableTaxes,
+        enable_social_taxes: enableTaxes,
+        onaEmployeeRate: (Number(data.tax_cnss_employee) || 6) / 100,
+        onaEmployerRate: (Number(data.tax_cnss_employer) || 6) / 100,
+        ofatmaEmployeeRate: (Number(data.tax_cns_employee) || 2) / 100,
+        ofatmaEmployerRate: (Number(data.tax_cns_employer) || 3) / 100,
+        enableSurvivalFloor: enableSurvivalFloor,
+        enable_survival_floor: enableSurvivalFloor,
+        survivalFloor: survivalFloor,
+        survival_floor_htg: survivalFloor,
+        overtimeRate150: Number(data.ot_rate_normal) || 1.5,
+        overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
+        defaultCommissionRate: (Number(data.default_commission_rate) || 5) / 100,
+        requireAttendanceForPayroll: requireAttendance,
+      };
+
+      await updateSettings({
+        ...businessSettings,
+        payroll: updatedPayroll,
+        payroll_policies: updatedPayrollPolicies,
+        tax_config: {
+          ...(businessSettings?.tax_config || {}),
+          enableTaxes: enableTaxes,
+          enabled: enableTaxes,
+          enable_social_taxes: enableTaxes,
+        }
+      });
       
       await BusinessAdministrationRepository.updatePayrollPolicies(
         businessId,
         {
           frequency: data.frequency,
           currency: data.currency,
-          enableTaxes: !!data.enable_social_taxes,
+          enableTaxes: enableTaxes,
           onaEmployeeRate: (Number(data.tax_cnss_employee) || 6) / 100,
           onaEmployerRate: (Number(data.tax_cnss_employer) || 6) / 100,
           ofatmaEmployeeRate: (Number(data.tax_cns_employee) || 2) / 100,
           ofatmaEmployerRate: (Number(data.tax_cns_employer) || 3) / 100,
-          enableSurvivalFloor: !!data.enable_survival_floor,
-          survivalFloor: Number(data.survival_floor_htg) || 15000,
+          enableSurvivalFloor: enableSurvivalFloor,
+          survivalFloor: survivalFloor,
           overtimeRate150: Number(data.ot_rate_normal) || 1.5,
           overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
           defaultCommissionRate: (Number(data.default_commission_rate) || 5) / 100,
-          requireAttendanceForPayroll: !!data.require_attendance_for_payroll,
+          requireAttendanceForPayroll: requireAttendance,
         },
         "usr_admin"
       );
 
-      toast.success("Politiques de paie et fiscalité sauvegardées avec succès.");
+      toast.success(
+        enableTaxes 
+          ? "Politiques de paie sauvegardées : Taxes sociales ACTIVÉES."
+          : "Politiques de paie sauvegardées : Taxes sociales DÉSACTIVÉES (Régime 0 HTG sur tout le système)."
+      );
     } catch (err: any) {
       console.error("Error saving payroll policies:", err);
       if (isQuotaExceededError(err)) {

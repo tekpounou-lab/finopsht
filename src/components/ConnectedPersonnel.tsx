@@ -3,6 +3,7 @@ import jsPDF from "jspdf";
 import { 
   Users, 
   User, 
+  Search,
   Building2, 
   MapPin, 
   CreditCard, 
@@ -24,9 +25,11 @@ import {
   Activity,
   QrCode,
   Layers,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from "lucide-react";
 import EmployeeDirectory from "./staff/EmployeeDirectory";
+import EmployeeProfileDialog from "./staff/EmployeeProfileDialog";
 import { CommissionEngine } from "../services/CommissionEngine";
 import { useCommandBus } from "../hooks/useCommandBus";
 import { ReferenceResolver } from "../services/ReferenceResolver";
@@ -46,6 +49,7 @@ interface ConnectedPersonnelProps {
   handleAddForensicLog?: any;
   currentBusiness?: any;
   ledgerTransactions?: any[];
+  payrollRecords?: any[];
   employeeContracts?: any[];
   language?: string;
   setFocusedEmployeeIdForProfile?: (id: string | null) => void;
@@ -65,6 +69,7 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
   handleAddForensicLog,
   currentBusiness: propsCurrentBusiness,
   ledgerTransactions: propsLedgerTransactions = [],
+  payrollRecords: propsPayrollRecords = [],
   employeeContracts: propsEmployeeContracts = [],
   language = "fr",
   setFocusedEmployeeIdForProfile = () => {},
@@ -82,6 +87,7 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
   const currentUser = propsUser || { name: authUser?.displayName || "Admin", email: authUser?.email || "", id: authUser?.uid || "usr_1" };
   const attendanceRecords = (propsAttendanceRecords && propsAttendanceRecords.length > 0) ? propsAttendanceRecords : ctx.attendanceRecords || [];
   const ledgerTransactions = (propsLedgerTransactions && propsLedgerTransactions.length > 0) ? propsLedgerTransactions : ctx.ledgerTransactions || [];
+  const payrollRecords = (propsPayrollRecords && propsPayrollRecords.length > 0) ? propsPayrollRecords : ctx.payrollRecords || [];
   const employeeContracts = (propsEmployeeContracts && propsEmployeeContracts.length > 0) ? propsEmployeeContracts : ctx.employeeContracts || [];
   const employeeBadges = (propsEmployeeBadges && propsEmployeeBadges.length > 0) ? propsEmployeeBadges : ctx.employeeBadges || [];
 
@@ -91,6 +97,33 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
   });
 
   const [activeProfileTab, setActiveProfileTab] = useState<"info" | "attendance" | "badge" | "activity">("info");
+  const [isFullProfileModalOpen, setIsFullProfileModalOpen] = useState(false);
+  const [modalEmployee, setModalEmployee] = useState<any | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [payslipToast, setPayslipToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Header Search State
+  const [headerSearchQuery, setHeaderSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  // Instant matching employees for search spotlight
+  const matchingSearchEmployees = React.useMemo(() => {
+    if (!headerSearchQuery.trim() || !employees) return [];
+    const q = headerSearchQuery.toLowerCase().trim();
+    return employees.filter(emp => {
+      const branchName = ReferenceResolver.resolveBranch(branches, emp.branchId || emp.branch_id)?.name || "";
+      const deptName = ReferenceResolver.resolveDepartment(departments, emp.departmentId || emp.department_id)?.name || "";
+      return (
+        (emp.name ? String(emp.name).toLowerCase() : "").includes(q) ||
+        (emp.email ? String(emp.email).toLowerCase() : "").includes(q) ||
+        (emp.position ? String(emp.position).toLowerCase() : "").includes(q) ||
+        (emp.id ? String(emp.id).toLowerCase() : "").includes(q) ||
+        (emp.phone ? String(emp.phone).toLowerCase() : "").includes(q) ||
+        branchName.toLowerCase().includes(q) ||
+        deptName.toLowerCase().includes(q)
+      );
+    }).slice(0, 6);
+  }, [headerSearchQuery, employees, branches, departments]);
 
   const handleUpdateAttendanceViaBus = async (newRecords: any[]) => {
     const result = await dispatch("LOG_ATTENDANCE", { records: newRecords });
@@ -101,8 +134,24 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
 
   const selectedEmployee = employees?.find((e) => e.id === selectedEmployeeId) || (employees && employees.length > 0 ? employees[0] : null);
 
-  const exportPayslipPdf = (emp: any) => {
+  const handleOpenFullProfile = (emp: any) => {
     if (!emp) return;
+    setModalEmployee(emp);
+    setIsFullProfileModalOpen(true);
+    try {
+      setFocusedEmployeeIdForProfile(emp.id);
+    } catch (err) {
+      console.warn("[ConnectedPersonnel] setFocusedEmployeeIdForProfile call:", err);
+    }
+  };
+
+  const exportPayslipPdf = (emp: any) => {
+    if (!emp) {
+      setPayslipToast({ type: "error", message: "Aucun employé sélectionné." });
+      return;
+    }
+    setIsGeneratingPdf(true);
+    setPayslipToast(null);
     const doc = new jsPDF();
     const dept = ReferenceResolver.resolveDepartment(departments, emp.departmentId || emp.department_id);
     const branch = ReferenceResolver.resolveBranch(branches, emp.branchId || emp.branch_id);
@@ -299,9 +348,40 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
     doc.setFontSize(6.5);
     doc.setTextColor(100, 116, 139);
     const systemSignatureHash = `ID_RH: ${emp.id}-${Date.now()} | HASH_REGIME_PAIE: SHA256:${Math.random().toString(36).substring(2, 15).toUpperCase()} | SIG_VERIFY_ERP: FinOps-Software-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-    doc.text(systemSignatureHash, 18, footerBoxY + 9);
-
-    doc.save(`bulletin-paie-${emp.name.replace(/\s+/g, '-')}-${todayDate}.pdf`);
+    const safeFileName = `bulletin-paie-${String(emp?.name || "Employe").replace(/[^a-zA-Z0-9]/g, '_')}-${todayDate}.pdf`;
+    try {
+      doc.save(safeFileName);
+      setPayslipToast({
+        type: "success",
+        message: `Bulletin PDF téléchargé avec succès (${safeFileName})`
+      });
+      setTimeout(() => setPayslipToast(null), 5000);
+    } catch (err: any) {
+      console.warn("doc.save fallback:", err);
+      try {
+        const blob = doc.output("blob");
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = safeFileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+        setPayslipToast({
+          type: "success",
+          message: `Bulletin PDF généré et téléchargé (${safeFileName})`
+        });
+        setTimeout(() => setPayslipToast(null), 5000);
+      } catch (blobErr: any) {
+        setPayslipToast({
+          type: "error",
+          message: `Erreur lors de la génération du bulletin: ${blobErr?.message || "Erreur PDF"}`
+        });
+      }
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   // Resolve department & branch for selected employee
@@ -328,24 +408,87 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
           </p>
         </div>
 
-        {/* Quick Employee Selector dropdown if desired */}
-        {employees && employees.length > 0 && (
-          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 self-start md:self-auto">
-            <User className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs text-slate-400 font-semibold uppercase hidden sm:inline">Profil Actif:</span>
-            <select
-              value={selectedEmployee?.id || ""}
-              onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-200 outline-none cursor-pointer max-w-[200px] truncate"
-            >
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id} className="bg-slate-900 text-slate-200">
-                  {emp.name} ({emp.position || 'Employé'})
-                </option>
-              ))}
-            </select>
+        {/* Interactive Search Bar & Active Profile Selector */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 self-start md:self-auto w-full md:w-auto relative">
+          {/* Header Search Input */}
+          <div className="relative flex-1 sm:w-64 md:w-72">
+            <Search className="w-4 h-4 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 shrink-0 pointer-events-none" />
+            <input
+              type="text"
+              placeholder={
+                language === "fr"
+                  ? "Rechercher par nom, poste, ID, email..."
+                  : language === "ht"
+                  ? "Chache pa non, pòs, ID, imel..."
+                  : "Search by name, role, ID, email..."
+              }
+              value={headerSearchQuery}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+              onChange={(e) => setHeaderSearchQuery(e.target.value)}
+              className="w-full bg-slate-900/90 border border-slate-700/80 focus:border-cyan-500/80 text-slate-100 text-xs rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all font-sans placeholder:text-slate-500 shadow-inner"
+            />
+            {headerSearchQuery && (
+              <button
+                onClick={() => setHeaderSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition p-0.5 rounded-md hover:bg-slate-800 cursor-pointer"
+                title={language === "fr" ? "Effacer" : "Clear"}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* Instant Search Results Spotlight Dropdown */}
+            {isSearchFocused && matchingSearchEmployees.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 max-h-64 overflow-y-auto divide-y divide-slate-800/50">
+                <div className="px-2 py-1 text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider flex justify-between items-center">
+                  <span>Résultats ({matchingSearchEmployees.length})</span>
+                  <span className="text-[9px] text-slate-500 font-sans">Sélectionner profil</span>
+                </div>
+                {matchingSearchEmployees.map((emp) => (
+                  <button
+                    key={emp.id}
+                    onMouseDown={() => {
+                      setSelectedEmployeeId(emp.id);
+                      setIsSearchFocused(false);
+                    }}
+                    className="w-full text-left p-2 hover:bg-slate-800/80 rounded-lg transition flex items-center justify-between gap-2 group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-6 h-6 rounded-full bg-cyan-950 border border-cyan-700/50 flex items-center justify-center text-cyan-400 font-bold text-[10px] shrink-0">
+                        {emp.name ? emp.name.charAt(0).toUpperCase() : 'E'}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-200 group-hover:text-cyan-300 truncate">{emp.name}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{emp.position || 'Employé'} • {emp.email || emp.id}</div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 shrink-0" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Quick Active Employee Profile Selector */}
+          {employees && employees.length > 0 && (
+            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 shrink-0">
+              <User className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span className="text-xs text-slate-400 font-semibold uppercase hidden lg:inline">Profil Actif:</span>
+              <select
+                value={selectedEmployee?.id || ""}
+                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                className="bg-transparent text-xs font-bold text-slate-200 outline-none cursor-pointer max-w-[150px] sm:max-w-[180px] truncate"
+              >
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id} className="bg-slate-900 text-slate-200">
+                    {emp.name} ({emp.position || 'Employé'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="personnel-grid">
@@ -368,6 +511,8 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
             currentBusiness={currentBusiness}
             currentUserId={currentUser?.id}
             currentUserEmail={currentUser?.email}
+            externalSearchQuery={headerSearchQuery}
+            onSearchQueryChange={setHeaderSearchQuery}
             onAction={(action, emp) => {
               if (action === 'payroll') {
                 setActiveTab('payroll');
@@ -413,7 +558,7 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
 
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => setFocusedEmployeeIdForProfile(selectedEmployee.id)}
+                    onClick={() => handleOpenFullProfile(selectedEmployee)}
                     className="p-2 rounded-lg bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-500/30 text-cyan-400 transition-colors cursor-pointer"
                     title="Ouvrir Fiche HR Complète (Plein écran)"
                   >
@@ -627,20 +772,57 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
                 </div>
               )}
 
+              {/* TOAST FEEDBACK */}
+              {payslipToast && (
+                <div
+                  className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition-all ${
+                    payslipToast.type === "success"
+                      ? "bg-emerald-950/70 border-emerald-500/40 text-emerald-200"
+                      : "bg-rose-950/70 border-rose-500/40 text-rose-200"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 font-medium">
+                    {payslipToast.type === "success" ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    {payslipToast.message}
+                  </span>
+                  <button
+                    onClick={() => setPayslipToast(null)}
+                    className="text-slate-400 hover:text-slate-200 ml-2 text-xs"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               {/* BOTTOM ACTION BUTTONS */}
               <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
                 <button
-                  onClick={() => setFocusedEmployeeIdForProfile(selectedEmployee.id)}
-                  className="flex-1 py-2 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-cyan-500/20 cursor-pointer"
+                  type="button"
+                  id="btn-open-full-profile"
+                  onClick={() => handleOpenFullProfile(selectedEmployee)}
+                  className="flex-1 py-2 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-[0.98] text-slate-950 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-cyan-500/20 cursor-pointer"
+                  title="Consulter la fiche RH détaillée et le grand livre"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" /> Fiche HR Completer
+                  <ExternalLink className="w-3.5 h-3.5" /> Fiche HR Complète
                 </button>
                 <button
+                  type="button"
+                  id="btn-download-payslip-pdf"
                   onClick={() => exportPayslipPdf(selectedEmployee)}
-                  className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition flex items-center justify-center gap-1.5 border border-slate-700 cursor-pointer"
-                  title="Télécharger Bulletin de Paie PDF"
+                  disabled={isGeneratingPdf}
+                  className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] disabled:opacity-50 text-slate-200 font-semibold text-xs transition flex items-center justify-center gap-1.5 border border-slate-700 cursor-pointer"
+                  title="Télécharger Bulletin de Paie PDF officiel"
                 >
-                  <Download className="w-3.5 h-3.5 text-emerald-400" /> Bulletin
+                  {isGeneratingPdf ? (
+                    <RefreshCw className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  )}
+                  {isGeneratingPdf ? "Génération..." : "Bulletin"}
                 </button>
               </div>
 
@@ -648,6 +830,24 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
           </div>
         )}
       </div>
+
+      {/* Modal Dialog Fiche HR Complète */}
+      {isFullProfileModalOpen && (
+        <EmployeeProfileDialog
+          employee={modalEmployee || selectedEmployee}
+          isOpen={isFullProfileModalOpen}
+          onClose={() => {
+            setIsFullProfileModalOpen(false);
+            setModalEmployee(null);
+            try {
+              setFocusedEmployeeIdForProfile(null);
+            } catch (e) {}
+          }}
+          businessName={currentBusiness?.name || "Tek Pou Nou S.A."}
+          payrollRecords={payrollRecords}
+          ledgerTransactions={ledgerTransactions}
+        />
+      )}
     </div>
   );
 };

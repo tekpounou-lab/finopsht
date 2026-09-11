@@ -323,6 +323,12 @@ export default function PayrollEngine({
     0
   );
 
+  const closedCyclesCount = tenantCycles.filter(
+    (c) => c.status === "SEALED" || c.status === "LOCKED" || c.status === "PAID"
+  ).length;
+
+  const sealedCyclesCount = tenantCycles.filter((c) => c.status === "SEALED").length;
+
   return (
     <div className="space-y-6 text-slate-100">
       {/* Top Header */}
@@ -387,13 +393,37 @@ export default function PayrollEngine({
           <div className="text-lg font-bold text-white">{employees.length} Collaborateurs</div>
         </div>
 
-        <div className="bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-xl">
+        <div 
+          id="kpi-closed-cycles-card"
+          className={`p-3.5 rounded-xl border transition-all duration-200 ${
+            closedCyclesCount > 0 && closedCyclesCount === tenantCycles.length
+              ? "bg-emerald-950/20 border-emerald-500/30 text-emerald-300 shadow-sm"
+              : "bg-slate-900/40 border-slate-800/80 text-white"
+          }`}
+        >
           <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs">Cycles Clôturés</span>
-            <Clock className="w-4 h-4 text-amber-400" />
+            <span className="text-xs">Cycles Clôturés & Scellés</span>
+            {sealedCyclesCount > 0 ? (
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            ) : closedCyclesCount > 0 ? (
+              <CheckCircle2 className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Clock className="w-4 h-4 text-slate-400" />
+            )}
           </div>
-          <div className="text-lg font-bold text-white">
-            {tenantCycles.filter((c) => c.status === "LOCKED" || c.status === "PAID").length} / {tenantCycles.length}
+          <div className="flex items-baseline justify-between gap-1.5">
+            <div className={`text-lg font-bold font-mono ${
+              closedCyclesCount > 0 && closedCyclesCount === tenantCycles.length
+                ? "text-emerald-400"
+                : "text-white"
+            }`}>
+              {closedCyclesCount} / {tenantCycles.length}
+            </div>
+            {sealedCyclesCount > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
+                {sealedCyclesCount} scellé{sealedCyclesCount > 1 ? "s" : ""}
+              </span>
+            )}
           </div>
         </div>
       </div>

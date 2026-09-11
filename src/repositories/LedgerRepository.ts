@@ -194,23 +194,47 @@ export const LedgerRepository = {
    */
   async save(tx: LedgerTransaction, customEvent?: RuntimeEvent): Promise<void> {
     const businessId = tx.business_id || "biz_default";
-    const validation = validateLedgerForeignKeys(tx as any);
+    const enrichedTx = applyDoubleEntryRules(tx);
+    const amountCents = enrichedTx.amount_cents ?? Math.round((enrichedTx.amount || 0) * 100);
+    const amount = enrichedTx.amount || (amountCents / 100);
+    const costCenter = (enrichedTx as any).cost_center_id || (enrichedTx as any).costCenterId || enrichedTx.branchId || enrichedTx.branch_id || "main";
+
+    const finalTx: LedgerTransaction = {
+      ...enrichedTx,
+      cost_center_id: costCenter,
+      costCenterId: costCenter,
+      branchId: enrichedTx.branchId || enrichedTx.branch_id || costCenter,
+      branch_id: enrichedTx.branch_id || enrichedTx.branchId || costCenter,
+      departmentId: enrichedTx.departmentId || enrichedTx.department_id || "operations",
+      department_id: enrichedTx.department_id || enrichedTx.departmentId || "operations",
+      debit_account: enrichedTx.debit_account || DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK,
+      credit_account: enrichedTx.credit_account || DEFAULT_CHART_OF_ACCOUNTS.REVENUE.OPERATING,
+      debit: enrichedTx.debit ?? amount,
+      credit: enrichedTx.credit ?? amount,
+      debit_cents: enrichedTx.debit_cents ?? amountCents,
+      credit_cents: enrichedTx.credit_cents ?? amountCents,
+      amount,
+      amount_cents: amountCents,
+      isLocked: true
+    };
+
+    const validation = validateLedgerForeignKeys(finalTx as any);
     if (!validation.isValid) {
-      console.error(`[LedgerRepository] Validation failed for transaction ${tx.id}:`, validation.errors);
+      console.error(`[LedgerRepository] Validation failed for transaction ${finalTx.id}:`, validation.errors);
       throw new Error(`[LedgerRepository] Integrity check failed: ${validation.errors.join("; ")}`);
     }
 
     const now = new Date().toISOString();
     const event: RuntimeEvent = customEvent || {
-      eventId: `evt_tx_${tx.id}_${Date.now()}`,
-      correlationId: `corr_tx_${tx.id}`,
+      eventId: `evt_tx_${finalTx.id}_${Date.now()}`,
+      correlationId: `corr_tx_${finalTx.id}`,
       businessId,
       module: "FINANCIAL_LEDGER",
       aggregate: "LedgerTransaction",
       type: "LEDGER_TRANSACTION_RECORDED",
       eventType: "LEDGER_TRANSACTION_RECORDED",
       source: "LedgerRepository",
-      payload: { transactionId: tx.id, amount: tx.amount, type: tx.type, businessId },
+      payload: { transactionId: finalTx.id, amount: finalTx.amount, type: finalTx.type, businessId },
       version: "1.0.0",
       status: "PENDING",
       timestamp: now
@@ -220,16 +244,16 @@ export const LedgerRepository = {
       await MessageQueue.persistAndPublishWithTransaction(
         businessId,
         async (transaction) => {
-          const txRef = doc(db, "ledger_transactions", tx.id);
+          const txRef = doc(db, "ledger_transactions", finalTx.id);
           transaction.set(txRef, {
-            ...tx,
+            ...finalTx,
             updatedAt: serverTimestamp()
           }, { merge: true });
         },
         event
       );
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `ledger_transactions/${tx.id}`);
+      handleFirestoreError(error, OperationType.WRITE, `ledger_transactions/${finalTx.id}`);
     }
   },
 
@@ -555,15 +579,29 @@ export const LedgerRepository = {
       chunk.forEach((tx) => {
         const docRef = doc(db, "ledger_transactions", tx.id);
         const resolvedTx = applyDoubleEntryRules(tx);
-        const currentCc = (tx as any).cost_center_id || (tx as any).costCenterId;
+        const currentCc = (tx as any).cost_center_id || (tx as any).costCenterId || tx.branchId || tx.branch_id;
         const validCc = (!currentCc || currentCc === "none" || currentCc === "ORPHAN" || currentCc === "UNASSIGNED")
           ? defaultCostCenterId
           : currentCc;
 
+        const amountCents = tx.amount_cents ?? Math.round((tx.amount || 0) * 100);
+        const amount = tx.amount || (amountCents / 100);
+
         const updatedFields: any = {
           cost_center_id: validCc,
+          costCenterId: validCc,
+          branchId: tx.branchId || tx.branch_id || validCc || "main",
+          branch_id: tx.branch_id || tx.branchId || validCc || "main",
+          departmentId: tx.departmentId || tx.department_id || "operations",
+          department_id: tx.department_id || tx.departmentId || "operations",
           debit_account: resolvedTx.debit_account || DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK,
           credit_account: resolvedTx.credit_account || DEFAULT_CHART_OF_ACCOUNTS.REVENUE.OPERATING,
+          debit: tx.debit ?? amount,
+          credit: tx.credit ?? amount,
+          debit_cents: tx.debit_cents ?? amountCents,
+          credit_cents: tx.credit_cents ?? amountCents,
+          amount: amount,
+          amount_cents: amountCents,
           isLocked: true,
           updated_at: new Date().toISOString(),
           metadata: {
@@ -588,6 +626,8 @@ export const LedgerRepository = {
       type: "LEDGER_ORPHAN_TRANSACTIONS_REMEDIATED",
       payload: { remediatedCount: fixedIds.length, defaultCostCenterId, fixedIds }
     }));
+
+    CacheInvalidationService.sweepLocal(businessId);
 
     return { fixedCount: fixedIds.length, fixedIds };
   }

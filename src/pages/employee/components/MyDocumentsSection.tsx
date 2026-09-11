@@ -45,19 +45,20 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
     try {
       let docs = await DocumentRepository.getEmployeeDocuments(employee.business_id, employee.id);
       
-      // Auto-bootstrap baseline contract & attestation if no documents exist for this employee
-      if (docs.length === 0) {
-        const actor = {
-          uid: employee.id,
-          name: employee.name,
-          role: employee.role || "EMPLOYEE"
-        };
+      const actor = {
+        uid: employee.id,
+        name: employee.name,
+        role: employee.role || "EMPLOYEE"
+      };
 
-        // Auto-generate Contract & Employment Certificate
-        const resolvedDeptName = deptName || employee.department_name || (employee as any).departmentName;
-        const resolvedBranchName = branchName || employee.branch_name || (employee as any).branchName;
+      const resolvedDeptName = deptName || employee.department_name || (employee as any).departmentName;
+      const resolvedBranchName = branchName || employee.branch_name || (employee as any).branchName;
 
-        const contractDoc = await DocumentGenerationService.generateDocument({
+      const existingTypes = new Set(docs.map(d => d.documentType));
+
+      // Auto-ensure all 4 base documents exist
+      if (!existingTypes.has("EMPLOYMENT_CONTRACT")) {
+        const doc = await DocumentGenerationService.generateDocument({
           employee,
           documentType: "EMPLOYMENT_CONTRACT",
           actor,
@@ -68,8 +69,11 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
             branchName: resolvedBranchName
           }
         });
+        docs.unshift(doc);
+      }
 
-        const attestationDoc = await DocumentGenerationService.generateDocument({
+      if (!existingTypes.has("EMPLOYMENT_CERTIFICATE")) {
+        const doc = await DocumentGenerationService.generateDocument({
           employee,
           documentType: "EMPLOYMENT_CERTIFICATE",
           actor,
@@ -79,8 +83,39 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
             branchName: resolvedBranchName
           }
         });
+        docs.unshift(doc);
+      }
 
-        docs = [attestationDoc, contractDoc];
+      if (!existingTypes.has("SALARY_CERTIFICATE")) {
+        const doc = await DocumentGenerationService.generateDocument({
+          employee,
+          documentType: "SALARY_CERTIFICATE",
+          actor,
+          additionalData: {
+            title: "Attestation de Rémunération et Salaire Bancaire",
+            salary: employee.baseSalary || 35000,
+            departmentName: resolvedDeptName,
+            branchName: resolvedBranchName
+          }
+        });
+        docs.unshift(doc);
+      }
+
+      if (!existingTypes.has("PAYSLIP")) {
+        const doc = await DocumentGenerationService.generateDocument({
+          employee,
+          documentType: "PAYSLIP",
+          actor,
+          additionalData: {
+            title: "Bulletin de Paie Officiel - Période Actuelle",
+            cycleName: "Période Actuelle (2026)",
+            grossSalary: employee.baseSalary || 35000,
+            netSalary: Math.round((employee.baseSalary || 35000) * 0.92),
+            departmentName: resolvedDeptName,
+            branchName: resolvedBranchName
+          }
+        });
+        docs.unshift(doc);
       }
 
       setDocuments(docs);
@@ -96,6 +131,75 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
       loadDocuments();
     }
   }, [employee.id, employee.business_id]);
+
+  // Handle Mass Generation of All 4 Baseline Documents
+  const handleGenerateAllBaseDocuments = async () => {
+    setGeneratingType("CUSTOM_DOCUMENT" as EDMSDocumentType);
+    try {
+      const actor = {
+        uid: employee.id,
+        name: employee.name,
+        role: employee.role || "EMPLOYEE"
+      };
+      const resolvedDeptName = deptName || employee.department_name || (employee as any).departmentName;
+      const resolvedBranchName = branchName || employee.branch_name || (employee as any).branchName;
+
+      await DocumentGenerationService.generateDocument({
+        employee,
+        documentType: "EMPLOYMENT_CONTRACT",
+        actor,
+        additionalData: {
+          title: `Contrat de Travail ${employee.contractType?.toUpperCase() || "CDI"}`,
+          salary: employee.baseSalary || 35000,
+          departmentName: resolvedDeptName,
+          branchName: resolvedBranchName
+        }
+      });
+
+      await DocumentGenerationService.generateDocument({
+        employee,
+        documentType: "EMPLOYMENT_CERTIFICATE",
+        actor,
+        additionalData: {
+          title: "Attestation Officielle d'Emploi et de Fonctions",
+          departmentName: resolvedDeptName,
+          branchName: resolvedBranchName
+        }
+      });
+
+      await DocumentGenerationService.generateDocument({
+        employee,
+        documentType: "SALARY_CERTIFICATE",
+        actor,
+        additionalData: {
+          title: "Attestation de Rémunération et Salaire Bancaire",
+          salary: employee.baseSalary || 35000,
+          departmentName: resolvedDeptName,
+          branchName: resolvedBranchName
+        }
+      });
+
+      await DocumentGenerationService.generateDocument({
+        employee,
+        documentType: "PAYSLIP",
+        actor,
+        additionalData: {
+          title: "Bulletin de Paie Officiel - Période Actuelle",
+          cycleName: "Période Actuelle (2026)",
+          grossSalary: employee.baseSalary || 35000,
+          netSalary: Math.round((employee.baseSalary || 35000) * 0.92),
+          departmentName: resolvedDeptName,
+          branchName: resolvedBranchName
+        }
+      });
+
+      await loadDocuments();
+    } catch (e) {
+      console.error("[MyDocumentsSection] Error generating all base documents:", e);
+    } finally {
+      setGeneratingType(null);
+    }
+  };
 
   // Handle Quick On-Demand Document Generation
   const handleGenerateDocument = async (docType: EDMSDocumentType, title?: string, additionalData?: any) => {
@@ -119,10 +223,17 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
         }
       });
 
-      // Reload list
-      await loadDocuments();
+      // Optimistically update document list & switch to preview
+      setDocuments(prev => [newDoc, ...prev.filter(d => d.id !== newDoc.id)]);
       setSelectedDoc(newDoc);
       setActiveTab("PREVIEW");
+
+      // Background list reload
+      try {
+        await loadDocuments();
+      } catch (e) {
+        console.warn("[MyDocumentsSection] Secondary reload notice:", e);
+      }
     } catch (error) {
       console.error("[MyDocumentsSection] Generation failed:", error);
     } finally {
@@ -209,7 +320,20 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
         {/* QUICK GENERATION & ACTION CONTROLS */}
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <button
-            onClick={() => handleGenerateDocument("EMPLOYMENT_CERTIFICATE", "Attestation Officielle d'Emploi")}
+            onClick={() => handleGenerateDocument("EMPLOYMENT_CONTRACT", `Contrat de Travail ${employee.contractType?.toUpperCase() || "CDI"}`)}
+            disabled={generatingType !== null}
+            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-cyan-300 text-xs font-bold rounded-xl border border-cyan-500/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {generatingType === "EMPLOYMENT_CONTRACT" ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <FileSignature className="w-3.5 h-3.5 text-cyan-400" />
+            )}
+            Contrat de Travail
+          </button>
+
+          <button
+            onClick={() => handleGenerateDocument("EMPLOYMENT_CERTIFICATE", "Attestation Officielle d'Emploi et de Fonctions")}
             disabled={generatingType !== null}
             className="px-3 py-2 bg-purple-600/90 hover:bg-purple-600 text-white text-xs font-bold rounded-xl border border-purple-500/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
@@ -223,7 +347,6 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
 
           <button
             onClick={() => {
-              // Find most recent payroll record if available
               const validPayrolls = payrollRecords.filter(p => ["VALIDATED", "APPROVED", "PAID", "LOCKED", "POSTED", "SEALED", "DRAFT", "PENDING", "CORRECTED"].includes(p.status || ""));
               const latestPayroll = validPayrolls.length > 0
                 ? validPayrolls.slice().sort((a, b) => {
@@ -234,7 +357,7 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
                 : null;
 
               const lastPayrollPayload = latestPayroll ? {
-                cycleName: latestPayroll.cycleId || (latestPayroll as any).payroll_cycle_id || (latestPayroll as any).cycleName || "Dernière Quinzaine / Mois Clôturé",
+                cycleName: latestPayroll.cycleId || "Dernière Quinzaine / Mois Clôturé",
                 grossSalary: latestPayroll.grossSalary ?? ((latestPayroll as any).gross_salary_cents ? (latestPayroll as any).gross_salary_cents / 100 : 0),
                 netSalary: (latestPayroll as any).netSalary ?? ((latestPayroll as any).net_salary_cents ? (latestPayroll as any).net_salary_cents / 100 : ((latestPayroll as any).netPaid ?? 0)),
                 commission: latestPayroll.commissions ?? ((latestPayroll as any).commission_cents ? (latestPayroll as any).commission_cents / 100 : 0),
@@ -243,7 +366,7 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
                 cnssDeduction: latestPayroll.cnssDeduction ?? ((latestPayroll as any).cnss_employee_cents ? (latestPayroll as any).cnss_employee_cents / 100 : 0),
               } : null;
 
-              handleGenerateDocument("SALARY_CERTIFICATE", "Attestation de Salaire Bancaire", {
+              handleGenerateDocument("SALARY_CERTIFICATE", "Attestation de Rémunération et Salaire Bancaire", {
                 lastPayroll: lastPayrollPayload,
                 paymentModel: employee.paymentModel || (employee.payRegime ? employee.payRegime.toUpperCase() : "FIXED"),
                 commissionRate: employee.commissionRate ?? employee.commission_rate ?? 0,
@@ -251,7 +374,7 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
               });
             }}
             disabled={generatingType !== null}
-            className="px-3 py-2 bg-slate-900 hover:bg-slate-850 text-slate-200 text-xs font-bold rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-emerald-300 text-xs font-bold rounded-xl border border-emerald-500/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {generatingType === "SALARY_CERTIFICATE" ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -259,6 +382,36 @@ export const MyDocumentsSection: React.FC<MyDocumentsSectionProps> = ({
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
             )}
             Attestation de Salaire
+          </button>
+
+          <button
+            onClick={() => handleGenerateDocument("PAYSLIP", "Bulletin de Paie Officiel - Période Actuelle", {
+              cycleName: "Période Actuelle (2026)",
+              grossSalary: employee.baseSalary || 35000,
+              netSalary: Math.round((employee.baseSalary || 35000) * 0.92)
+            })}
+            disabled={generatingType !== null}
+            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-indigo-300 text-xs font-bold rounded-xl border border-indigo-500/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {generatingType === "PAYSLIP" ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-indigo-400" />
+            )}
+            Bulletin de Paie
+          </button>
+
+          <button
+            onClick={handleGenerateAllBaseDocuments}
+            disabled={generatingType !== null}
+            className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-500/20 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {generatingType !== null ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <BadgeCheck className="w-3.5 h-3.5" />
+            )}
+            Générer Tous les 4 Documents
           </button>
         </div>
       </div>

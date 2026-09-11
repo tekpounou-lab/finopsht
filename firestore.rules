@@ -2,11 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // === Global Authenticated Access Rule (Eliminates permission errors across all modules) ===
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
-
     // === Core Security & Identity Helpers ===
     function isAuthenticated() {
       return request.auth != null;
@@ -79,11 +74,23 @@ service cloud.firestore {
     }
 
     function isTenantScoped(bizId) {
-      return isAuthenticated();
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        bizId == 'none' ||
+        bizId == getUserBusinessId() ||
+        bizId == ('biz_' + request.auth.uid) ||
+        isBusinessOwner(bizId)
+      );
     }
 
     function isTenantAdminOrManager(bizId) {
-      return isAuthenticated();
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (isTenantScoped(bizId) && (
+          isBusinessOwner(bizId) ||
+          getUserRole() in ['OWNER', 'ADMIN', 'MANAGER']
+        ))
+      );
     }
 
     function isValidAmount(val) {
@@ -548,19 +555,39 @@ service cloud.firestore {
 
     // === PAYROLL RECORDS & CYCLES ===
     match /payroll_records/{recordId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantAdminOrManager(getBusinessId(resource.data)) ||
+        resource.data.get('employee_id', '') == getMyProfile().get('employee_id', '') ||
+        resource.data.get('employeeId', '') == getMyProfile().get('employee_id', '') ||
+        resource.data.get('firebase_uid', '') == request.auth.uid ||
+        resource.data.get('userId', '') == request.auth.uid
+      );
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow delete: if isSuperAdmin() || (isAuthenticated() && isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     match /payrolls/{payrollId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     match /payroll_cycles/{cycleId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     match /payslips/{id} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantAdminOrManager(getBusinessId(resource.data)) ||
+        resource.data.get('employee_id', '') == getMyProfile().get('employee_id', '') ||
+        resource.data.get('employeeId', '') == getMyProfile().get('employee_id', '') ||
+        resource.data.get('firebase_uid', '') == request.auth.uid ||
+        resource.data.get('userId', '') == request.auth.uid
+      );
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow delete: if isSuperAdmin() || (isAuthenticated() && isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     match /employee_sales_summary/{id} {

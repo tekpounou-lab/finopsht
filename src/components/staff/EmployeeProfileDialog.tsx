@@ -84,7 +84,11 @@ export default function EmployeeProfileDialog({ employee, isOpen, onClose, busin
               </div>
               <div className="flex items-center justify-between text-xs font-mono">
                  <span className="text-slate-400 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> Succursale</span>
-                 <span className="text-cyan-400 font-bold">{employee.branchId.replace(employee.business_id + "_", "")}</span>
+                 <span className="text-cyan-400 font-bold">
+                   {(employee.branchId || (employee as any).branch_id || "")
+                     ? String(employee.branchId || (employee as any).branch_id).replace(String(employee.business_id || "") + "_", "")
+                     : "Siège Principal"}
+                 </span>
               </div>
               <div className="flex items-center justify-between text-xs font-mono">
                  <span className="text-slate-400 flex items-center gap-1.5"><Hash className="w-3.5 h-3.5" /> Département</span>

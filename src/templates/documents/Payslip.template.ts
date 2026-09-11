@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import { DocumentTemplateData } from "./types";
 import { BaseDocumentHeaderFooter } from "./BaseDocumentHeaderFooter";
+import { TaxPolicyEngine } from "../../services/payroll/TaxPolicyEngine";
 
 export function renderPayslip(pdf: jsPDF, data: DocumentTemplateData): void {
   const startY = BaseDocumentHeaderFooter.renderHeader(pdf, data);
@@ -11,9 +12,29 @@ export function renderPayslip(pdf: jsPDF, data: DocumentTemplateData): void {
   const accentBlue = [37, 99, 235];
 
   const cycleLabel = additionalData?.cycleName || "Période Mensuelle Courante";
-  const gross = additionalData?.grossSalary || employee.baseSalary || 0;
-  const net = additionalData?.netSalary || Math.round(gross * 0.92);
-  const cnss = additionalData?.cnssDeduction || Math.round(gross * 0.06);
+  const gross = additionalData?.grossSalary !== undefined ? additionalData.grossSalary : (employee.baseSalary || 0);
+
+  // Check whether social taxes are enabled in the context / additionalData / businessSettings
+  const isSocialTaxEnabled = (() => {
+    if (additionalData?.enableTaxes !== undefined) return Boolean(additionalData.enableTaxes);
+    if (additionalData?.isSocialTaxEnabled !== undefined) return Boolean(additionalData.isSocialTaxEnabled);
+    if (additionalData?.businessSettings) return TaxPolicyEngine.isSocialTaxEnabled(additionalData.businessSettings);
+    if (additionalData?.cnssDeduction !== undefined || additionalData?.cnsDeduction !== undefined) {
+      return Number(additionalData?.cnssDeduction || 0) > 0 || Number(additionalData?.cnsDeduction || 0) > 0;
+    }
+    return false;
+  })();
+
+  const cnss = isSocialTaxEnabled
+    ? (additionalData?.cnssDeduction !== undefined ? additionalData.cnssDeduction : Math.round(gross * 0.06))
+    : 0;
+  const cns = isSocialTaxEnabled
+    ? (additionalData?.cnsDeduction !== undefined ? additionalData.cnsDeduction : Math.round(gross * 0.02))
+    : 0;
+
+  const net = additionalData?.netSalary !== undefined
+    ? additionalData.netSalary
+    : Math.max(0, gross - cnss - cns - (additionalData?.advancesTreated || 0) - (additionalData?.manualDeductions || 0));
 
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10);
@@ -43,13 +64,23 @@ export function renderPayslip(pdf: jsPDF, data: DocumentTemplateData): void {
   pdf.text("Contractuel", 110, startY + 22);
   pdf.text(`${gross.toLocaleString("fr-FR")} HTG`, 160, startY + 22);
 
-  pdf.text("2. Cotisation CNSS (Assurance Vieillesse)", 20, startY + 29);
-  pdf.text("6.00%", 110, startY + 29);
-  pdf.text(`- ${cnss.toLocaleString("fr-FR")} HTG`, 160, startY + 29);
+  if (isSocialTaxEnabled) {
+    pdf.text("2. Cotisation CNSS (Assurance Vieillesse)", 20, startY + 29);
+    pdf.text("6.00%", 110, startY + 29);
+    pdf.text(`- ${cnss.toLocaleString("fr-FR")} HTG`, 160, startY + 29);
 
-  pdf.text("3. Cotisation OFATMA (Accident du Travail)", 20, startY + 36);
-  pdf.text("2.00%", 110, startY + 36);
-  pdf.text("Employeur", 160, startY + 36);
+    pdf.text("3. Cotisation OFATMA (Accident du Travail)", 20, startY + 36);
+    pdf.text("2.00%", 110, startY + 36);
+    pdf.text("Employeur", 160, startY + 36);
+  } else {
+    pdf.text("2. Cotisations Sociales ONA / OFATMA", 20, startY + 29);
+    pdf.text("Désactivées", 110, startY + 29);
+    pdf.text("0 HTG", 160, startY + 29);
+
+    pdf.text("3. Retenues Fiscales & Sociales", 20, startY + 36);
+    pdf.text("Non applicable", 110, startY + 36);
+    pdf.text("0 HTG", 160, startY + 36);
+  }
 
   pdf.line(15, startY + 41, 195, startY + 41);
 
@@ -65,7 +96,11 @@ export function renderPayslip(pdf: jsPDF, data: DocumentTemplateData): void {
   pdf.setFontSize(8.5);
   pdf.setTextColor(100, 116, 139);
   pdf.text("Bulletin de paie généré numériquement, faisant foi de virement bancaire ou de paiement en caisse.", 15, startY + 65);
-  pdf.text("Les cotisations CNSS et OFATMA sont versées conformément au Code du Travail d'Haïti.", 15, startY + 71);
+  if (isSocialTaxEnabled) {
+    pdf.text("Les cotisations CNSS et OFATMA sont versées conformément au Code du Travail d'Haïti.", 15, startY + 71);
+  } else {
+    pdf.text("Politique d'entreprise : Déduction des cotisations sociales suspendue ou non applicable.", 15, startY + 71);
+  }
 
   BaseDocumentHeaderFooter.renderFooter(pdf, data);
 }

@@ -2,6 +2,8 @@ import React from "react";
 import { Wallet, Download, CheckCircle2 } from "lucide-react";
 import { PayrollRecord } from "../../../types";
 import jsPDF from "jspdf";
+import { useBusinessContext } from "../../../contexts/BusinessContext";
+import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 
 interface PayslipsListProps {
   records: PayrollRecord[];
@@ -14,6 +16,9 @@ export const PayslipsList: React.FC<PayslipsListProps> = ({
   employeeId,
   tw,
 }) => {
+  const { businessSettings } = useBusinessContext();
+  const isTaxActive = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
+
   const employeeRecords = records
     .filter((r) => r.employeeId === employeeId || r.employee_id === employeeId || (r as any).user_uid === employeeId)
     .sort((a, b) => b.id.localeCompare(a.id));
@@ -123,16 +128,16 @@ export const PayslipsList: React.FC<PayslipsListProps> = ({
       y += 8;
 
       // Line 3: CNSS / ONA
-      const cnssVal = typeof r.cnssDeduction === "number" ? r.cnssDeduction : (r.cnss_employee_cents ? r.cnss_employee_cents / 100 : 0);
-      doc.text("Retenue ONA / CNSS (6% obligatoire)", 18, y);
+      const cnssVal = isTaxActive ? (typeof r.cnssDeduction === "number" ? r.cnssDeduction : (r.cnss_employee_cents ? r.cnss_employee_cents / 100 : 0)) : 0;
+      doc.text(isTaxActive ? "Retenue ONA / CNSS (6% obligatoire)" : "Retenue ONA / CNSS (Désactivée)", 18, y);
       doc.text("-", 110, y);
       doc.text(formatCurrency(cnssVal), 150, y);
       doc.line(15, y+2, 195, y+2);
       y += 8;
 
       // Line 4: CNS / OFATMA
-      const cnsVal = typeof r.cnsDeduction === "number" ? r.cnsDeduction : (r.cns_employee_cents ? r.cns_employee_cents / 100 : 0);
-      doc.text("Retenue OFATMA / CNS (2% assurance)", 18, y);
+      const cnsVal = isTaxActive ? (typeof r.cnsDeduction === "number" ? r.cnsDeduction : (r.cns_employee_cents ? r.cns_employee_cents / 100 : 0)) : 0;
+      doc.text(isTaxActive ? "Retenue OFATMA / CNS (2% assurance)" : "Retenue OFATMA / CNS (Désactivée)", 18, y);
       doc.text("-", 110, y);
       doc.text(formatCurrency(cnsVal), 150, y);
       doc.line(15, y+2, 195, y+2);
@@ -228,7 +233,7 @@ export const PayslipsList: React.FC<PayslipsListProps> = ({
                 <p className="text-[10px] font-mono text-slate-400">
                   {tw.salaireBrut || "Salaire Brut"} : {formatCurrency(r.grossSalary)} |{" "}
                   {tw.retenues || "Retenues"} :{" "}
-                  {formatCurrency((typeof r.cnssDeduction === "number" ? r.cnssDeduction : (r.cnss_employee_cents ? r.cnss_employee_cents / 100 : 0)) + (typeof r.cnsDeduction === "number" ? r.cnsDeduction : (r.cns_employee_cents ? r.cns_employee_cents / 100 : 0)))}
+                  {formatCurrency(isTaxActive ? ((typeof r.cnssDeduction === "number" ? r.cnssDeduction : (r.cnss_employee_cents ? r.cnss_employee_cents / 100 : 0)) + (typeof r.cnsDeduction === "number" ? r.cnsDeduction : (r.cns_employee_cents ? r.cns_employee_cents / 100 : 0))) : 0)}
                 </p>
               </div>
 

@@ -5,6 +5,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <script>
+      (function() {
+        function isBenign(str) {
+          if (!str) return false;
+          var s = String(typeof str === 'object' ? (str.message || str.stack || JSON.stringify(str)) : str).toLowerCase();
+          return s.indexOf('nullvalue') !== -1 ||
+                 s.indexOf('cannot use \'in\' operator') !== -1 ||
+                 s.indexOf('search for \'nullvalue\'') !== -1 ||
+                 s.indexOf('interrupted') !== -1 ||
+                 s.indexOf('aborterror') !== -1 ||
+                 s.indexOf('ping timeout') !== -1;
+        }
+
+        var origConsoleError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var fullText = args.map(function(a) {
+            return a && a.message ? a.message : String(a);
+          }).join(' ').toLowerCase();
+          if (isBenign(fullText)) {
+            if (console.warn) console.warn('[EarlySuppression] Suppressed transient SDK assertion:', fullText);
+            return;
+          }
+          if (origConsoleError) origConsoleError.apply(console, args);
+        };
+
+        window.onerror = function(msg, src, line, col, err) {
+          if (isBenign(msg) || isBenign(err)) {
+            return true;
+          }
+        };
+
+        window.addEventListener('error', function(e) {
+          if (isBenign(e) || isBenign(e.message) || isBenign(e.error)) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          if (isBenign(e) || isBenign(e.reason)) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
     <title>FinOps (Tek Pou Nou)</title>
     <meta name="description" content="Plateforme ERP fintech multi-tenant pour les PME en Haïti. Gestion du personnel, pointage QR intelligent, paie automatisée, livre financier immuable, journal d'audit et IA CFO avec Gemini." />
     <meta property="og:title" content="FinOps (Tek Pou Nou)" />

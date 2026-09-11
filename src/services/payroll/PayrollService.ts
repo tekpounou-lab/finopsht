@@ -1,5 +1,6 @@
 import { PayrollCycle, PayrollRecord, Employee, ERPEvent, ForensicLog, AttendanceRecord, SalaryAdvance, PayrollBonus, PayrollDeduction, LedgerTransaction } from "../../types";
 import { resolveTaxRatesForDate } from "../../components/payroll/services/PayrollCalculationEngine";
+import { TaxPolicyEngine } from "./TaxPolicyEngine";
 import { BusinessAdministrationRepository, BusinessTaxConfiguration } from "../../repositories/BusinessAdministrationRepository";
 import { ForensicLogRepository } from "../../repositories/ForensicLogRepository";
 import { PayrollRepository } from "../../repositories/PayrollRepository";
@@ -100,11 +101,8 @@ export const PayrollService = {
     const isTaxesEnabled =
       (cycle as any).enableTaxes !== false &&
       options.enableTaxes !== false &&
-      (policies as any).isTaxesEnabled !== false &&
-      (policies as any).enableTaxes !== false &&
-      (policies as any).enable_social_taxes !== false &&
-      (taxConfig as any).enableTaxes !== false &&
-      (taxConfig as any).enabled !== false;
+      TaxPolicyEngine.isSocialTaxEnabled(policies) &&
+      TaxPolicyEngine.isSocialTaxEnabled(taxConfig);
 
     if (!isTaxesEnabled) {
       console.debug(`[Payroll] Taxes disabled for cycle ${cycle.id}, GOV FEES = 0`);
@@ -156,7 +154,8 @@ export const PayrollService = {
 
     // 3. Filter employees by Attendance if attendance records are provided / policy enabled
     let eligibleEmployees = activeEmployees;
-    if (attendanceRecords.length > 0 && policies.requireAttendanceForPayroll !== false) {
+    const isAttendanceRequired = TaxPolicyEngine.isAttendanceRequiredForPayroll(policies);
+    if (attendanceRecords.length > 0 && isAttendanceRequired) {
       console.debug(`[Payroll] Filtering employees by attendance records for period ${cycle.startDate} to ${cycle.endDate}...`);
       eligibleEmployees = activeEmployees.filter((emp) => {
         const empAtt = attendanceRecords.filter(
@@ -466,8 +465,9 @@ export const PayrollService = {
       let netPay = grossPay - totalTax;
       let survivalFloorApplied = false;
 
-      const survivalFloor = policies.survivalFloor || rates.survivalFloorHTG || 15000;
-      if (policies.enableSurvivalFloor !== false && netPay < survivalFloor && grossPay >= survivalFloor) {
+      const survivalFloor = TaxPolicyEngine.getSurvivalFloorAmount(policies);
+      const isSurvivalFloorActive = TaxPolicyEngine.isSurvivalFloorEnabled(policies);
+      if (isSurvivalFloorActive && netPay < survivalFloor && grossPay >= survivalFloor) {
         netPay = survivalFloor;
         survivalFloorApplied = true;
       }

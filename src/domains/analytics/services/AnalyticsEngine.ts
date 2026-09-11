@@ -13,6 +13,7 @@ import {
 } from "../../../types";
 import { filterOperationalEmployees, isOperationalEmployee } from "../../../services/workforce/EmployeeEligibilityService";
 import { WorkforceProfitabilityEngine } from "./WorkforceProfitabilityEngine";
+import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 import {
   AnalyticsPeriod,
   AnalyticsSnapshot,
@@ -330,25 +331,7 @@ export class AnalyticsEngine {
       }
     });
 
-    const isSocialTaxEnabled = businessSettings?.payroll_policies?.enableTaxes !== undefined
-      ? Boolean(businessSettings.payroll_policies.enableTaxes)
-      : (businessSettings?.payrollPolicies?.enableTaxes !== undefined
-          ? Boolean(businessSettings.payrollPolicies.enableTaxes)
-          : (businessSettings?.tax_config?.enableTaxes !== undefined
-              ? Boolean(businessSettings.tax_config.enableTaxes)
-              : (businessSettings?.taxConfig?.enableTaxes !== undefined
-                  ? Boolean(businessSettings.taxConfig.enableTaxes)
-                  : (businessSettings?.payroll?.taxes?.enabled !== undefined
-                      ? Boolean(businessSettings.payroll.taxes.enabled)
-                      : (businessSettings?.payroll?.enable_social_taxes !== undefined
-                          ? Boolean(businessSettings.payroll.enable_social_taxes)
-                          : (businessSettings?.payroll?.enableTaxes !== undefined
-                              ? Boolean(businessSettings.payroll.enableTaxes)
-                              : (businessSettings?.enable_social_taxes !== undefined
-                                  ? Boolean(businessSettings.enable_social_taxes)
-                                  : (businessSettings?.enableTaxes !== undefined
-                                      ? Boolean(businessSettings.enableTaxes)
-                                      : false))))))));
+    const isSocialTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
 
     // 1. Resolve date boundaries
     const { current, previous } = this.getPeriodRanges(period, customRange);
@@ -1057,8 +1040,8 @@ export class AnalyticsEngine {
 
       const rawGross = p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : 0) || p.gross || (p.baseSalary || 0);
       const penalties = ((p.penalties_cents ? p.penalties_cents / 100 : 0) || (p.penalties || 0)) * factor;
-      const erCnss = ((p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || p.onaEmployer || (isSocialTaxEnabled ? (p.cnssDeduction || 0) : 0)) * factor;
-      const erOfatma = ((p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || p.ofatmaEmployer || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (isSocialTaxEnabled ? (p.cnsDeduction || 0) : 0)) * factor;
+      const erCnss = isSocialTaxEnabled ? (((p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || p.onaEmployer || (p.cnssDeduction || 0)) * factor) : 0;
+      const erOfatma = isSocialTaxEnabled ? (((p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || p.ofatmaEmployer || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (p.cnsDeduction || 0)) * factor) : 0;
       const pCost = (rawGross * factor - penalties) + erCnss + erOfatma;
 
       const pSales = (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || p.sales || 0)) * factor;

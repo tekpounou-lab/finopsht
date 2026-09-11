@@ -1,10 +1,15 @@
 import { jsPDF } from "jspdf";
 import { DocumentTemplateData } from "./types";
 import { BaseDocumentHeaderFooter } from "./BaseDocumentHeaderFooter";
+import { TaxPolicyEngine } from "../../services/payroll/TaxPolicyEngine";
 
 export function renderSalaryCertificate(pdf: jsPDF, data: DocumentTemplateData): void {
   const startY = BaseDocumentHeaderFooter.renderHeader(pdf, data);
   const { employee, additionalData } = data;
+
+  const isSocialTaxEnabled = additionalData?.businessSettings
+    ? TaxPolicyEngine.isSocialTaxEnabled(additionalData.businessSettings)
+    : (additionalData?.enableSocialTaxes !== undefined ? Boolean(additionalData.enableSocialTaxes) : true);
 
   const textDark = [51, 65, 85];
   const primaryNavy = [15, 23, 42];
@@ -105,8 +110,13 @@ export function renderSalaryCertificate(pdf: jsPDF, data: DocumentTemplateData):
     pdf.text("Virement Bancaire Mensuel / Quinzaine", 190, startY + 44, { align: "right" });
 
     pdf.setFont("helvetica", "normal");
-    pdf.text("• Déductions Légales Obligatoires :", 22, startY + 52);
-    pdf.text("Soumis aux cotisations CNSS (6%) & CNS (2%)", 190, startY + 52, { align: "right" });
+    pdf.text("• Déductions Légales :", 22, startY + 52);
+    pdf.text(
+      isSocialTaxEnabled 
+        ? "Soumis aux cotisations CNSS (6%) & CNS (2%)" 
+        : "Cotisations Sociales Désactivées (Exonéré 0 HTG)", 
+      190, startY + 52, { align: "right" }
+    );
   } else {
     // Hybrid or Commission Profile
     pdf.setFont("helvetica", "normal");
@@ -147,8 +157,13 @@ export function renderSalaryCertificate(pdf: jsPDF, data: DocumentTemplateData):
 
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(textDark[0], textDark[1], textDark[2]);
-    pdf.text("• Déductions Légales Obligatoires :", 22, startY + 84);
-    pdf.text("Soumis aux cotisations CNSS (6%) & CNS (2%) selon barèmes légaux", 190, startY + 84, { align: "right" });
+    pdf.text("• Déductions Légales :", 22, startY + 84);
+    pdf.text(
+      isSocialTaxEnabled 
+        ? "Soumis aux cotisations CNSS (6%) & CNS (2%) selon barèmes légaux" 
+        : "Cotisations Sociales Désactivées (Exonéré 0 HTG)", 
+      190, startY + 84, { align: "right" }
+    );
   }
 
   // Legal & Banking Notice

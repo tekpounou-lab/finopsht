@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { LedgerTransaction, Role } from '../../types';
-import { ShieldCheck, ShieldAlert, AlertTriangle, Eye, RotateCcw, X, Copy, HelpCircle, FilterX, RefreshCw, Trash2, CheckSquare } from 'lucide-react';
+import { LedgerTransaction, Role, Employee } from '../../types';
+import { ShieldCheck, ShieldAlert, AlertTriangle, Eye, RotateCcw, X, Copy, HelpCircle, FilterX, RefreshCw, Trash2, CheckSquare, User } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useTranslate } from '../../i18n';
@@ -31,6 +31,7 @@ interface DoubleEntryTableProps {
   transactions: LedgerTransaction[];
   rawCount?: number;
   currentRole: Role;
+  employees?: Employee[];
   onViewDetails: (tx: LedgerTransaction) => void;
   onReverse?: (tx: LedgerTransaction) => void;
   onBatchReverse?: (txs: LedgerTransaction[], reason: string) => Promise<void>;
@@ -48,6 +49,7 @@ export default function DoubleEntryTable({
   transactions, 
   rawCount = 0,
   currentRole, 
+  employees = [],
   onViewDetails, 
   onReverse,
   onBatchReverse,
@@ -63,6 +65,28 @@ export default function DoubleEntryTable({
   const tText = useTranslate();
   const cleanDescription = (desc: string) => {
     return desc ? desc.replace(/^\[IMPORT\]\s*/i, '') : '';
+  };
+
+  const getResolvedEmployeeName = (tx: LedgerTransaction | null): string | null => {
+    if (!tx) return null;
+    if (tx.employeeName && tx.employeeName.trim()) return tx.employeeName;
+    if (tx.employee_name && tx.employee_name.trim()) return tx.employee_name;
+    if ((tx as any).metadata?.employeeName) return (tx as any).metadata.employeeName;
+    if ((tx as any).metadata?.employee_name) return (tx as any).metadata.employee_name;
+    
+    const empId = tx.employeeId || tx.employee_id;
+    if (empId && employees && employees.length > 0) {
+      const found = employees.find(e => e.id === empId || e.email?.toLowerCase() === empId.toLowerCase());
+      if (found) return found.name;
+    }
+
+    const empEmail = tx.employee_email;
+    if (empEmail && employees && employees.length > 0) {
+      const found = employees.find(e => e.email?.toLowerCase() === empEmail.toLowerCase());
+      if (found) return found.name;
+    }
+
+    return null;
   };
   const [detailTx, setDetailTx] = useState<LedgerTransaction | null>(null);
   const [reversalTx, setReversalTx] = useState<LedgerTransaction | null>(null);
@@ -267,6 +291,7 @@ export default function DoubleEntryTable({
                 <th className="w-24 py-3 px-4">{tText("ID Ref")}</th>
                 <th className="w-24 py-3 px-4">{tText("Type")}</th>
                 <th className="py-3 px-4">{tText("Description")}</th>
+                <th className="w-36 py-3 px-4">{tText("Employé / Tiers")}</th>
                 <th className="w-32 py-3 px-4">{tText("Source")}</th>
                 <th className="w-24 text-right py-3 px-4">{tText("Debit")}</th>
                 <th className="w-24 text-right py-3 px-4">{tText("Credit")}</th>
@@ -278,7 +303,7 @@ export default function DoubleEntryTable({
             <tbody className="divide-y divide-slate-800/60 font-mono">
               {txWithBalances.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-500 font-sans" id="ledger-table-empty-row">
+                  <td colSpan={12} className="py-12 text-center text-slate-500 font-sans" id="ledger-table-empty-row">
                     <div className="flex flex-col items-center justify-center gap-3 max-w-lg mx-auto px-4">
                       <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 shadow-inner">
                         <FilterX className="w-6 h-6 text-cyan-400" />
@@ -377,6 +402,7 @@ export default function DoubleEntryTable({
                   const displayAmount = (amtCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                   const balCents = tx.computedBalance ?? 0;
                   const displayBalance = (balCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  const empName = getResolvedEmployeeName(tx);
 
                   return (
                     <tr key={tx.id} className={`hover:bg-slate-900/60 transition-colors group ${selectedTxIds.includes(tx.id) ? 'bg-cyan-950/10' : ''}`}>
@@ -405,8 +431,18 @@ export default function DoubleEntryTable({
                           {tx.type}
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 font-sans text-slate-300 truncate max-w-[200px]" title={cleanDescription(tx.description) || tx.employeeName || 'Client / Divers'}>
-                        {cleanDescription(tx.description) || tx.employeeName || 'Client / Divers'}
+                      <td className="py-2.5 px-4 font-sans text-slate-300 truncate max-w-[220px]" title={cleanDescription(tx.description) || '-'}>
+                        {cleanDescription(tx.description) || '-'}
+                      </td>
+                      <td className="py-2.5 px-4 font-sans text-slate-300 text-[11px] truncate max-w-[160px]" title={empName || ''}>
+                        {empName ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-purple-950/60 text-purple-300 border border-purple-800/50 font-medium text-[11px] shadow-sm">
+                            <User className="w-3 h-3 text-purple-400 shrink-0" />
+                            <span className="truncate">{empName}</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-600 text-[10px] italic">-</span>
+                        )}
                       </td>
                       <td className="py-2.5 px-4 text-slate-500 text-[10px]">
                         {tx.source}
@@ -530,6 +566,7 @@ export default function DoubleEntryTable({
               const displayAmount = (amtCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
               const balCents = tx.computedBalance ?? 0;
               const displayBalance = (balCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const empName = getResolvedEmployeeName(tx);
 
               return (
                 <div key={tx.id} className={`p-5 flex flex-col gap-4 hover:bg-slate-900/40 transition-colors ${selectedTxIds.includes(tx.id) ? 'bg-cyan-950/10' : ''}`}>
@@ -549,7 +586,13 @@ export default function DoubleEntryTable({
                         <span className={`px-2 py-0.5 rounded text-[9px] font-black font-sans w-max uppercase tracking-wider border ${typeClass}`}>
                           {tx.type}
                         </span>
-                        <span className="font-sans text-sm font-semibold text-slate-200 leading-snug">{cleanDescription(tx.description) || tx.employeeName || 'Client / Divers'}</span>
+                        <span className="font-sans text-sm font-semibold text-slate-200 leading-snug">{cleanDescription(tx.description) || '-'}</span>
+                        {empName && (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/40 text-[10px] font-medium w-max">
+                            <User className="w-3 h-3 text-purple-400 shrink-0" />
+                            <span>{empName}</span>
+                          </span>
+                        )}
                         <div className="flex items-center gap-2">
                           <span className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">{tx.source}</span>
                           <span className="text-slate-700">•</span>
@@ -711,14 +754,23 @@ export default function DoubleEntryTable({
                 </div>
                 <div>
                   <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider mb-0.5">Membre/Employé Lié</div>
-                  <div className="text-slate-300 font-semibold">{detailTx.employeeName || detailTx.employeeId || 'Non Spécifié'}</div>
+                  <div className="text-slate-300 font-semibold flex items-center gap-1.5">
+                    {getResolvedEmployeeName(detailTx) ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/40 text-xs font-semibold">
+                        <User className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                        <span>{getResolvedEmployeeName(detailTx)}</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-500 italic">Non Spécifié</span>
+                    )}
+                  </div>
                 </div>
               </div>
 
               <div>
                 <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider mb-1">Description Transactionnelle</div>
                 <div className="bg-slate-950/40 p-2.5 border border-slate-850 rounded text-slate-300 font-sans leading-relaxed">
-                  {cleanDescription(detailTx.description) || detailTx.employeeName || 'Client / Divers'}
+                  {cleanDescription(detailTx.description) || getResolvedEmployeeName(detailTx) || 'Client / Divers'}
                 </div>
               </div>
 

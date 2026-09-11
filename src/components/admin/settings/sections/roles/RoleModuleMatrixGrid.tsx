@@ -65,18 +65,22 @@ export const RoleModuleMatrixGrid: React.FC<RoleModuleMatrixGridProps> = ({
   }, [filteredModules]);
 
   const isModuleActiveForRole = (role: string, moduleId: string): boolean => {
-    if (role === "SUPER_ADMIN" || role === "OWNER") return true;
+    const mod = ERP_MODULES.find(m => m.id === moduleId);
+    if (role === "SUPER_ADMIN") return true;
+    if (mod?.isPlatformSystemOnly) return false;
+    if (role === "OWNER") return true;
+
     const roleConfig = roleModuleMatrix[role];
     if (roleConfig && roleConfig[moduleId] !== undefined) {
       return Boolean(roleConfig[moduleId]);
     }
     // Fallback to default
-    const mod = ERP_MODULES.find(m => m.id === moduleId);
     return mod ? mod.defaultRoles.includes(role) : false;
   };
 
   const getActiveModuleCountForRole = (role: string): number => {
-    if (role === "SUPER_ADMIN" || role === "OWNER") return ERP_MODULES.length;
+    if (role === "SUPER_ADMIN") return ERP_MODULES.length;
+    if (role === "OWNER") return ERP_MODULES.filter(m => !m.isPlatformSystemOnly).length;
     return ERP_MODULES.filter(m => isModuleActiveForRole(role, m.id)).length;
   };
 
@@ -222,7 +226,9 @@ export const RoleModuleMatrixGrid: React.FC<RoleModuleMatrixGridProps> = ({
                       {/* Role Toggle Cells */}
                       {roles.map(rawRole => {
                         const role = getRoleKey(rawRole);
-                        const isFixed = role === "SUPER_ADMIN" || role === "OWNER";
+                        const isSuperAdminRole = role === "SUPER_ADMIN";
+                        const isOwnerRole = role === "OWNER";
+                        const isPlatformModule = Boolean(module.isPlatformSystemOnly);
                         const active = isModuleActiveForRole(role, module.id);
 
                         return (
@@ -230,10 +236,20 @@ export const RoleModuleMatrixGrid: React.FC<RoleModuleMatrixGridProps> = ({
                             key={`${module.id}-${role}`} 
                             className="p-3 text-center align-middle border-l border-slate-800/40"
                           >
-                            {isFixed ? (
-                              <div className="inline-flex items-center justify-center px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold gap-1 cursor-default" title="Accès système souverain et irrévocable">
+                            {isSuperAdminRole ? (
+                              <div className="inline-flex items-center justify-center px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[10px] font-bold gap-1 cursor-default" title="Contrôle absolu plateforme globale">
                                 <Lock className="w-2.5 h-2.5" />
-                                <span>Actif</span>
+                                <span>Plateforme</span>
+                              </div>
+                            ) : isPlatformModule ? (
+                              <div className="inline-flex items-center justify-center px-2 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-500 text-[10px] font-medium gap-1 cursor-not-allowed" title="Module d'infrastructure plateforme réservé au Super Administrateur (non délégable)">
+                                <Lock className="w-2.5 h-2.5" />
+                                <span>Non délégable</span>
+                              </div>
+                            ) : isOwnerRole ? (
+                              <div className="inline-flex items-center justify-center px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold gap-1 cursor-default" title="Accès souverain de l'entreprise">
+                                <Lock className="w-2.5 h-2.5" />
+                                <span>Propriétaire</span>
                               </div>
                             ) : (
                               <button

@@ -99,7 +99,7 @@ export function detectObsoleteFields(entityName: string, data: Record<string, an
   if (!data || typeof data !== "object" || data === null) return [];
   const normalizedEntity = entityName.toUpperCase().split("_")[0];
   const obsoleteList = OBSOLETE_FIELDS_MAP[normalizedEntity] || OBSOLETE_FIELDS_MAP[entityName.toUpperCase()] || [];
-  return obsoleteList.filter(field => data && typeof data === "object" && field in data && data[field] !== undefined);
+  return obsoleteList.filter(field => data && typeof data === "object" && data !== null && field in data && data[field] !== undefined);
 }
 
 /**

@@ -42,6 +42,7 @@ import ApprovalPoliciesSection from "./sections/ApprovalPoliciesSection";
 import PayrollPoliciesSection from "./sections/PayrollPoliciesSection";
 import AttendancePoliciesSection from "./sections/AttendancePoliciesSection";
 import FeatureSubscriptionSection from "./sections/FeatureSubscriptionSection";
+import ModulesAndFeaturesSection from "./sections/ModulesAndFeaturesSection";
 import BrandingSection from "./sections/BrandingSection";
 import SecurityAuditSection from "./sections/SecurityAuditSection";
 import AiAssistantSection from "./sections/AiAssistantSection";
@@ -224,7 +225,7 @@ export default function BusinessAdministrationCenter() {
       case "PAYROLL_POLICIES": return <PayrollPoliciesSection />;
       case "PAYROLL_TAXES": return <PayrollTaxConfigurationSection />;
       case "ATTENDANCE_POLICIES": return <AttendancePoliciesSection />;
-      case "FEATURES": 
+      case "FEATURES": return <ModulesAndFeaturesSection />;
       case "SUBSCRIPTION": return <FeatureSubscriptionSection />;
       case "BRANDING": return <BrandingSection />;
       case "SECURITY": 
