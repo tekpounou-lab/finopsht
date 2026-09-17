@@ -233,9 +233,8 @@ function repairJsonString(jsonStr: string): string {
   return cleaned;
 }
 
-async function startServer() {
+export async function createApp() {
   const app = express();
-  const PORT = 3000;
 
   // CORS configuration to allow requests from localhost, cloud run, and production domains
   app.use(cors({
@@ -249,6 +248,7 @@ async function startServer() {
         origin.includes(".run.app") || 
         origin.includes(".web.app") || 
         origin.includes(".firebaseapp.com") ||
+        origin.includes(".vercel.app") ||
         origin.includes("ai.studio");
 
       if (isAllowed) {
@@ -1103,31 +1103,43 @@ Schema:
     });
   });
 
-  // Serve static files and integrate Vite middlewares
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { 
-        middlewareMode: true,
-        hmr: false,
-        ws: false
-      },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+  // Serve static files and integrate Vite middlewares (when not running inside Vercel serverless functions)
+  if (!process.env.VERCEL) {
+    if (process.env.NODE_ENV !== "production") {
+      const vite = await createViteServer({
+        server: { 
+          middlewareMode: true,
+          hmr: false,
+          ws: false
+        },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
+
+  return app;
+}
+
+export async function startServer() {
+  const PORT = 3000;
+  const app = await createApp();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 FinOps Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer().catch(err => {
-  console.error("CRITICAL SERVER STARTUP ERROR:", err);
-  process.exit(1);
-});
+// Auto-boot standalone server if not in Vercel serverless runtime
+if (!process.env.VERCEL) {
+  startServer().catch(err => {
+    console.error("CRITICAL SERVER STARTUP ERROR:", err);
+    process.exit(1);
+  });
+}
