@@ -21,8 +21,6 @@ import { toast } from 'sonner';
 import { LedgerTransaction, Branch, Department, Employee, ERPEvent, ForensicLog } from '../../types';
 import { EmployeeDepartmentLinkingService } from '../../services/workforce/EmployeeDepartmentLinkingService';
 import { DepartmentResolutionService } from '../../domains/organization/services/DepartmentResolutionService';
-import { MasterDataSynchronizationService } from '../../domains/organization/services/MasterDataSynchronizationService';
-import { ReferenceResolver } from '../../services/ReferenceResolver';
 import { DepartmentRepository } from '../../repositories/organization';
 import { EmployeeRepository } from '../../repositories/EmployeeRepository';
 import { analyzeGLDuplicates, DuplicateAnalysisResult } from '../../lib/bulkDuplicateDetector';
@@ -36,6 +34,7 @@ import { doc, setDoc } from 'firebase/firestore';
 import { QuickBooksParserService, ExtractedHeaderDateRange } from '../../domains/ledger/services/QuickBooksParserService';
 import { EmployeeResolutionEngine } from '../../domains/ledger/services/EmployeeResolutionEngine';
 import { ParsedQuickBooksRow, AssociateResolution, ResolutionStatus } from '../../domains/ledger/types/quickbooks';
+import { OrganizationalDimensionResolver, RawImportRow, ResolvedImportRow } from '../../domains/ledger/services/OrganizationalDimensionResolver';
 
 import { EventBus } from '../../modules/runtime/EventBus';
 import { normalizeCsvDate } from '../../utils/dateUtils';
@@ -364,194 +363,95 @@ export default function BulkTransactionImportDialog({
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
-        const parsedData = results.data;
+        const parsedData = (results.data || []) as RawImportRow[];
         const errs: string[] = [];
         const validRows: any[] = [];
         const missingDeptsMap = new Map<string, PendingMissingDepartment>();
-        
-        // High-performance in-memory pre-indexed lookup maps for O(1) matching
-        const branchLookupMap = new Map<string, Branch>();
-        branches.forEach(b => {
-          if (b && typeof b.id === 'string' && b.id.trim()) branchLookupMap.set(b.id.toLowerCase().trim(), b);
-          if (b && typeof b.code === 'string' && b.code.trim()) branchLookupMap.set(b.code.toLowerCase().trim(), b);
-          if (b && typeof b.name === 'string' && b.name.trim()) branchLookupMap.set(b.name.toLowerCase().trim(), b);
-        });
 
-        const deptLookupMap = new Map<string, Department>();
-        departments.forEach(d => {
-          if (d && typeof d.id === 'string' && d.id.trim()) deptLookupMap.set(d.id.toLowerCase().trim(), d);
-          if (d && typeof d.code === 'string' && d.code.trim()) deptLookupMap.set(d.code.toLowerCase().trim(), d);
-          if (d && typeof d.name === 'string' && d.name.trim()) deptLookupMap.set(d.name.toLowerCase().trim(), d);
-        });
-
-        const empEmailLookupMap = new Map<string, Employee>();
-        employees.forEach(e => {
-          if (e && typeof e.email === 'string' && e.email.trim()) empEmailLookupMap.set(e.email.toLowerCase().trim(), e);
-        });
-
-        const unknownEmailsSet = new Set<string>();
-
-        for (let index = 0; index < parsedData.length; index++) {
-          const row = parsedData[index] as any;
+        let activeEmployees = employees.length > 0 ? employees : activeEmployeesList;
+        if (activeEmployees.length === 0) {
           try {
-            // Clean up row keys and values
-            const cleanRow: any = {};
-            Object.keys(row).forEach(k => {
-              const cleanedKey = k.trim();
-              const val = row[k];
-              cleanRow[cleanedKey] = typeof val === 'string' ? val.trim() : val;
-            });
-
-            const rawDateStr = cleanRow.date || cleanRow.transactionDate || cleanRow.transaction_date;
-            const normalizedDate = normalizeCsvDate(rawDateStr, accountingDate);
-            console.debug("[CSV Import] Raw date:", rawDateStr, "→ normalized:", normalizedDate);
-            console.debug("[CSV Import] Clean row before Zod mapping:", cleanRow);
-
-            const parsed = csvRowSchema.parse(cleanRow);
-            console.debug("[Zod] Validated row:", parsed);
-            const amount = parseFloat(parsed.amount);
-            if (isNaN(amount) || amount <= 0) {
-              throw new Error("Montant invalide (doit être un nombre positif)");
+            const fetched = await EmployeeRepository.listAll(current_business_id);
+            if (fetched && fetched.length > 0) {
+              activeEmployees = fetched;
+              setActiveEmployeesList(fetched);
             }
-
-            // 1. Resolve branch_code via O(1) in-memory lookup
-            const rawBranchKey = parsed.branch_code.toLowerCase().trim();
-            let targetBranch = branchLookupMap.get(rawBranchKey);
-            if (!targetBranch) {
-              targetBranch = ReferenceResolver.resolveBranch(branches, parsed.branch_code);
-            }
-            if (!targetBranch) {
-              targetBranch = await MasterDataSynchronizationService.resolveOrCreateBranch(
-                current_business_id,
-                parsed.branch_code.trim(),
-                parsed.branch_code.trim()
-              );
-              // Cache it locally so subsequent rows in same batch reuse it in O(1)
-              branches.push(targetBranch);
-              branchLookupMap.set(rawBranchKey, targetBranch);
-              if (targetBranch.code) branchLookupMap.set(targetBranch.code.toLowerCase().trim(), targetBranch);
-              if (targetBranch.name) branchLookupMap.set(targetBranch.name.toLowerCase().trim(), targetBranch);
-            }
-
-            // 2. Resolve employee_email via O(1) in-memory lookup
-            let targetEmployeeId: string | undefined = undefined;
-            let targetEmployeeName: string | undefined = undefined;
-            let targetEmployeeEmail: string | undefined = undefined;
-            if (parsed.employee_email && parsed.employee_email.trim()) {
-              const normEmail = parsed.employee_email.toLowerCase().trim();
-              const targetEmp = empEmailLookupMap.get(normEmail) || ReferenceResolver.resolveEmployee(employees, parsed.employee_email);
-              if (targetEmp) {
-                targetEmployeeId = targetEmp.id;
-                targetEmployeeName = targetEmp.name;
-                targetEmployeeEmail = targetEmp.email;
-              } else {
-                parseStatsRef.current.unknownEmployees++;
-                unknownEmailsSet.add(parsed.employee_email.trim());
-              }
-            }
-
-            // 3. Resolve department_code via O(1) in-memory lookup
-            let targetDeptId: string | undefined = undefined;
-            let targetDeptName: string | undefined = undefined;
-
-            if (parsed.department_code && parsed.department_code.trim()) {
-              const rawDeptKey = parsed.department_code.toLowerCase().trim();
-              let targetDept = deptLookupMap.get(rawDeptKey);
-              if (!targetDept) {
-                targetDept = ReferenceResolver.resolveDepartment(departments, parsed.department_code);
-              }
-              if (targetDept) {
-                parseStatsRef.current.deptsReused++;
-              } else {
-                // Department does not exist yet -> resolveOrCreate guarantees no duplicate departments
-                targetDept = await MasterDataSynchronizationService.resolveOrCreateDepartment(
-                  current_business_id,
-                  parsed.department_code.trim(),
-                  parsed.department_code.trim(),
-                  targetBranch.id
-                );
-                parseStatsRef.current.deptsCreated++;
-                // Cache it locally so subsequent rows in same batch reuse it in O(1)
-                departments.push(targetDept);
-                deptLookupMap.set(rawDeptKey, targetDept);
-                if (targetDept.code) deptLookupMap.set(targetDept.code.toLowerCase().trim(), targetDept);
-                if (targetDept.name) deptLookupMap.set(targetDept.name.toLowerCase().trim(), targetDept);
-
-                // Audit Log for automatically created department
-                const auditLog: ForensicLog = {
-                  id: `f_dept_auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-                  timestamp: new Date().toISOString(),
-                  userId: "user",
-                  userName: "System User",
-                  userRole: "MANAGER",
-                  business_id: current_business_id,
-                  action: "DEPARTMENT_AUTO_CREATED",
-                  beforeState: "{}",
-                  afterState: JSON.stringify({
-                    departmentId: targetDept.id,
-                    name: targetDept.name,
-                    code: targetDept.code,
-                    source: "GL Import",
-                    reason: "Department referenced during import",
-                    businessId: current_business_id
-                  }),
-                  ipAddress: getLocalIP(),
-                  userAgent: typeof window !== 'undefined' ? window.navigator.userAgent : 'System',
-                  signature: generateSignature({ departmentId: targetDept.id, code: targetDept.code }),
-                  entityType: "DEPARTMENT",
-                  entityId: targetDept.id,
-                  metadata: {
-                    source: "GL Import",
-                    reason: "Department referenced during import",
-                    departmentId: targetDept.id,
-                    departmentName: targetDept.name,
-                    departmentCode: targetDept.code,
-                    businessId: current_business_id
-                  }
-                };
-
-                parseStatsRef.current.createdDepts.push({
-                  id: targetDept.id,
-                  name: targetDept.name,
-                  code: targetDept.code || parsed.department_code,
-                  auditLog
-                });
-
-                if (onAddForensicLog) {
-                  onAddForensicLog(auditLog);
-                }
-              }
-              targetDeptId = targetDept.id;
-              targetDeptName = targetDept.name;
-            }
-
-            validRows.push({
-              ...parsed,
-              amount,
-              branch_code: parsed.branch_code,
-              branchId: targetBranch.id,
-              branchName: targetBranch.name,
-              department_code: parsed.department_code,
-              departmentId: targetDeptId,
-              departmentName: targetDeptName,
-              employee_email: parsed.employee_email,
-              employeeId: targetEmployeeId,
-              employeeName: targetEmployeeName
-            });
-          } catch (e: any) {
-            if (e instanceof z.ZodError) {
-              const errorFormatted = e.issues.map(err => `${err.path.join('.')}: ${err.message}`).join(', ');
-              errs.push(`Ligne ${index + 2}: Format invalide (${errorFormatted})`);
-            } else {
-              errs.push(`Ligne ${index + 2}: ${e.message}`);
-            }
+          } catch (empErr: any) {
+            console.warn("[CSV Import] Could not load employees list:", empErr);
           }
         }
 
-        // Aggregate unknown employee warnings into UI
-        if (unknownEmailsSet.size > 0) {
+        // Run Organizational Dimension Resolution with strict RH hierarchy
+        const resolvedRows = OrganizationalDimensionResolver.resolveBatch(
+          parsedData,
+          current_business_id,
+          activeEmployees,
+          departments,
+          branches,
+          accountingDate
+        );
+
+        const report = OrganizationalDimensionResolver.generateReport(resolvedRows);
+
+        resolvedRows.forEach((resolved, index) => {
+          if (!resolved.isFinanciallyValid) {
+            errs.push(`Ligne ${index + 2}: ${resolved.financialErrors.join(', ')}`);
+            return;
+          }
+
+          if (resolved.warnings && resolved.warnings.length > 0) {
+            resolved.warnings.forEach(w => {
+              if (!parseStatsRef.current.warnings.includes(w)) {
+                parseStatsRef.current.warnings.push(w);
+              }
+            });
+          }
+
+          if (resolved.rhStatus === "RESOLVED") {
+            parseStatsRef.current.deptsReused++;
+          } else if (resolved.rhStatus === "UNKNOWN_EMPLOYEE") {
+            parseStatsRef.current.unknownEmployees++;
+          }
+
+          validRows.push({
+            date: resolved.financialData.date,
+            type: resolved.financialData.type,
+            category: resolved.financialData.category,
+            description: resolved.financialData.description,
+            amount: resolved.financialData.amount,
+            amount_cents: resolved.financialData.amount_cents,
+            currency: resolved.financialData.currency,
+            branch_code: resolved.branchCode,
+            branchId: resolved.branchId,
+            branchName: resolved.branchName,
+            department_code: resolved.departmentCode,
+            departmentId: resolved.departmentId,
+            departmentName: resolved.departmentName,
+            employee_email: resolved.employeeEmail,
+            employeeId: resolved.employeeId,
+            employeeName: resolved.employeeName,
+            rhStatus: resolved.rhStatus,
+            statusLabel: resolved.statusLabel,
+            warnings: resolved.warnings
+          });
+        });
+
+        // Summary warnings from report
+        if (report.unknownEmployees.length > 0) {
           parseStatsRef.current.warnings.push(
-            `${unknownEmailsSet.size} email(s) d'employés introuvables (${Array.from(unknownEmailsSet).slice(0, 5).join(', ')}${unknownEmailsSet.size > 5 ? '...' : ''}). Les lignes associées sont importées sans attribution RH.`
+            `${report.unknownEmployees.length} employé(s) introuvable(s) dans le registre RH (${report.unknownEmployees.slice(0, 5).join(', ')}${report.unknownEmployees.length > 5 ? '...' : ''}). Les lignes associées sont importées sans attribution RH.`
+          );
+        }
+
+        if (report.ambiguousMatches.length > 0) {
+          parseStatsRef.current.warnings.push(
+            `${report.ambiguousMatches.length} nom(s) d'employés ambigus (homonymes). Veuillez vérifier l'attribution.`
+          );
+        }
+
+        if (report.departmentMismatchCount > 0) {
+          parseStatsRef.current.warnings.push(
+            `${report.departmentMismatchCount} incohérence(s) de département détectée(s) entre le CSV et le dossier RH de l'employé.`
           );
         }
 
@@ -583,123 +483,114 @@ export default function BulkTransactionImportDialog({
     const mapToUse = (optionalMap instanceof Map) ? optionalMap : resolutionMap;
     const rowsToUse = optionalRows || quickbooksRows;
     
-    let hasUnresolved = false;
-    mapToUse.forEach(res => {
-      if (res.status === 'UNRESOLVED' && !res.matchedEmployeeId) {
-        hasUnresolved = true;
-      }
-    });
-
-    if (hasUnresolved) {
-      toast.error("Veuillez mapper tous les employés manquants avant de continuer.");
-      return;
-    }
-    
     setLoading(true);
 
-    const mappedTransactions: any[] = [];
-    
-    // Build high-performance lookup maps for O(1) matching
-    const branchLookupMap = new Map<string, Branch>();
-    branches.forEach(b => {
-      if (b && typeof b.id === 'string' && b.id.trim()) branchLookupMap.set(b.id.toLowerCase().trim(), b);
-      if (b && typeof b.code === 'string' && b.code.trim()) branchLookupMap.set(b.code.toLowerCase().trim(), b);
-      if (b && typeof b.name === 'string' && b.name.trim()) branchLookupMap.set(b.name.toLowerCase().trim(), b);
-    });
-
-    const deptLookupMap = new Map<string, Department>();
-    departments.forEach(d => {
-      if (d && typeof d.id === 'string' && d.id.trim()) deptLookupMap.set(d.id.toLowerCase().trim(), d);
-      if (d && typeof d.code === 'string' && d.code.trim()) deptLookupMap.set(d.code.toLowerCase().trim(), d);
-      if (d && typeof d.name === 'string' && d.name.trim()) deptLookupMap.set(d.name.toLowerCase().trim(), d);
-    });
-
-    const empIdMap = new Map<string, Employee>();
-    employees.forEach(e => {
-      if (e && typeof e.id === 'string') empIdMap.set(e.id, e);
-    });
-
-    // Resolve Branch & Departments identically to CSV parser
-    for (let i = 0; i < rowsToUse.length; i++) {
-      const row = rowsToUse[i];
-      const res = mapToUse.get(row.associate);
-      const targetEmp = res?.matchedEmployeeId ? empIdMap.get(res.matchedEmployeeId) : undefined;
-      
-      const branchCode = 'Bureau Central';
-      const branchKey = branchCode.toLowerCase().trim();
-      let targetBranch = branchLookupMap.get(branchKey) || ReferenceResolver.resolveBranch(branches, branchCode);
-      if (!targetBranch) {
-        targetBranch = await MasterDataSynchronizationService.resolveOrCreateBranch(
-          current_business_id,
-          branchCode,
-          branchCode
-        );
-        branches.push(targetBranch);
-        branchLookupMap.set(branchKey, targetBranch);
-        if (targetBranch.code) branchLookupMap.set(targetBranch.code.toLowerCase().trim(), targetBranch);
-        if (targetBranch.name) branchLookupMap.set(targetBranch.name.toLowerCase().trim(), targetBranch);
-      }
-      
-      let targetDeptId: string | undefined = undefined;
-      let targetDeptName: string | undefined = undefined;
-      
-      if (row.department && row.department.trim()) {
-        const deptKey = row.department.toLowerCase().trim();
-        let targetDept = deptLookupMap.get(deptKey) || ReferenceResolver.resolveDepartment(departments, row.department);
-        if (targetDept) {
-          targetDeptId = targetDept.id;
-          targetDeptName = targetDept.name;
-        } else {
-          targetDept = await MasterDataSynchronizationService.resolveOrCreateDepartment(
-            current_business_id,
-            row.department.trim(),
-            row.department.trim(),
-            targetBranch.id
-          );
-          departments.push(targetDept);
-          deptLookupMap.set(deptKey, targetDept);
-          if (targetDept.code) deptLookupMap.set(targetDept.code.toLowerCase().trim(), targetDept);
-          if (targetDept.name) deptLookupMap.set(targetDept.name.toLowerCase().trim(), targetDept);
-          targetDeptId = targetDept.id;
-          targetDeptName = targetDept.name;
-          
-          const auditLog: ForensicLog = {
-            id: `f_dept_auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            timestamp: new Date().toISOString(),
-            userId: "user",
-            userName: "System User",
-            userRole: "MANAGER",
-            business_id: current_business_id,
-            action: "DEPARTMENT_CREATED",
-            beforeState: `{}`,
-            afterState: JSON.stringify(targetDept),
-            ipAddress: getLocalIP(),
-            userAgent: window.navigator.userAgent,
-            signature: generateSignature(targetDept)
-          };
-          if (onAddForensicLog) onAddForensicLog(auditLog);
+    let activeEmployees = employees.length > 0 ? employees : activeEmployeesList;
+    if (activeEmployees.length === 0) {
+      try {
+        const fetched = await EmployeeRepository.listAll(current_business_id);
+        if (fetched && fetched.length > 0) {
+          activeEmployees = fetched;
+          setActiveEmployeesList(fetched);
         }
+      } catch (empErr: any) {
+        console.warn("[QuickBooks Import] Could not load employees list:", empErr);
       }
-      
-      mappedTransactions.push({
+    }
+
+    // Convert QuickBooks rows to RawImportRow representation
+    const rawRows: RawImportRow[] = rowsToUse.map((row, i) => {
+      const res = mapToUse.get(row.associate);
+      return {
         date: accountingDate,
         type: 'INCOME',
         category: row.itemName,
         description: `Vente ${row.itemName}`,
         amount: Number(row.extPrice.toFixed(2)),
         currency: 'HTG',
-        employee_email: res?.matchedEmail || targetEmp?.email || '',
-        branch_code: 'Bureau Central',
-        department_code: row.department || '',
-        
-        branchId: targetBranch.id,
-        branchName: targetBranch.name,
-        departmentId: targetDeptId,
-        departmentName: targetDeptName,
-        employeeId: targetEmp?.id,
-        employeeName: targetEmp?.name || row.associate,
-        amount_cents: Math.round(row.extPrice * 100)
+        employeeId: res?.matchedEmployeeId || undefined,
+        employee_email: res?.matchedEmail || undefined,
+        associate: row.associate,
+        department: row.department || undefined,
+        rowIndex: i
+      };
+    });
+
+    // Run Organizational Dimension Resolution with strict RH hierarchy (SSOT)
+    const resolvedRows = OrganizationalDimensionResolver.resolveBatch(
+      rawRows,
+      current_business_id,
+      activeEmployees,
+      departments,
+      branches,
+      accountingDate
+    );
+
+    const report = OrganizationalDimensionResolver.generateReport(resolvedRows);
+
+    const mappedTransactions: any[] = [];
+    const errs: string[] = [];
+
+    resolvedRows.forEach((resolved, index) => {
+      if (!resolved.isFinanciallyValid) {
+        errs.push(`Ligne ${index + 2}: ${resolved.financialErrors.join(', ')}`);
+        return;
+      }
+
+      if (resolved.warnings && resolved.warnings.length > 0) {
+        resolved.warnings.forEach(w => {
+          if (!parseStatsRef.current.warnings.includes(w)) {
+            parseStatsRef.current.warnings.push(w);
+          }
+        });
+      }
+
+      if (resolved.rhStatus === "RESOLVED") {
+        parseStatsRef.current.deptsReused++;
+      } else if (resolved.rhStatus === "UNKNOWN_EMPLOYEE") {
+        parseStatsRef.current.unknownEmployees++;
+      }
+
+      mappedTransactions.push({
+        date: resolved.financialData.date,
+        type: resolved.financialData.type,
+        category: resolved.financialData.category,
+        description: resolved.financialData.description,
+        amount: resolved.financialData.amount,
+        amount_cents: resolved.financialData.amount_cents,
+        currency: resolved.financialData.currency,
+        branch_code: resolved.branchCode || undefined,
+        branchId: resolved.branchId || undefined,
+        branchName: resolved.branchName || undefined,
+        department_code: resolved.departmentCode || rowsToUse[index]?.department || undefined,
+        departmentId: resolved.departmentId || undefined,
+        departmentName: resolved.departmentName || undefined,
+        employee_email: resolved.employeeEmail || mapToUse.get(rowsToUse[index]?.associate)?.matchedEmail || undefined,
+        employeeId: resolved.employeeId || undefined,
+        employeeName: resolved.employeeName || rowsToUse[index]?.associate || undefined,
+        rhStatus: resolved.rhStatus,
+        statusLabel: resolved.statusLabel,
+        warnings: resolved.warnings
       });
+    });
+
+    // Summary warnings from report
+    if (report.unknownEmployees.length > 0) {
+      parseStatsRef.current.warnings.push(
+        `${report.unknownEmployees.length} employé(s) introuvable(s) dans le registre RH (${report.unknownEmployees.slice(0, 5).join(', ')}${report.unknownEmployees.length > 5 ? '...' : ''}). Les lignes associées sont importées sans attribution RH.`
+      );
+    }
+
+    if (report.ambiguousMatches.length > 0) {
+      parseStatsRef.current.warnings.push(
+        `${report.ambiguousMatches.length} nom(s) d'employés ambigus (homonymes). Veuillez vérifier l'attribution.`
+      );
+    }
+
+    if (report.departmentMismatchCount > 0) {
+      parseStatsRef.current.warnings.push(
+        `${report.departmentMismatchCount} incohérence(s) de département détectée(s) entre QuickBooks et le dossier RH de l'employé.`
+      );
     }
 
     // Run duplicate detection phase
@@ -707,6 +598,9 @@ export default function BulkTransactionImportDialog({
     setDuplicateAnalysis(analysis);
 
     setPreview(mappedTransactions);
+    if (errs.length > 0) {
+      setErrors(errs);
+    }
     setIsResolving(false);
     setLoading(false);
   };

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import jsPDF from "jspdf";
 import { 
   Users, 
@@ -14,6 +14,8 @@ import {
   ExternalLink, 
   X, 
   ChevronRight, 
+  ChevronDown,
+  Check,
   Clock, 
   CheckCircle2, 
   AlertCircle, 
@@ -102,12 +104,47 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [payslipToast, setPayslipToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  // Header Search State
-  const [headerSearchQuery, setHeaderSearchQuery] = useState("");
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
-  // Instant matching employees for search spotlight
-  const matchingSearchEmployees = React.useMemo(() => {
+  // Header Searchable Profile Dropdown State
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+  const [dropdownSearchQuery, setDropdownSearchQuery] = useState("");
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+        setIsProfileDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Filtered employees for the dropdown list search
+  const filteredDropdownEmployees = useMemo(() => {
+    if (!employees || employees.length === 0) return [];
+    if (!dropdownSearchQuery.trim()) return employees;
+    const q = dropdownSearchQuery.toLowerCase().trim();
+    return employees.filter(emp => {
+      const branchName = ReferenceResolver.resolveBranch(branches, emp.branchId || emp.branch_id)?.name || "";
+      const deptName = ReferenceResolver.resolveDepartment(departments, emp.departmentId || emp.department_id)?.name || "";
+      return (
+        (emp.name ? String(emp.name).toLowerCase() : "").includes(q) ||
+        (emp.email ? String(emp.email).toLowerCase() : "").includes(q) ||
+        (emp.position ? String(emp.position).toLowerCase() : "").includes(q) ||
+        (emp.id ? String(emp.id).toLowerCase() : "").includes(q) ||
+        (emp.phone ? String(emp.phone).toLowerCase() : "").includes(q) ||
+        branchName.toLowerCase().includes(q) ||
+        deptName.toLowerCase().includes(q)
+      );
+    });
+  }, [dropdownSearchQuery, employees, branches, departments]);
+
+  // Dropdown list matching employees
+  const matchingSearchEmployees = filteredDropdownEmployees;
+  /*
+  const matchingSearchEmployeesLegacy = React.useMemo(() => {
     if (!headerSearchQuery.trim() || !employees) return [];
     const q = headerSearchQuery.toLowerCase().trim();
     return employees.filter(emp => {
@@ -123,7 +160,7 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
         deptName.toLowerCase().includes(q)
       );
     }).slice(0, 6);
-  }, [headerSearchQuery, employees, branches, departments]);
+  */
 
   const handleUpdateAttendanceViaBus = async (newRecords: any[]) => {
     const result = await dispatch("LOG_ATTENDANCE", { records: newRecords });
@@ -408,87 +445,148 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
           </p>
         </div>
 
-        {/* Interactive Search Bar & Active Profile Selector */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 self-start md:self-auto w-full md:w-auto relative">
-          {/* Header Search Input */}
-          <div className="relative flex-1 sm:w-64 md:w-72">
-            <Search className="w-4 h-4 text-cyan-400 absolute left-3 top-1/2 -translate-y-1/2 shrink-0 pointer-events-none" />
-            <input
-              type="text"
-              placeholder={
-                language === "fr"
-                  ? "Rechercher par nom, poste, ID, email..."
-                  : language === "ht"
-                  ? "Chache pa non, pòs, ID, imel..."
-                  : "Search by name, role, ID, email..."
-              }
-              value={headerSearchQuery}
-              onFocus={() => setIsSearchFocused(true)}
-              onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-              onChange={(e) => setHeaderSearchQuery(e.target.value)}
-              className="w-full bg-slate-900/90 border border-slate-700/80 focus:border-cyan-500/80 text-slate-100 text-xs rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all font-sans placeholder:text-slate-500 shadow-inner"
-            />
-            {headerSearchQuery && (
-              <button
-                onClick={() => setHeaderSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition p-0.5 rounded-md hover:bg-slate-800 cursor-pointer"
-                title={language === "fr" ? "Effacer" : "Clear"}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {/* Instant Search Results Spotlight Dropdown */}
-            {isSearchFocused && matchingSearchEmployees.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 max-h-64 overflow-y-auto divide-y divide-slate-800/50">
-                <div className="px-2 py-1 text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider flex justify-between items-center">
-                  <span>Résultats ({matchingSearchEmployees.length})</span>
-                  <span className="text-[9px] text-slate-500 font-sans">Sélectionner profil</span>
+        {/* Interactive Active Profile Searchable Dropdown */}
+        {employees && employees.length > 0 && (
+          <div className="relative self-start md:self-auto w-full sm:w-auto" ref={profileDropdownRef}>
+            {/* Dropdown Trigger Button */}
+            <button
+              type="button"
+              id="active-profile-dropdown-btn"
+              onClick={() => {
+                setIsProfileDropdownOpen(!isProfileDropdownOpen);
+                if (!isProfileDropdownOpen) {
+                  setDropdownSearchQuery("");
+                }
+              }}
+              className={`flex items-center justify-between gap-3 bg-slate-900 hover:bg-slate-800/90 border ${
+                isProfileDropdownOpen ? 'border-cyan-500/80 ring-2 ring-cyan-500/20' : 'border-slate-700/80 hover:border-slate-600'
+              } rounded-xl px-3.5 py-2 transition-all cursor-pointer shadow-sm w-full sm:w-72 md:w-80 group`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-6 h-6 rounded-full bg-cyan-950 border border-cyan-700/50 flex items-center justify-center text-cyan-400 font-bold text-[10px] shrink-0">
+                  {selectedEmployee?.name ? selectedEmployee.name.charAt(0).toUpperCase() : <User className="w-3.5 h-3.5 text-cyan-400" />}
                 </div>
-                {matchingSearchEmployees.map((emp) => (
-                  <button
-                    key={emp.id}
-                    onMouseDown={() => {
-                      setSelectedEmployeeId(emp.id);
-                      setIsSearchFocused(false);
-                    }}
-                    className="w-full text-left p-2 hover:bg-slate-800/80 rounded-lg transition flex items-center justify-between gap-2 group cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-6 h-6 rounded-full bg-cyan-950 border border-cyan-700/50 flex items-center justify-center text-cyan-400 font-bold text-[10px] shrink-0">
-                        {emp.name ? emp.name.charAt(0).toUpperCase() : 'E'}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-slate-200 group-hover:text-cyan-300 truncate">{emp.name}</div>
-                        <div className="text-[10px] text-slate-400 truncate">{emp.position || 'Employé'} • {emp.email || emp.id}</div>
-                      </div>
+                <div className="flex flex-col text-left min-w-0">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider flex items-center gap-1">
+                    {language === "fr" ? "Profil Actif" : language === "ht" ? "Pwofil Aktif" : "Active Profile"}
+                  </span>
+                  <span className="text-xs font-bold text-slate-100 truncate group-hover:text-cyan-300 transition-colors">
+                    {selectedEmployee ? `${selectedEmployee.name} (${selectedEmployee.position || 'Employé'})` : (language === "fr" ? "Sélectionner..." : "Select...")}
+                  </span>
+                </div>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-slate-400 group-hover:text-slate-200 shrink-0 transition-transform duration-200 ${isProfileDropdownOpen ? 'rotate-180 text-cyan-400' : ''}`} />
+            </button>
+
+            {/* Dropdown List with Embedded Search Bar */}
+            {isProfileDropdownOpen && (
+              <div 
+                id="active-profile-dropdown-menu"
+                className="absolute right-0 top-full mt-2 w-full sm:w-80 md:w-96 bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl shadow-black/80 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
+              >
+                {/* Search Bar INSIDE the dropdown list */}
+                <div className="p-2.5 bg-slate-950/90 border-b border-slate-800 flex items-center gap-2 sticky top-0 z-10">
+                  <Search className="w-4 h-4 text-cyan-400 shrink-0 ml-1" />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder={
+                      language === "fr"
+                        ? "Rechercher par nom, poste, ID, email..."
+                        : language === "ht"
+                        ? "Chache pa non, pòs, ID, imel..."
+                        : "Search by name, role, ID, email..."
+                    }
+                    value={dropdownSearchQuery}
+                    onChange={(e) => setDropdownSearchQuery(e.target.value)}
+                    className="w-full bg-transparent text-xs text-slate-100 placeholder:text-slate-500 outline-none font-sans py-1"
+                  />
+                  {dropdownSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setDropdownSearchQuery("")}
+                      className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition cursor-pointer shrink-0"
+                      title={language === "fr" ? "Effacer" : "Clear"}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Sub-header / Count indicator */}
+                <div className="px-3 py-1.5 bg-slate-900/95 border-b border-slate-800/60 flex items-center justify-between text-[10px] font-mono text-slate-400">
+                  <span className="font-bold text-cyan-400 uppercase tracking-wider">
+                    {language === "fr" ? "Employés" : "Employees"} ({filteredDropdownEmployees.length})
+                  </span>
+                  <span className="text-[9px] text-slate-500">
+                    {language === "fr" ? "Cliquez pour activer" : "Click to select"}
+                  </span>
+                </div>
+
+                {/* Dropdown Options List */}
+                <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/40 custom-scrollbar p-1.5">
+                  {filteredDropdownEmployees.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400">
+                      <p className="font-medium text-slate-300">
+                        {language === "fr" ? "Aucun employé trouvé" : "No employee found"}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {language === "fr" ? "Modifiez votre recherche" : "Try a different search term"}
+                      </p>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 shrink-0" />
-                  </button>
-                ))}
+                  ) : (
+                    filteredDropdownEmployees.map((emp) => {
+                      const isSelected = selectedEmployee?.id === emp.id;
+                      const branch = ReferenceResolver.resolveBranch(branches, emp.branchId || emp.branch_id);
+                      const dept = ReferenceResolver.resolveDepartment(departments, emp.departmentId || emp.department_id);
+
+                      return (
+                        <button
+                          key={emp.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedEmployeeId(emp.id);
+                            setIsProfileDropdownOpen(false);
+                            setDropdownSearchQuery("");
+                          }}
+                          className={`w-full text-left p-2 rounded-xl transition-all flex items-center justify-between gap-2.5 cursor-pointer group ${
+                            isSelected 
+                              ? 'bg-cyan-950/50 border border-cyan-700/40 text-cyan-300' 
+                              : 'hover:bg-slate-800/70 text-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                              isSelected 
+                                ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-500/30' 
+                                : 'bg-slate-800 border border-slate-700 text-slate-300 group-hover:border-cyan-700/50 group-hover:text-cyan-400'
+                            }`}>
+                              {emp.name ? emp.name.charAt(0).toUpperCase() : 'E'}
+                            </div>
+                            <div className="min-w-0">
+                              <div className={`text-xs font-semibold truncate ${isSelected ? 'text-cyan-300 font-bold' : 'group-hover:text-cyan-300'}`}>
+                                {emp.name}
+                              </div>
+                              <div className="text-[10px] text-slate-400 truncate">
+                                {emp.position || 'Employé'} {dept ? `• ${dept.name}` : ''} {branch ? `• ${branch.name}` : ''}
+                              </div>
+                            </div>
+                          </div>
+
+                          {isSelected ? (
+                            <Check className="w-4 h-4 text-cyan-400 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-cyan-400 shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             )}
           </div>
-
-          {/* Quick Active Employee Profile Selector */}
-          {employees && employees.length > 0 && (
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 shrink-0">
-              <User className="w-4 h-4 text-cyan-400 shrink-0" />
-              <span className="text-xs text-slate-400 font-semibold uppercase hidden lg:inline">Profil Actif:</span>
-              <select
-                value={selectedEmployee?.id || ""}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-200 outline-none cursor-pointer max-w-[150px] sm:max-w-[180px] truncate"
-              >
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id} className="bg-slate-900 text-slate-200">
-                    {emp.name} ({emp.position || 'Employé'})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="personnel-grid">
@@ -511,8 +609,6 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
             currentBusiness={currentBusiness}
             currentUserId={currentUser?.id}
             currentUserEmail={currentUser?.email}
-            externalSearchQuery={headerSearchQuery}
-            onSearchQueryChange={setHeaderSearchQuery}
             onAction={(action, emp) => {
               if (action === 'payroll') {
                 setActiveTab('payroll');

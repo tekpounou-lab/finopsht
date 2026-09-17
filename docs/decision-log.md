@@ -60,3 +60,31 @@
 - **Context**: Cloud server latency and regional time drift caused discrepancy in employee clock-in records on physical kiosk terminals.
 - **Decision**: Embedded local device machine timestamping and timezone anchoring (`America/Port-au-Prince`) in `qrAttendanceService.ts` and `KioskAttendance.tsx`.
 - **Consequences**: Accurate, dispute-free punch logs with offline-tolerant queuing.
+
+---
+
+## ADR-008: Cash Basis Foundation — Canonical NormalizedCashMovement & Central Treasury Classification
+- **Date**: 2026-09-12
+- **Status**: Accepted
+- **Context**: BI Simple Mode figures previously relied on mock fallbacks, lacked a deterministic treasury account classifier, and lacked a unified canonical model for cash settlements across modules.
+- **Decision**: Implemented Phase 1 of the Cash Basis Foundation:
+  1. Created canonical in-memory read model `NormalizedCashMovement` (DTO) with strict Zod validation (`NormalizedCashMovementSchema`).
+  2. Implemented `TreasuryClassification` using the validated Hybrid Strategy (Option E: Chart of Accounts codes `1000_CASH`, `1010_BANK`, prefix `10`, explicit payment methods `CASH`, `BANK`, `MOBILE_MONEY`, and token heuristics).
+  3. Established pure deterministic ID generation `generateCashMovementId` without random timestamps or mock fallbacks.
+  4. Enforced strict financial integrity rules: no silent zeroing of corrupt data, integer cents precision (`amountCents`), multi-tenancy preservation (`businessId`), and non-impact of internal transfers on consolidated cash flow.
+- **Consequences**: Foundation established for Phase 2 adapters (`PayrollCashAdapter`, `InvoiceCashAdapter`, `LedgerCashAdapter`) without modifying existing accrual engines or database schemas.
+
+---
+
+## ADR-009: Formal Certified Baseline & Financial Core Architecture Freeze (v4.0)
+- **Date**: 2026-09-14
+- **Status**: Accepted
+- **Context**: FINOPS ERP / FINAYITI Fusion v4.0 completed its comprehensive accounting/SSOT certification cycle (342/342 unit/integration tests passing, 0 TypeScript errors, clean production build, verified Firestore security rules and OCC concurrency). To prepare for Phase 6 product expansion without risking regression of the certified financial core, a formal architecture freeze and change-control policy is required.
+- **Decision**: Formally enacted the Certified Baseline specification in `docs/FINOPS_CERTIFIED_BASELINE.md`:
+  1. Classified system components into strict **Change-Control Governance Levels** (Level 0 Frozen Core, Level 1 Restricted Engine & Security, Level 2 Canonical Domain Services, Level 3 Presentation & BI, Level 4 Platform Extensions & Adapters), decoupling change-control governance from component type/importance.
+  2. Mandated that `AnalyticsEngine` and derived financial KPI calculations remain subject to mandatory formal re-certification upon any change.
+  3. Established a 5-tier **Audit Taxonomy** distinguishing invariants that are **CERTIFIED** (empirically proven in Phase 5 audit), **PROTECTED** (non-negotiable architectural rules), **VERIFIED** (regression-tested during freeze), **DEFERRED** (known Phase 6 roadmap items like FX gain/loss), and **OPEN** (outside certified core).
+  4. Established the canonical General Ledger (`ledger_transactions`) as the single source of truth (SSOT) from which all analytics and reporting derive.
+  5. Formally closed Phase 5 and enacted the "Certified Core Extension" governance model for Phase 6.
+- **Consequences**: Guaranteed protection of certified accounting logic and financial invariants during all future Phase 6 product iterations.
+

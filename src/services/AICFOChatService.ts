@@ -143,6 +143,7 @@ export class AICFOChatService {
         attendance,
         payroll,
         userQuestion,
+        snapshot,
         errorString: error.message || String(error),
         userContext: resolvedUserContext
       });
@@ -150,7 +151,8 @@ export class AICFOChatService {
   }
 
   /**
-   * Generates a governance-compliant structural diagnostic fallback report if the server is offline or fails
+   * Generates a governance-compliant structural diagnostic fallback report if the server is offline or fails.
+   * STRICT SSOT: Uses canonical AnalyticsSnapshot if provided; otherwise reports NO_DATA rather than summing raw ledger entries.
    */
   private static generateImmediateLocalReport(params: {
     business: Business;
@@ -161,8 +163,9 @@ export class AICFOChatService {
     userQuestion: string;
     errorString: string;
     userContext: IdentityUserContext;
+    snapshot?: any;
   }): CFOReport {
-    const { business, ledger, employees, attendance, payroll, userQuestion, errorString, userContext } = params;
+    const { business, ledger, employees, attendance, payroll, userQuestion, errorString, userContext, snapshot } = params;
 
     // Apply data masking to local dataset
     const maskedLists = AICFODataMasking.maskRawDataLists({
@@ -174,26 +177,46 @@ export class AICFOChatService {
 
     let totalRevenue = 0;
     let totalExpenses = 0;
+    let netProfit = 0;
+    let hasCanonicalSnapshot = false;
 
-    if (maskedLists.ledger) {
-      maskedLists.ledger.forEach((tx) => {
-        if (tx.status !== "REVERSED") {
-          if (tx.type === "INCOME") totalRevenue += tx.amount || 0;
-          if (tx.type === "EXPENSE" || tx.type === "PAYROLL") totalExpenses += tx.amount || 0;
-        }
-      });
+    // FROZEN SSOT INVARIANT: Extract macro metrics strictly from AnalyticsSnapshot if available
+    if (snapshot) {
+      hasCanonicalSnapshot = true;
+      if (snapshot.incomeStatement) {
+        const revCents = Number(snapshot.incomeStatement.revenue?.totalRevenueCents ?? snapshot.incomeStatement.totalRevenueCents ?? 0);
+        const expCents = Number(snapshot.incomeStatement.expenses?.totalExpensesCents ?? snapshot.incomeStatement.totalExpensesCents ?? 0);
+        const netCents = Number(snapshot.incomeStatement.netIncomeCents ?? (revCents - expCents));
+        totalRevenue = revCents / 100;
+        totalExpenses = expCents / 100;
+        netProfit = netCents / 100;
+      } else if (snapshot.metrics) {
+        totalRevenue = Number(snapshot.metrics.revenue?.totalHTG ?? snapshot.metrics.revenue?.currentValue ?? 0);
+        totalExpenses = Number(snapshot.metrics.expenses?.totalHTG ?? snapshot.metrics.expenses?.currentValue ?? 0);
+        netProfit = Number(snapshot.metrics.profit?.netHTG ?? snapshot.metrics.profit?.netProfit ?? (totalRevenue - totalExpenses));
+      } else {
+        totalRevenue = Number(snapshot.revenue?.currentValue ?? (typeof snapshot.revenue === "number" ? snapshot.revenue : snapshot.totalRevenue ?? 0));
+        totalExpenses = Number(snapshot.expenses?.currentValue ?? (typeof snapshot.expenses === "number" ? snapshot.expenses : snapshot.totalExpenses ?? 0));
+        netProfit = Number(snapshot.profit?.currentValue ?? snapshot.netProfit ?? (typeof snapshot.profit === "number" ? snapshot.profit : snapshot.netIncome ?? (totalRevenue - totalExpenses)));
+      }
     }
 
-    const netProfit = totalRevenue - totalExpenses;
     const isOwner = userContext.role === "OWNER";
+    
+    // Dynamic derivation of health score (0-100) or undefined if no snapshot
+    let financialHealthScore: number | undefined = undefined;
+    if (hasCanonicalSnapshot && totalRevenue > 0) {
+      const marginPct = (netProfit / totalRevenue) * 100;
+      financialHealthScore = Math.max(0, Math.min(100, Math.round(50 + (marginPct >= 20 ? 30 : marginPct >= 0 ? 15 : -20) + (isOwner ? 10 : 0))));
+    }
 
     return {
       summary: `[Analyste Hors-ligne Gouverné] Diagnostic de secours pour ${business.name || "FinOps"}. Question : "${userQuestion}". (Rôle: ${userContext.role})`,
       metrics: {
-        cash_flow: isOwner ? `${netProfit >= 0 ? "+" : ""}${netProfit.toLocaleString()} HTG` : "[MASQUÉ / DEPT_LEVEL]",
+        cash_flow: hasCanonicalSnapshot ? (isOwner ? `${netProfit >= 0 ? "+" : ""}${netProfit.toLocaleString()} HTG` : "[MASQUÉ / DEPT_LEVEL]") : "[DONNÉES INDISPONIBLES / NO_DATA]",
         fraud_risk: "LOW",
-        profit_ratio: isOwner && totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : "[MASQUÉ]",
-        financial_health_score: 85,
+        profit_ratio: hasCanonicalSnapshot && isOwner && totalRevenue > 0 ? `${((netProfit / totalRevenue) * 100).toFixed(1)}%` : (hasCanonicalSnapshot ? "[MASQUÉ]" : "[DONNÉES INDISPONIBLES / NO_DATA]"),
+        financial_health_score: financialHealthScore,
       },
       alerts: [
         {

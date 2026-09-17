@@ -10,7 +10,14 @@ import {
   CrossTableMatrixCell,
 } from "../types";
 import { AnalyticsEngine } from "../../analytics/services/AnalyticsEngine";
-import { toDateOnly } from "../../../utils/dateNormalization";
+import {
+  toDateOnly,
+  matchesDateFilter,
+  resolveAnalyticsTxDate,
+  resolveAnalyticsAttendanceDate,
+  resolveAnalyticsPayrollDate,
+} from "../../../utils/dateNormalization";
+import { CashBasisEngine } from "../../cash/engine/CashBasisEngine";
 
 /**
  * Normalizes filter string for case-insensitive matching
@@ -82,14 +89,23 @@ export function selectFilteredDataSet(
       if (txDept && txDept !== departmentId) return false;
     }
     // Date Range Filter
-    const rawTxDate = tx.date || tx.transaction_date || tx.transactionDate || tx.created_at || tx.createdAt || tx.timestamp;
-    if (rawTxDate) {
-      const txDate = normalizeDateStr(rawTxDate);
-      if (startDate && txDate < startDate) return false;
-      if (endDate && txDate > endDate) return false;
+    const isCashBasis = (filters as any).accountingMode === "CASH";
+    const txDate = resolveAnalyticsTxDate(tx, isCashBasis);
+    if (!matchesDateFilter(txDate, startDate, endDate)) {
+      return false;
     }
     // Metric Type Filter
-    if (metricType === "revenue" && tx.type !== "INCOME") return false;
+    const typeUpper = (tx.type || "").toUpperCase();
+    const catUpper = (tx.category || (tx as any).category_name || "").toUpperCase();
+    const isIncomeTx =
+      ["INCOME", "REVENUE", "SALES", "VENTE", "VENTES", "CREDIT"].includes(typeUpper) ||
+      catUpper.includes("INCOME") ||
+      catUpper.includes("REVENUE") ||
+      catUpper.includes("VENTE") ||
+      catUpper.includes("RECETTE") ||
+      catUpper.includes("SALES");
+
+    if (metricType === "revenue" && !isIncomeTx) return false;
     if (metricType === "payroll" && tx.type !== "PAYROLL" && tx.category !== "PAYROLL") return false;
 
     // Search Query Filter
@@ -116,12 +132,28 @@ export function selectFilteredDataSet(
       const pDept = p.departmentId || p.department_id;
       if (pDept && pDept !== departmentId) return false;
     }
-    // Date Filter (cycle or payment date)
-    const rawPDate = p.paymentDate || p.periodEndDate || p.createdAt || p.created_at || p.date;
-    const pDate = normalizeDateStr(rawPDate);
-    if (pDate) {
-      if (startDate && pDate < startDate) return false;
-      if (endDate && pDate > endDate) return false;
+    // Date Filter (cycle, period overlap, or payment date)
+    const isCashBasis = (filters as any).accountingMode === "CASH";
+    if (isCashBasis) {
+      const pDate = resolveAnalyticsPayrollDate(p, true);
+      if (!matchesDateFilter(pDate, startDate, endDate)) {
+        return false;
+      }
+    } else if (startDate && endDate) {
+      const pStart = normalizeDateStr(p.period_start || p.periodStart || p.startDate);
+      const pEnd = normalizeDateStr(p.period_end || p.periodEnd || p.periodEndDate || p.endDate);
+      const paymentDate = normalizeDateStr(p.paymentDate || p.effectiveAccountingDate);
+
+      if (paymentDate && paymentDate >= startDate && paymentDate <= endDate) {
+        // Explicit payment date in period
+      } else if (pStart && pEnd) {
+        // Range overlap: !(recEnd < startDate || recStart > endDate)
+        if (pEnd < startDate || pStart > endDate) return false;
+      } else {
+        const rawPDate = paymentDate || pEnd || pStart || p.createdAt || p.created_at || p.date;
+        const pDate = normalizeDateStr(rawPDate);
+        if (!pDate || pDate < startDate || pDate > endDate) return false;
+      }
     }
     // Employee Match Filter
     const pEmpId = p.employeeId || p.employee_id;
@@ -141,11 +173,9 @@ export function selectFilteredDataSet(
       if (attBranch && attBranch !== branchId) return false;
     }
     // Date Filter
-    const rawAttDate = att.date || att.timestamp || att.created_at || att.createdAt;
-    const attDate = normalizeDateStr(rawAttDate);
-    if (attDate) {
-      if (startDate && attDate < startDate) return false;
-      if (endDate && attDate > endDate) return false;
+    const attDate = resolveAnalyticsAttendanceDate(att);
+    if (!matchesDateFilter(attDate, startDate, endDate)) {
+      return false;
     }
     // Employee match
     const attEmpId = att.employeeId || att.employee_id;
@@ -384,5 +414,213 @@ export function selectExpertMetrics(
     employeeRankings,
     crossTableMatrix,
     isDataAvailable: kpis.isDataAvailable,
+  };
+}
+
+/**
+ * Calculates expert metrics in Cash-Basis (Constaté / Trésorerie / Décaissement)
+ */
+export function selectCashBasisExpertMetrics(
+  raw: RawPerformanceDataSet,
+  filters: PICFilters
+): ExpertMetrics {
+  const { startDate, endDate } = filters;
+  const filtered = selectFilteredDataSet(raw, filters);
+  
+  // Filter payroll records strictly by payment date / cash disbursement date in range
+  const cashBasisPayrolls = filtered.payrollRecords.filter((p: any) => {
+    const rawPayDate = p.paymentDate || p.effectiveAccountingDate || p.createdAt || p.created_at || p.date || p.period_end || p.periodEnd;
+    const payDate = normalizeDateStr(rawPayDate);
+    if (!startDate || !endDate) return true;
+    if (!payDate) return true;
+    return payDate >= startDate && payDate <= endDate;
+  });
+
+  const cashBasisRaw: RawPerformanceDataSet = {
+    ...filtered,
+    payrollRecords: cashBasisPayrolls,
+  };
+
+  const { employees, transactions, payrollRecords, attendanceRecords, departments: allDepts, branches: allBranches } = cashBasisRaw;
+
+  const businessId =
+    employees[0]?.business_id ||
+    transactions[0]?.business_id ||
+    payrollRecords[0]?.business_id ||
+    allBranches[0]?.business_id ||
+    allDepts[0]?.business_id ||
+    "default_biz";
+
+  // Execute canonical Cash Basis Engine Pipeline
+  const cashStatement = CashBasisEngine.executePipeline(
+    {
+      invoices: (raw as any).invoices || [],
+      payrollRecords: cashBasisPayrolls,
+      ledgerTransactions: transactions,
+    },
+    {
+      businessId,
+      startDate: startDate || '2000-01-01',
+      endDate: endDate || '2099-12-31',
+      currency: 'HTG',
+    }
+  );
+
+  const totalRevenue = Math.round(cashStatement.totalInflow);
+  const totalExpenses = Math.round(cashStatement.totalOutflow);
+  const netProfit = Math.round(cashStatement.netCashFlow);
+  const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
+
+  const snap = AnalyticsEngine.generateSnapshot(
+    "CUSTOM",
+    { startDate: filters.startDate, endDate: filters.endDate },
+    employees,
+    transactions,
+    attendanceRecords,
+    payrollRecords,
+    allBranches,
+    allDepts,
+    [],
+    businessId,
+    "fr"
+  );
+
+  const totalPayroll = Math.round(
+    cashStatement.periodMovements
+      .filter((m) => m.sourceModule === 'PAYROLL' || m.movementType === 'PAYROLL')
+      .reduce((acc, m) => acc + m.amount, 0)
+  );
+
+  const activeHeadcount = snap.activeStaff.currentValue || employees.filter((e) => e.status === "ACTIVE" || !e.status).length;
+  const attendanceRate = snap.attendanceRate.currentValue;
+  const averageHoursWorked = snap.avgHoursWorked.currentValue;
+
+
+  const inactiveCount = employees.filter((e) => e.status === "TERMINATED" || e.status === "INACTIVE").length;
+  const turnoverRate = employees.length > 0 ? Math.round((inactiveCount / employees.length) * 100) : 0;
+
+  let totalCommissions = 0;
+  let overtimeHoursTotal = 0;
+  payrollRecords.forEach((p: any) => {
+    totalCommissions += p.commissionAmount || p.commissionsHTG || (p.commission_cents ? p.commission_cents / 100 : 0) || 0;
+    overtimeHoursTotal += (p.overtimeHours150 || 0) + (p.overtimeHours200 || 0);
+  });
+
+  const totalRecordsCount = employees.length + transactions.length + payrollRecords.length + attendanceRecords.length;
+  const isDataAvailable = totalRecordsCount > 0;
+
+  const cashBasisKpis: SimplifiedMetrics = {
+    totalPayroll,
+    activeHeadcount,
+    turnoverRate,
+    attendanceRate,
+    totalRevenue,
+    totalExpenses,
+    netProfit,
+    profitMargin,
+    averageHoursWorked,
+    overtimeHoursTotal,
+    totalCommissions: Math.round(totalCommissions),
+    isDataAvailable,
+    totalRecordsCount,
+  };
+
+  const departments: DepartmentMetricBreakdown[] = (snap.departmentPerformance || []).map((d: any) => {
+    const rev = d.revenue || 0;
+    const exp = d.expenses || (d.payrollCost || 0) + (d.nonPayrollExpenses || 0);
+    const margin = rev > 0 ? Math.round(((rev - exp) / rev) * 100) : 0;
+    return {
+      departmentId: d.departmentId || d.id || "gen",
+      departmentName: d.departmentName || d.name || "Département",
+      headcount: d.employeeCount || 0,
+      payroll: Math.round(d.payrollCost ?? d.payroll ?? d.expenses ?? 0),
+      attendanceRate: d.attendanceRate || 95,
+      revenue: Math.round(rev),
+      expenses: Math.round(exp),
+      netMargin: d.margin !== undefined ? Math.round(d.margin) : margin,
+      commissions: Math.round(d.commissions || 0),
+    };
+  });
+
+  const branches: BranchMetricBreakdown[] = (snap.branchPerformance || []).map((b: any) => {
+    return {
+      branchId: b.branchId || b.id || "gen",
+      branchName: b.branchName || b.name || "Succursale",
+      headcount: b.employeeCount || 0,
+      payroll: Math.round(b.payrollCost ?? b.payroll ?? b.expenses ?? 0),
+      attendanceRate: b.attendanceRate || 95,
+      revenue: Math.round(b.revenue || 0),
+      efficiencyScore: b.efficiencyScore || 80,
+    };
+  });
+
+  const trends: TrendDataPoint[] = (snap.historicalTrends || []).map((t: any) => {
+    return {
+      date: t.label || t.key || "",
+      label: t.label || t.key || "",
+      payroll: Math.round(t.payroll || 0),
+      revenue: Math.round(t.gross || 0),
+      headcount: t.headcount || 0,
+      attendanceRate: t.attendanceRate || 95,
+      expenses: Math.round(t.expenses || 0),
+    };
+  });
+
+  const employeeRankings: EmployeePerformanceRanking[] = (snap.employeeScorecards || []).map((s: any, idx: number) => {
+    return {
+      employeeId: s.employeeId || `emp_${idx}`,
+      employeeName: s.employeeName || "Collaborateur",
+      departmentId: s.departmentId || "",
+      departmentName: s.departmentName || "Non assigné",
+      branchId: s.branchId || "",
+      branchName: s.branchName || "Siège",
+      totalHours: s.totalHours ?? s.hoursWorked ?? 0,
+      attendanceScore: s.attendanceConsistencyScore ?? s.attendanceScore ?? 95,
+      salesVolume: Math.round(s.salesVolume || 0),
+      commission: Math.round(s.commissions ?? s.commissionEarned ?? 0),
+      productivityIndex: s.productivityIndex || 85,
+      rank: s.rank || idx + 1,
+    };
+  });
+
+  const crossTableMatrix: CrossTableMatrixCell[] = [];
+  allDepts.forEach((dept) => {
+    allBranches.forEach((branch) => {
+      const deptEmp = employees.filter(
+        (e) =>
+          (e.departmentId === dept.id || e.department_id === dept.id) &&
+          (e.branchId === branch.id || e.branch_id === branch.id)
+      );
+      if (deptEmp.length > 0) {
+        const empScorecards = (snap.employeeScorecards || []).filter((s: any) =>
+          deptEmp.some((e) => e.id === s.employeeId)
+        );
+        const matrixRev = empScorecards.reduce((sum: number, s: any) => sum + (s.salesVolume || 0), 0);
+        const matrixPayroll = empScorecards.reduce((sum: number, s: any) => sum + (s.payrollCost || s.baseSalary || 0), 0);
+        const matrixAtt = empScorecards.length > 0
+          ? Math.round(empScorecards.reduce((sum: number, s: any) => sum + (s.attendanceConsistencyScore || 0), 0) / empScorecards.length)
+          : 95;
+        crossTableMatrix.push({
+          departmentId: dept.id,
+          departmentName: dept.name || dept.id,
+          branchId: branch.id,
+          branchName: branch.name || branch.id,
+          headcount: deptEmp.length,
+          payroll: Math.round(matrixPayroll),
+          revenue: Math.round(matrixRev),
+          attendanceRate: matrixAtt,
+        });
+      }
+    });
+  });
+
+  return {
+    kpis: cashBasisKpis,
+    departments,
+    branches,
+    trends,
+    employeeRankings,
+    crossTableMatrix,
+    isDataAvailable,
   };
 }

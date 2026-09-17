@@ -18,17 +18,47 @@ export interface BranchProfitability {
   margin: number;
 }
 
+/**
+ * SPECIALIZED OPERATIONAL RISK & BURN-RATE ANALYTICAL UTILITY
+ * 
+ * Classification: SPECIALIZED (Operational Analytics & Burn Rate Heuristics)
+ * Semantic Contract: This module provides operational risk scoring, burn-rate metrics,
+ * and payroll ratio analysis. It is NOT a canonical General Ledger (GL) financial engine.
+ * When canonical AnalyticsSnapshot is provided, macro revenue/expense totals are consumed
+ * directly from the snapshot SSOT.
+ */
 export const generateFinancialMetrics = (
   transactions: LedgerTransaction[],
   payrollRecords: PayrollRecord[],
-  business_id: string
+  business_id: string,
+  snapshot?: any
 ): IntelligenceMetrics => {
   const businessTx = transactions.filter(t => t.business_id === business_id && t.status !== "REVERSED");
   
   let totalRevenue = 0;
   let totalExpenses = 0;
+  let netProfit = 0;
+
+  if (snapshot) {
+    if (snapshot.incomeStatement) {
+      const revCents = Number(snapshot.incomeStatement.revenue?.totalRevenueCents ?? snapshot.incomeStatement.totalRevenueCents ?? 0);
+      const expCents = Number(snapshot.incomeStatement.expenses?.totalExpensesCents ?? snapshot.incomeStatement.totalExpensesCents ?? 0);
+      const netCents = Number(snapshot.incomeStatement.netIncomeCents ?? (revCents - expCents));
+      totalRevenue = revCents / 100;
+      totalExpenses = expCents / 100;
+      netProfit = netCents / 100;
+    } else if (snapshot.metrics) {
+      totalRevenue = Number(snapshot.metrics.revenue?.totalHTG ?? snapshot.metrics.revenue?.currentValue ?? 0);
+      totalExpenses = Number(snapshot.metrics.expenses?.totalHTG ?? snapshot.metrics.expenses?.currentValue ?? 0);
+      netProfit = Number(snapshot.metrics.profit?.netHTG ?? snapshot.metrics.profit?.netProfit ?? (totalRevenue - totalExpenses));
+    } else {
+      totalRevenue = Number(snapshot.revenue?.currentValue ?? (typeof snapshot.revenue === "number" ? snapshot.revenue : snapshot.totalRevenue ?? 0));
+      totalExpenses = Number(snapshot.expenses?.currentValue ?? (typeof snapshot.expenses === "number" ? snapshot.expenses : snapshot.totalExpenses ?? 0));
+      netProfit = Number(snapshot.profit?.currentValue ?? snapshot.netProfit ?? (typeof snapshot.profit === "number" ? snapshot.profit : snapshot.netIncome ?? (totalRevenue - totalExpenses)));
+    }
+  }
   
-  // Need to analyze by dates for burn rate
+  // Operational date analysis for burn rate
   let oldestDate = new Date().getTime();
   let newestDate = 0;
 
@@ -37,14 +67,19 @@ export const generateFinancialMetrics = (
     if (time < oldestDate) oldestDate = time;
     if (time > newestDate) newestDate = time;
 
-    if (tx.type === "INCOME") {
-      totalRevenue += tx.amount;
-    } else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") { // PAYROLL is an expense
-      totalExpenses += tx.amount;
+    if (!snapshot) {
+      // Secondary fallback for operational burn rate when snapshot is unavailable
+      if (tx.type === "INCOME") {
+        totalRevenue += tx.amount;
+      } else if (tx.type === "EXPENSE" || tx.type === "PAYROLL") {
+        totalExpenses += tx.amount;
+      }
     }
   });
 
-  const netProfit = totalRevenue - totalExpenses;
+  if (!snapshot) {
+    netProfit = totalRevenue - totalExpenses;
+  }
   
   const daysDiff = Math.max(1, (newestDate - oldestDate) / (1000 * 60 * 60 * 24));
   const burnRate = totalExpenses / daysDiff;

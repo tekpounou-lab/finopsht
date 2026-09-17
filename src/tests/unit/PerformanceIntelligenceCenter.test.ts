@@ -104,9 +104,9 @@ describe("Performance Intelligence Center (PIC) Module", () => {
     expect(metrics.totalPayroll).toBe(90000); // 50000 + 40000
     expect(metrics.totalCommissions).toBe(7000); // 5000 + 2000
     expect(metrics.totalRevenue).toBe(150000); // tx1 in Aug
-    expect(metrics.totalExpenses).toBe(30000); // tx2 in Aug
-    expect(metrics.netProfit).toBe(120000);
-    expect(metrics.profitMargin).toBe(80);
+    expect(metrics.totalExpenses).toBe(120000); // tx2 (30000) + payroll (90000)
+    expect(metrics.netProfit).toBe(30000); // 150000 - 120000
+    expect(metrics.profitMargin).toBe(20); // (30000 / 150000) * 100
     expect(metrics.activeHeadcount).toBe(2);
   });
 

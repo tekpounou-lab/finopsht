@@ -1066,6 +1066,53 @@ export interface CompensationModelConfig {
   updatedAt?: any;
 }
 
+export interface CanonicalPayrollPolicy {
+  // Identity
+  policyId?: string;
+  version?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  policyHash?: string;
+
+  // Payroll cycle
+  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
+  currency: string;
+
+  // Schedule / proration
+  standardHoursPerCycle: number;
+  attendanceToleranceHours: number;
+  workingDaysBasis: number;
+
+  // Overtime
+  overtimeRate150: number;
+  overtimeRate200: number;
+
+  // Penalties
+  latePenaltyCents: number;
+  absencePenaltyType?: "STATUTORY_PRORATA" | "FIXED_AMOUNT";
+  absencePenaltyCents?: number;
+
+  // Taxes / social contributions
+  enableSocialTaxes: boolean;
+  enableTaxes?: boolean;
+  onaEmployeeRate: number;
+  onaEmployerRate: number;
+  ofatmaEmployeeRate: number;
+  ofatmaEmployerRate: number;
+
+  // Net protection
+  enableSurvivalFloor?: boolean;
+  survivalFloorHTG: number;
+  survivalFloor?: number;
+
+  // Commission
+  defaultCommissionRate: number;
+
+  // Attendance
+  requireAttendanceForPayroll: boolean;
+  updatedAt?: any;
+}
+
 export interface PayrollPolicyConfig {
   id: string;
   business_id: string;

@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { FileText, Calendar, Clock, Percent, DollarSign, ShieldAlert, Zap, ShieldCheck, TrendingUp } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { FileText, Calendar, Clock, Percent, DollarSign, ShieldAlert, Zap, ShieldCheck, TrendingUp, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useBusinessContext } from "../../../../contexts/BusinessContext";
 import { useBusinessAdmin } from "../../../../hooks/useBusinessAdmin";
@@ -10,7 +10,8 @@ import { isQuotaExceededError } from "../../../../utils/resilientFirestore";
 
 export default function PayrollPoliciesSection() {
   const { businessSettings, business } = useBusinessContext();
-  const { updateSettings, loading } = useBusinessAdmin();
+  const { updateSettings, loading: hookLoading } = useBusinessAdmin();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const businessId = business?.id || "BIZ_MAIN";
 
@@ -24,10 +25,13 @@ export default function PayrollPoliciesSection() {
     defaultValues: {
       frequency: businessSettings?.payroll?.frequency || businessSettings?.payroll_policies?.frequency || "BIWEEKLY",
       currency: businessSettings?.payroll?.currency || businessSettings?.payroll_policies?.currency || "HTG",
+      standard_hours: businessSettings?.payroll?.standard_hours ?? businessSettings?.payroll_policies?.standardHoursPerCycle ?? businessSettings?.payroll_policies?.standardQuinzaineHours ?? 96,
+      attendance_tolerance_hours: businessSettings?.payroll?.attendance_tolerance_hours ?? businessSettings?.payroll_policies?.attendanceToleranceHours ?? 94,
+      working_days_basis: businessSettings?.payroll?.working_days_basis ?? businessSettings?.payroll_policies?.workingDaysBasis ?? 22,
       ot_rate_normal: businessSettings?.payroll?.ot_rate_normal ?? businessSettings?.payroll_policies?.overtimeRate150 ?? 1.5,
       ot_rate_holiday: businessSettings?.payroll?.ot_rate_holiday ?? businessSettings?.payroll_policies?.overtimeRate200 ?? 2.0,
-      late_penalty_cents: businessSettings?.payroll?.late_penalty_cents ?? 500,
-      absence_penalty_cents: businessSettings?.payroll?.absence_penalty_cents ?? 2500,
+      late_penalty_cents: businessSettings?.payroll?.late_penalty_cents ?? businessSettings?.payroll_policies?.latePenaltyCents ?? 0,
+      absence_penalty_cents: businessSettings?.payroll?.absence_penalty_cents ?? businessSettings?.payroll_policies?.absencePenaltyCents ?? 0,
       tax_cnss_employee: Math.round(resolvedRates.employeeOnaRate * 100),
       tax_cnss_employer: Math.round(resolvedRates.employerOnaRate * 100),
       tax_cns_employee: Math.round(resolvedRates.employeeOfatmaRate * 100),
@@ -52,10 +56,13 @@ export default function PayrollPoliciesSection() {
       reset({
         frequency: businessSettings.payroll?.frequency || businessSettings.payroll_policies?.frequency || "BIWEEKLY",
         currency: businessSettings.payroll?.currency || businessSettings.payroll_policies?.currency || "HTG",
+        standard_hours: businessSettings.payroll?.standard_hours ?? businessSettings.payroll_policies?.standardHoursPerCycle ?? businessSettings.payroll_policies?.standardQuinzaineHours ?? 96,
+        attendance_tolerance_hours: businessSettings.payroll?.attendance_tolerance_hours ?? businessSettings.payroll_policies?.attendanceToleranceHours ?? 94,
+        working_days_basis: businessSettings.payroll?.working_days_basis ?? businessSettings.payroll_policies?.workingDaysBasis ?? 22,
         ot_rate_normal: businessSettings.payroll?.ot_rate_normal ?? businessSettings.payroll_policies?.overtimeRate150 ?? 1.5,
         ot_rate_holiday: businessSettings.payroll?.ot_rate_holiday ?? businessSettings.payroll_policies?.overtimeRate200 ?? 2.0,
-        late_penalty_cents: businessSettings.payroll?.late_penalty_cents ?? 500,
-        absence_penalty_cents: businessSettings.payroll?.absence_penalty_cents ?? 2500,
+        late_penalty_cents: businessSettings.payroll?.late_penalty_cents ?? businessSettings.payroll_policies?.latePenaltyCents ?? 0,
+        absence_penalty_cents: businessSettings.payroll?.absence_penalty_cents ?? businessSettings.payroll_policies?.absencePenaltyCents ?? 0,
         tax_cnss_employee: Math.round(rates.employeeOnaRate * 100),
         tax_cnss_employer: Math.round(rates.employerOnaRate * 100),
         tax_cns_employee: Math.round(rates.employeeOfatmaRate * 100),
@@ -74,11 +81,17 @@ export default function PayrollPoliciesSection() {
   const isSurvivalFloorEnabled = watch("enable_survival_floor");
 
   const onSubmit = async (data: any) => {
+    setIsSubmitting(true);
     try {
       const enableTaxes = !!data.enable_social_taxes;
       const enableSurvivalFloor = !!data.enable_survival_floor;
       const requireAttendance = !!data.require_attendance_for_payroll;
       const survivalFloor = Number(data.survival_floor_htg) || 15000;
+      const standardHours = Number(data.standard_hours) || 96;
+      const attendanceTolerance = Number(data.attendance_tolerance_hours) || 94;
+      const workingDaysBasis = Number(data.working_days_basis) || 22;
+      const latePenaltyCents = Number(data.late_penalty_cents) || 0;
+      const absencePenaltyCents = Number(data.absence_penalty_cents) || 0;
 
       const updatedPayroll = {
         ...businessSettings?.payroll,
@@ -89,14 +102,24 @@ export default function PayrollPoliciesSection() {
         enableSurvivalFloor: enableSurvivalFloor,
         survival_floor_htg: survivalFloor,
         survivalFloor: survivalFloor,
+        standard_hours: standardHours,
+        attendance_tolerance_hours: attendanceTolerance,
+        working_days_basis: workingDaysBasis,
+        late_penalty_cents: latePenaltyCents,
+        absence_penalty_cents: absencePenaltyCents,
         require_attendance_for_payroll: requireAttendance,
         requireAttendanceForPayroll: requireAttendance,
       };
 
       const updatedPayrollPolicies = {
         ...(businessSettings?.payroll_policies || {}),
+        version: "v4.0.0-canonical",
         frequency: data.frequency,
         currency: data.currency,
+        standardHoursPerCycle: standardHours,
+        standardQuinzaineHours: standardHours,
+        attendanceToleranceHours: attendanceTolerance,
+        workingDaysBasis: workingDaysBasis,
         enableTaxes: enableTaxes,
         enable_social_taxes: enableTaxes,
         onaEmployeeRate: (Number(data.tax_cnss_employee) || 6) / 100,
@@ -109,27 +132,38 @@ export default function PayrollPoliciesSection() {
         survival_floor_htg: survivalFloor,
         overtimeRate150: Number(data.ot_rate_normal) || 1.5,
         overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
+        latePenaltyCents: latePenaltyCents,
+        absencePenaltyCents: absencePenaltyCents,
         defaultCommissionRate: (Number(data.default_commission_rate) || 5) / 100,
         requireAttendanceForPayroll: requireAttendance,
       };
 
-      await updateSettings({
-        ...businessSettings,
-        payroll: updatedPayroll,
-        payroll_policies: updatedPayrollPolicies,
-        tax_config: {
-          ...(businessSettings?.tax_config || {}),
-          enableTaxes: enableTaxes,
-          enabled: enableTaxes,
-          enable_social_taxes: enableTaxes,
-        }
-      });
+      try {
+        await updateSettings({
+          ...businessSettings,
+          payroll: updatedPayroll,
+          payroll_policies: updatedPayrollPolicies,
+          tax_config: {
+            ...(businessSettings?.tax_config || {}),
+            enableTaxes: enableTaxes,
+            enabled: enableTaxes,
+            enable_social_taxes: enableTaxes,
+          }
+        });
+      } catch (adminErr) {
+        console.warn("[PayrollPoliciesSection] updateSettings fallback:", adminErr);
+      }
       
-      await BusinessAdministrationRepository.updatePayrollPolicies(
+      await BusinessAdministrationRepository.savePayrollPolicy(
         businessId,
         {
+          version: "v4.0.0-canonical",
           frequency: data.frequency,
           currency: data.currency,
+          standardHoursPerCycle: standardHours,
+          standardQuinzaineHours: standardHours,
+          attendanceToleranceHours: attendanceTolerance,
+          workingDaysBasis: workingDaysBasis,
           enableTaxes: enableTaxes,
           onaEmployeeRate: (Number(data.tax_cnss_employee) || 6) / 100,
           onaEmployerRate: (Number(data.tax_cnss_employer) || 6) / 100,
@@ -137,8 +171,11 @@ export default function PayrollPoliciesSection() {
           ofatmaEmployerRate: (Number(data.tax_cns_employer) || 3) / 100,
           enableSurvivalFloor: enableSurvivalFloor,
           survivalFloor: survivalFloor,
+          survivalFloorHTG: survivalFloor,
           overtimeRate150: Number(data.ot_rate_normal) || 1.5,
           overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
+          latePenaltyCents: latePenaltyCents,
+          absencePenaltyCents: absencePenaltyCents,
           defaultCommissionRate: (Number(data.default_commission_rate) || 5) / 100,
           requireAttendanceForPayroll: requireAttendance,
         },
@@ -160,8 +197,20 @@ export default function PayrollPoliciesSection() {
       } else {
         toast.error("Erreur lors de la sauvegarde des politiques : " + (err.message || "Echec"));
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  const onInvalid = (errors: any) => {
+    console.warn("[PayrollPoliciesSection] Form validation errors:", errors);
+    const errorKeys = Object.keys(errors);
+    if (errorKeys.length > 0) {
+      toast.error(`Veuillez vérifier les champs du formulaire (${errorKeys.join(", ")})`);
+    }
+  };
+
+  const isButtonDisabled = isSubmitting;
 
   return (
     <div className="space-y-8" id="payroll-policies-root">
@@ -171,12 +220,17 @@ export default function PayrollPoliciesSection() {
           <p className="text-xs text-slate-500 font-medium mt-1">Configurez les règles de calcul, les taxes et les cycles de rémunération.</p>
         </div>
         <button 
-          onClick={handleSubmit(onSubmit)}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-slate-950 text-xs font-bold rounded-lg transition-all"
+          type="button"
+          onClick={handleSubmit(onSubmit, onInvalid)}
+          disabled={isButtonDisabled}
+          className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-bold rounded-lg shadow-md shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
         >
-          <Zap className="w-4 h-4" />
-          APPLIQUER LES RÈGLES
+          {isSubmitting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Zap className="w-4 h-4" />
+          )}
+          {isSubmitting ? "APPLICATION EN COURS..." : "APPLIQUER LES RÈGLES"}
         </button>
       </div>
 

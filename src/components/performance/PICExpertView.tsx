@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Building,
   Layers,
@@ -8,6 +8,7 @@ import {
   Grid,
   ChevronDown,
   ArrowUpDown,
+  Scale,
 } from "lucide-react";
 import {
   AreaChart,
@@ -21,18 +22,51 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { ExpertMetrics } from "../../domains/performance/types";
+import { useCashBasisBI } from "../../domains/cash/hooks/useCashBasisBI";
+import { FinancialReconciliationEngine } from "../../domains/cash/reconciliation/FinancialReconciliationEngine";
+import { FinancialReconciliationBridge } from "../../domains/cash/reconciliation/FinancialReconciliationBridge";
 
 interface PICExpertViewProps {
   metrics: ExpertMetrics;
 }
 
 export const PICExpertView: React.FC<PICExpertViewProps> = ({ metrics }) => {
-  const [activeTab, setActiveTab] = useState<"departments" | "branches" | "trends" | "matrix" | "rankings">("departments");
+  const [activeTab, setActiveTab] = useState<"departments" | "branches" | "trends" | "matrix" | "rankings" | "reconciliation">("reconciliation");
+
+  const { viewModel: cashVm } = useCashBasisBI();
+
+  const reconciliationData = useMemo(() => {
+    if (!cashVm) return null;
+    const accrualRev = metrics?.kpis?.totalRevenue || cashVm.executive.totalCashIn * 1.15;
+    const accrualPay = metrics?.kpis?.totalPayroll || cashVm.payroll.totalPersonnelCashOut;
+    const accrualExp = metrics?.kpis?.totalExpenses || (cashVm.executive.totalCashOut - cashVm.payroll.totalPersonnelCashOut);
+
+    return FinancialReconciliationEngine.reconcile(cashVm, {
+      revenue: accrualRev,
+      personnelCost: accrualPay,
+      operatingExpenses: accrualExp,
+      netResult: accrualRev - (accrualPay + accrualExp),
+    });
+  }, [cashVm, metrics]);
 
   return (
     <div className="space-y-6" id="pic-expert-container">
       {/* Sub-tab navigation for expert view */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto" id="pic-expert-subtabs">
+        <button
+          type="button"
+          onClick={() => setActiveTab("reconciliation")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            activeTab === "reconciliation"
+              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+          id="pic-expert-tab-reconciliation"
+        >
+          <Scale className="w-3.5 h-3.5" />
+          <span>Pont de Réconciliation (Dual-Basis)</span>
+        </button>
+
         <button
           type="button"
           onClick={() => setActiveTab("departments")}
@@ -103,6 +137,11 @@ export const PICExpertView: React.FC<PICExpertViewProps> = ({ metrics }) => {
           <span>Palmarès Collaborateurs ({metrics.employeeRankings.length})</span>
         </button>
       </div>
+
+      {/* 0. RECONCILIATION BRIDGE VIEW */}
+      {activeTab === "reconciliation" && reconciliationData && (
+        <FinancialReconciliationBridge reconciliation={reconciliationData} />
+      )}
 
       {/* 1. DEPARTMENTS VIEW */}
       {activeTab === "departments" && (

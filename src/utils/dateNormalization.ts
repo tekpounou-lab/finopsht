@@ -357,3 +357,134 @@ export function normalizeDatesInObject<T>(
 
   return obj;
 }
+
+/**
+ * Deterministic Filter Matching: Evaluates whether a date satisfies a [startDate, endDate] boundary.
+ * In a date-filtered context (when startDate or endDate is set), UNRESOLVED / INVALID DATES RETURN FALSE.
+ */
+export function matchesDateFilter(date: DateInput, startDate?: DateInput, endDate?: DateInput): boolean {
+  const start = startDate ? toDateOnly(startDate) : '';
+  const end = endDate ? toDateOnly(endDate) : '';
+
+  // If no date range filter is provided, all items pass
+  if (!start && !end) return true;
+
+  const target = toDateOnly(date);
+  // ABSOLUTE RULE: Unresolved or invalid dates are NEVER included in a date-filtered dataset
+  if (!target) return false;
+
+  if (start && target < start) return false;
+  if (end && target > end) return false;
+
+  return true;
+}
+
+/**
+ * Resolves the canonical accounting/operational date for a transaction based on accounting mode.
+ * - Cash Basis: Prefers payment/settlement dates (paymentDate, paidAt, settlementDate, effectiveAccountingDate, date, transaction_date)
+ * - Accrual Basis: Prefers accounting recognition dates (effectiveAccountingDate, date, transaction_date, transactionDate, createdAt)
+ */
+export function resolveAnalyticsTxDate(tx: any, isCashBasis: boolean = false): string {
+  if (!tx) return '';
+
+  let rawDate: any = null;
+  if (isCashBasis) {
+    rawDate =
+      tx.paymentDate ||
+      tx.paidAt ||
+      tx.settlementDate ||
+      tx.effectiveDate ||
+      tx.effective_date ||
+      tx.effectiveAccountingDate ||
+      tx.date ||
+      tx.transaction_date ||
+      tx.transactionDate ||
+      tx.date_str ||
+      tx.dateStr ||
+      tx.createdAt ||
+      tx.created_at ||
+      tx.timestamp;
+  } else {
+    rawDate =
+      tx.accountingDate ||
+      tx.accounting_date ||
+      tx.effectiveAccountingDate ||
+      tx.effective_date ||
+      tx.effectiveDate ||
+      tx.date ||
+      tx.transaction_date ||
+      tx.transactionDate ||
+      tx.date_str ||
+      tx.dateStr ||
+      tx.paymentDate ||
+      tx.createdAt ||
+      tx.created_at ||
+      tx.timestamp;
+  }
+
+  return toDateOnly(rawDate);
+}
+
+/**
+ * Resolves the canonical work/presence date for an attendance record.
+ * Avoids document creation timestamps when actual punch/shift dates exist.
+ */
+export function resolveAnalyticsAttendanceDate(att: any): string {
+  if (!att) return '';
+
+  const rawDate =
+    att.date ||
+    att.work_date ||
+    att.workDate ||
+    att.date_presence ||
+    att.date_pointage ||
+    att.attendance_date ||
+    att.effective_date ||
+    att.checkInDate ||
+    att.checkIn?.deviceDate ||
+    att.timestamp ||
+    att.checkIn?.timestamp ||
+    att.checkIn ||
+    att.check_in ||
+    att.checkInTime ||
+    att.check_in_time ||
+    att.createdAt ||
+    att.created_at;
+
+  return toDateOnly(rawDate);
+}
+
+/**
+ * Resolves the canonical accounting/settlement date for a payroll record.
+ * - Cash Basis: Strictly checks payment / disbursement date
+ * - Accrual Basis: Checks period end / period boundary or accounting date
+ */
+export function resolveAnalyticsPayrollDate(payroll: any, isCashBasis: boolean = false): string {
+  if (!payroll) return '';
+
+  let rawDate: any = null;
+  if (isCashBasis) {
+    rawDate =
+      payroll.paymentDate ||
+      payroll.paidAt ||
+      payroll.disbursementDate ||
+      payroll.effectiveAccountingDate;
+  } else {
+    rawDate =
+      payroll.period_end ||
+      payroll.periodEnd ||
+      payroll.periodEndDate ||
+      payroll.endDate ||
+      payroll.effectiveAccountingDate ||
+      payroll.paymentDate ||
+      payroll.period_start ||
+      payroll.periodStart ||
+      payroll.startDate ||
+      payroll.generated_at ||
+      payroll.createdAt ||
+      payroll.created_at;
+  }
+
+  return toDateOnly(rawDate);
+}
+

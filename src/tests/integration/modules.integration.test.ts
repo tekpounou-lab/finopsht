@@ -24,7 +24,22 @@ vi.mock("../../repositories/crm/InvoiceRepository", () => ({
     saveInvoice: vi.fn().mockResolvedValue(undefined),
     getInvoiceById: vi.fn(),
     linkAccountingTransaction: vi.fn().mockResolvedValue(undefined),
-    markInvoiceAsPaid: vi.fn().mockResolvedValue(undefined)
+    markInvoiceAsPaid: vi.fn().mockResolvedValue(undefined),
+    recordInvoicePaymentAtomic: vi.fn().mockImplementation(async (bId: string, iId: string, tx: any) => {
+      return {
+        alreadyPaid: false,
+        alreadyProcessed: false,
+        updatedInvoice: {
+          id: iId,
+          businessId: bId,
+          totalAmount: 110000,
+          paidAmount: 110000,
+          balance: 0,
+          status: "PAID",
+          isPaid: true
+        }
+      };
+    })
   }
 }));
 
@@ -235,6 +250,19 @@ describe("Module Integration & Data Integrity (CRM <-> Accounting SSOT)", () => 
 
       const { InvoiceRepository } = await import("../../repositories/crm/InvoiceRepository");
       vi.mocked(InvoiceRepository.getInvoiceById).mockResolvedValue(invoice);
+      vi.mocked(InvoiceRepository.recordInvoicePaymentAtomic).mockImplementation(async () => {
+        return {
+          alreadyPaid: false,
+          alreadyProcessed: false,
+          updatedInvoice: {
+            ...invoice,
+            paidAmount: 110000,
+            balance: 0,
+            status: "PAID",
+            isPaid: true
+          }
+        };
+      });
 
       const result = await InvoiceService.recordInvoicePayment(businessId, invoice.id, "BANK_TRANSFER");
 

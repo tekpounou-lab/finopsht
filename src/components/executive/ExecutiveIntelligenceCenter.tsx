@@ -73,14 +73,14 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
           />
           <SmartKPICard
             title="Dépenses d'Exploitation"
-            currentValue={activeSnapshot.expenses.currentValue}
-            previousValue={activeSnapshot.expenses.previousValue}
-            difference={activeSnapshot.expenses.difference}
-            percentage={activeSnapshot.expenses.differencePercentage}
-            trend={activeSnapshot.expenses.trend}
-            direction={activeSnapshot.expenses.direction}
+            currentValue={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).currentValue}
+            previousValue={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).previousValue}
+            difference={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).difference}
+            percentage={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).differencePercentage}
+            trend={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).trend}
+            direction={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).direction}
             unit="HTG"
-            status={activeSnapshot.expenses.differencePercentage <= 0 ? "Healthy" : "Warning"}
+            status={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).differencePercentage <= 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
             title="Bénéfice Net"

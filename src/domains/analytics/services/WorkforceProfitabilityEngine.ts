@@ -19,6 +19,7 @@ import {
 import { filterOperationalEmployees } from "../../../services/workforce/EmployeeEligibilityService";
 import { RevenueAttributionService } from "../../../services/RevenueAttributionService";
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
+import { ReferenceResolver } from "../../../services/ReferenceResolver";
 
 export class WorkforceProfitabilityEngine {
   /**
@@ -39,6 +40,14 @@ export class WorkforceProfitabilityEngine {
     endDate?: string,
     businessSettings?: any
   ): WorkforceProfitabilitySnapshot {
+    const safeEmployees = employees || [];
+    const safeTransactions = transactions || [];
+    const safeAttendance = attendanceLogs || [];
+    const safePayroll = payrollRecords || [];
+    const safeDepts = departments || [];
+    const safeBranches = branches || [];
+    const safeActivities = activities || [];
+
     const isSocialTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
 
     const matchesBusiness = (item: any) => {
@@ -69,14 +78,14 @@ export class WorkforceProfitabilityEngine {
       } catch (err) {}
     }
 
-    const matchedEmps = filterOperationalEmployees(employees.filter((e) => matchesBusiness(e)));
-    const businessEmployees = matchedEmps.length > 0 ? matchedEmps : filterOperationalEmployees(employees);
+    const matchedEmps = filterOperationalEmployees(safeEmployees.filter((e) => matchesBusiness(e)));
+    const businessEmployees = matchedEmps.length > 0 ? matchedEmps : filterOperationalEmployees(safeEmployees);
 
-    const matchedDepts = departments.filter((d) => matchesBusiness(d));
-    const businessDepts = matchedDepts.length > 0 ? matchedDepts : departments;
+    const matchedDepts = safeDepts.filter((d) => matchesBusiness(d));
+    const businessDepts = matchedDepts.length > 0 ? matchedDepts : safeDepts;
 
-    const matchedBranches = branches.filter((b) => matchesBusiness(b));
-    const businessBranches = matchedBranches.length > 0 ? matchedBranches : branches;
+    const matchedBranches = safeBranches.filter((b) => matchesBusiness(b));
+    const businessBranches = matchedBranches.length > 0 ? matchedBranches : safeBranches;
 
     // 1. Calculate Employee Profitability Records
     const employeeRecords: EmployeeProfitabilityRecord[] = businessEmployees.map((emp) => {
@@ -86,15 +95,37 @@ export class WorkforceProfitabilityEngine {
       const deptName = dept?.name || "Général / Non Assigné";
       const branchName = branch?.name || "Siège Principal";
 
-      // Filter employee-specific data
-      const empAttendance = attendanceLogs.filter((a) => a.employeeId === emp.id || (a as any).employee_id === emp.id);
-      const empTxs = transactions.filter(
+      // Filter employee-specific data with email matching fallback for mass imports
+      const empEmail = emp.email ? emp.email.toLowerCase().trim() : "";
+      const empAttendance = safeAttendance.filter(
+        (a) =>
+          a.employeeId === emp.id ||
+          (a as any).employee_id === emp.id ||
+          (empEmail &&
+            (((a as any).employee_email && (a as any).employee_email.toLowerCase().trim() === empEmail) ||
+              ((a as any).email && (a as any).email.toLowerCase().trim() === empEmail) ||
+              ((a as any).courriel && (a as any).courriel.toLowerCase().trim() === empEmail)))
+      );
+      const empTxs = safeTransactions.filter(
         (t) =>
           matchesBusiness(t) &&
-          (t.employeeId === emp.id || (t as any).employee_id === emp.id) &&
+          (t.employeeId === emp.id ||
+            (t as any).employee_id === emp.id ||
+            (empEmail &&
+              (((t as any).employee_email && (t as any).employee_email.toLowerCase().trim() === empEmail) ||
+                ((t as any).employeeEmail && (t as any).employeeEmail.toLowerCase().trim() === empEmail) ||
+                ((t as any).email && (t as any).email.toLowerCase().trim() === empEmail)))) &&
           t.status !== "REVERSED"
       );
-      const empPayrolls = payrollRecords.filter((p) => p.employeeId === emp.id || (p as any).employee_id === emp.id);
+      const empPayrolls = safePayroll.filter(
+        (p) =>
+          p.employeeId === emp.id ||
+          (p as any).employee_id === emp.id ||
+          (empEmail &&
+            (((p as any).employee_email && (p as any).employee_email.toLowerCase().trim() === empEmail) ||
+              ((p as any).employeeEmail && (p as any).employeeEmail.toLowerCase().trim() === empEmail) ||
+              ((p as any).email && (p as any).email.toLowerCase().trim() === empEmail)))
+      );
 
       const hasActivity = empAttendance.length > 0 || empTxs.length > 0 || empPayrolls.length > 0;
 
@@ -367,7 +398,7 @@ export class WorkforceProfitabilityEngine {
           complianceScore: Math.max(0, 100 - lateArrivals * 5 - unauthorizedAbsences * 15),
           qualityScore: 92,
         },
-        crossDepartmentAttribution: RevenueAttributionService.calculateEmployeeAttribution(emp, transactions, businessDepts, activities).operationalDistribution,
+        crossDepartmentAttribution: RevenueAttributionService.calculateEmployeeAttribution(emp, safeTransactions, businessDepts, safeActivities).operationalDistribution,
         productivityTrend,
         attendanceTrend,
         payrollVsRevenueTrend,
@@ -379,15 +410,16 @@ export class WorkforceProfitabilityEngine {
       const summary = RevenueAttributionService.calculateDepartmentProfitability(
         dept,
         businessEmployees,
-        transactions,
-        payrollRecords,
-        activities
+        safeTransactions,
+        safePayroll,
+        safeActivities
       );
 
       // Find employees who had operational sales in this department OR whose home HR department is this department
       const deptEmployees = employeeRecords.filter((e) => {
         const hasSalesInDept = e.crossDepartmentAttribution && e.crossDepartmentAttribution[dept.id] && e.crossDepartmentAttribution[dept.id].revenue > 0;
-        const isHome = e.departmentId === dept.id;
+        const resolvedDept = ReferenceResolver.resolveDepartment(departments, e.departmentId);
+        const isHome = resolvedDept ? resolvedDept.id === dept.id : e.departmentId === dept.id;
         return hasSalesInDept || isHome;
       });
 

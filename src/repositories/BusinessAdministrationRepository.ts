@@ -27,24 +27,37 @@ export interface BusinessTaxConfiguration {
   history?: TaxConfigRecord[]; // Historical rate overrides
 }
 
+import { CanonicalPayrollPolicy } from "../types";
+
 export interface PayrollPoliciesConfig {
+  policyId?: string;
+  version?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  policyHash?: string;
   frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
   currency: string;
   enableTaxes: boolean;
+  enableSocialTaxes?: boolean;
   onaEmployeeRate: number;
   onaEmployerRate: number;
   ofatmaEmployeeRate: number;
   ofatmaEmployerRate: number;
   enableSurvivalFloor: boolean;
   survivalFloor: number;
+  survivalFloorHTG?: number;
   overtimeRate150: number;
   overtimeRate200: number;
   defaultCommissionRate: number;
   requireAttendanceForPayroll: boolean;
   latePenaltyCents?: number;
+  absencePenaltyType?: "STATUTORY_PRORATA" | "FIXED_AMOUNT";
   absencePenaltyCents?: number;
   tardinessPenaltyMultiplier?: number;
   standardQuinzaineHours?: number;
+  standardHoursPerCycle?: number;
+  attendanceToleranceHours?: number;
+  workingDaysBasis?: number;
 }
 
 export const BusinessAdministrationRepository = {
@@ -53,16 +66,23 @@ export const BusinessAdministrationRepository = {
       frequency: "BIWEEKLY",
       currency: BASE_CURRENCY,
       enableTaxes: true,
+      enableSocialTaxes: true,
       onaEmployeeRate: STATUTORY_TAX_RATES.ONA.EMPLOYEE_RATE,
       onaEmployerRate: STATUTORY_TAX_RATES.ONA.EMPLOYER_RATE,
       ofatmaEmployeeRate: STATUTORY_TAX_RATES.OFATMA.EMPLOYEE_RATE,
       ofatmaEmployerRate: STATUTORY_TAX_RATES.OFATMA.EMPLOYER_RATE_DEFAULT,
       enableSurvivalFloor: true,
       survivalFloor: SURVIVAL_FLOOR_HTG,
+      survivalFloorHTG: SURVIVAL_FLOOR_HTG,
       overtimeRate150: 1.5,
       overtimeRate200: 2.0,
       defaultCommissionRate: 0.05,
       requireAttendanceForPayroll: true,
+      latePenaltyCents: 0,
+      standardQuinzaineHours: 96,
+      standardHoursPerCycle: 96,
+      attendanceToleranceHours: 94,
+      workingDaysBasis: 22,
     };
 
     if (!businessId) return defaultPolicies;
@@ -71,7 +91,7 @@ export const BusinessAdministrationRepository = {
       `payroll_policies:${businessId}`,
       async () => {
         try {
-          // 1. Direct doc in businesses/{businessId}/settings/payroll_policies
+          // 1. Direct doc in businesses/{businessId}/settings/payroll_policies (CANONICAL SSOT)
           const snap = await resilientGetDoc(doc(db, "businesses", businessId, "settings", "payroll_policies"), {
             fallbackToCache: true,
             throwOnNetworkFailure: false
@@ -87,10 +107,15 @@ export const BusinessAdministrationRepository = {
               ...defaultPolicies,
               ...data,
               enableTaxes,
+              enableSocialTaxes: enableTaxes,
+              survivalFloorHTG: data.survivalFloorHTG ?? data.survivalFloor ?? defaultPolicies.survivalFloorHTG,
+              standardHoursPerCycle: data.standardHoursPerCycle ?? data.standardQuinzaineHours ?? defaultPolicies.standardHoursPerCycle,
+              attendanceToleranceHours: data.attendanceToleranceHours ?? defaultPolicies.attendanceToleranceHours,
+              workingDaysBasis: data.workingDaysBasis ?? defaultPolicies.workingDaysBasis,
             } as PayrollPoliciesConfig;
           }
 
-          // 2. Fallback to tax configuration
+          // 2. Fallback to legacy tax configuration
           const taxConfig = await BusinessAdministrationRepository.getTaxConfiguration(businessId);
           const enableTaxes = (taxConfig as any).enableTaxes !== undefined
             ? Boolean((taxConfig as any).enableTaxes)
@@ -100,12 +125,14 @@ export const BusinessAdministrationRepository = {
           return {
             ...defaultPolicies,
             enableTaxes,
+            enableSocialTaxes: enableTaxes,
             currency: taxConfig.currency || BASE_CURRENCY,
             onaEmployeeRate: taxConfig.cnssRateEmployee ?? defaultPolicies.onaEmployeeRate,
             onaEmployerRate: taxConfig.cnssRateEmployer ?? defaultPolicies.onaEmployerRate,
             ofatmaEmployeeRate: taxConfig.cnsRateEmployee ?? defaultPolicies.ofatmaEmployeeRate,
             ofatmaEmployerRate: taxConfig.cnsRateEmployer ?? defaultPolicies.ofatmaEmployerRate,
             survivalFloor: taxConfig.survivalFloorHTG ?? defaultPolicies.survivalFloor,
+            survivalFloorHTG: taxConfig.survivalFloorHTG ?? defaultPolicies.survivalFloorHTG,
           };
         } catch (error) {
           console.warn("[BusinessAdministrationRepository] Using default payroll policies:", error);
@@ -114,6 +141,18 @@ export const BusinessAdministrationRepository = {
       },
       { category: "TAX_CONFIG", businessId }
     );
+  },
+
+  /**
+   * Canonical writer for Payroll Policy SSOT:
+   * Persists directly to businesses/{businessId}/settings/payroll_policies
+   */
+  async savePayrollPolicy(
+    businessId: string,
+    policies: Partial<PayrollPoliciesConfig | CanonicalPayrollPolicy>,
+    actorId?: string
+  ): Promise<void> {
+    return this.updatePayrollPolicies(businessId, policies as Partial<PayrollPoliciesConfig>, actorId || "system");
   },
 
   async updatePayrollPolicies(

@@ -24,6 +24,9 @@ interface BIExecutiveKpisProps {
   biSnapshot: any;
   isLoading?: boolean;
   handleSaveSnapshot: () => void;
+  isSimplifiedMode?: boolean;
+  cashSnapshot?: any;
+  accrualSnapshot?: any;
 }
 
 export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
@@ -41,7 +44,15 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
   biSnapshot,
   isLoading = false,
   handleSaveSnapshot,
+  isSimplifiedMode = false,
+  cashSnapshot,
+  accrualSnapshot,
 }) => {
+  const rev = isSimplifiedMode ? (cashSnapshot?.cashIn?.total ?? totalRevenue) : (accrualSnapshot?.revenueRecognized ?? totalRevenue);
+  const exp = isSimplifiedMode ? (cashSnapshot?.cashOut?.total ?? totalExpenses) : (accrualSnapshot?.expensesAccrued ?? totalExpenses);
+  const profit = isSimplifiedMode ? (cashSnapshot?.netCashFlow ?? netProfit) : (accrualSnapshot?.netIncome ?? netProfit);
+  const payroll = isSimplifiedMode ? (cashSnapshot?.cashOut?.payrollPaid ?? (payrollAggregates?.payrollPaid || 0)) : (accrualSnapshot?.payrollAccrued?.total ?? (payrollAggregates?.totalEmploymentCost || 0));
+
   return (
     <div className="flex flex-col gap-2.5">
       {totalRevenue === 0 && totalExpenses === 0 && (
@@ -88,13 +99,15 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-emerald-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.revenue}</span>
-            <div className="font-mono text-lg sm:text-base font-black text-emerald-400 mt-1 truncate" title={(totalRevenue || 0).toLocaleString() + " HTG"}>
-              +{(totalRevenue || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
+              {isSimplifiedMode ? "Argent entré (Caisse)" : "Revenus reconnus (Engagement)"}
+            </span>
+            <div className="font-mono text-lg sm:text-base font-black text-emerald-400 mt-1 truncate" title={(rev || 0).toLocaleString() + " HTG"}>
+              +{(rev || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
             </div>
             <div className="flex items-center gap-1 text-[10px] text-emerald-500 font-semibold truncate">
               <TrendingUp className="w-3 h-3 shrink-0" />
-              <span className="truncate">Conforme (Caisse active)</span>
+              <span className="truncate">{isSimplifiedMode ? "Flux de trésorerie effectif" : "Comptabilité d'exercice"}</span>
             </div>
           </motion.div>
 
@@ -104,13 +117,15 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-rose-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.expenses}</span>
-            <div className="font-mono text-lg sm:text-base font-black text-rose-500 mt-1 truncate" title={`-${(totalExpenses || 0).toLocaleString()} HTG`}>
-              -{(totalExpenses || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
+              {isSimplifiedMode ? "Argent sorti (Décaissements)" : "Charges engagées (Accrual)"}
+            </span>
+            <div className="font-mono text-lg sm:text-base font-black text-rose-500 mt-1 truncate" title={`-${(exp || 0).toLocaleString()} HTG`}>
+              -{(exp || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
             </div>
             <div className="flex items-center gap-1 text-[10px] text-slate-500 truncate">
               <Clock className="w-3 h-3 shrink-0" />
-              <span className="truncate">Sert à l'investissement</span>
+              <span className="truncate">{isSimplifiedMode ? "Sorties de caisse réelles" : "Factures reçues et passifs"}</span>
             </div>
           </motion.div>
 
@@ -120,9 +135,11 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-cyan-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.netProfit}</span>
-            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${netProfit >= 0 ? "text-cyan-400" : "text-rose-400"}`} title={`${netProfit >= 0 ? "+" : ""}${(netProfit || 0).toLocaleString()} HTG`}>
-              {netProfit >= 0 ? "+" : ""}{(netProfit || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
+              {isSimplifiedMode ? "Variation de trésorerie" : "Résultat économique / EBITDA"}
+            </span>
+            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${profit >= 0 ? "text-cyan-400" : "text-rose-400"}`} title={`${profit >= 0 ? "+" : ""}${(profit || 0).toLocaleString()} HTG`}>
+              {profit >= 0 ? "+" : ""}{(profit || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
             </div>
             <div className="flex items-center gap-1 text-[10px] text-slate-400 truncate">
               <span className="font-semibold text-cyan-400">{profitMarginPercentage}%</span>
@@ -136,12 +153,14 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-indigo-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.payrollCost}</span>
-            <div className="font-mono text-lg sm:text-base font-black text-indigo-400 mt-1 truncate" title={(payrollAggregates?.totalEmploymentCost || 0).toLocaleString() + " HTG"}>
-              {(payrollAggregates?.totalEmploymentCost || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
+              {isSimplifiedMode ? "Salaires payés (Virements)" : "Masse salariale engagée"}
+            </span>
+            <div className="font-mono text-lg sm:text-base font-black text-indigo-400 mt-1 truncate" title={(payroll || 0).toLocaleString() + " HTG"}>
+              {(payroll || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
             </div>
-            <div className="text-[9.5px] text-slate-500 font-normal truncate" title={isSocialTaxEnabled ? `CNSS & CNS : ${(payrollAggregates?.cnssContributions || 0).toLocaleString()} HTG` : "Taxes: Désactivées (0 HTG)"}>
-              CNSS & CNS : {isSocialTaxEnabled ? `${(payrollAggregates?.cnssContributions || 0).toLocaleString()} HTG` : "Désactivé (0 HTG)"}
+            <div className="text-[9.5px] text-slate-500 font-normal truncate">
+              {isSimplifiedMode ? "Décaissements RH effectifs" : "Brut + Charges patronales (ONA/OFATMA)"}
             </div>
           </motion.div>
 

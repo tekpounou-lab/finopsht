@@ -15,6 +15,7 @@ import { AbsenceEvent } from "./AttendanceIntegrationService";
 import { WorkforceAuditService } from "./WorkforceAuditService";
 import { SalesAggregator } from "./SalesAggregator";
 import { CommissionEngine } from "../CommissionEngine";
+import { BusinessSettingsService } from "../business/BusinessSettingsService";
 
 // Known Haitian Holidays (Format: MM-DD)
 const HAITIAN_HOLIDAYS = [
@@ -62,6 +63,7 @@ export const WorkforceDataEngine = {
     absenceEvents: AbsenceEvent[];
     cycle: PayrollCycle;
     socialTaxEligible?: boolean;
+    businessSettings?: any;
   }): PayrollInputSnapshot {
     const { 
       employee, 
@@ -71,7 +73,8 @@ export const WorkforceDataEngine = {
       overtimeRequests = [],
       absenceEvents = [],
       cycle,
-      socialTaxEligible
+      socialTaxEligible,
+      businessSettings
     } = params;
 
     const toDateKey = (rawDate: any): string => {
@@ -107,7 +110,13 @@ export const WorkforceDataEngine = {
     }
 
     // 3. Attendance adjustment, Overtime (Prime), and Penalties
-    let expectedHours = 96; // Default standard hours for quinzaine
+    const standardHours =
+      businessSettings?.standardQuinzaineHours ||
+      businessSettings?.standardHours ||
+      businessSettings?.payroll_policies?.standardQuinzaineHours ||
+      businessSettings?.payrollPolicies?.standardQuinzaineHours ||
+      BusinessSettingsService.DEFAULT_STANDARD_QUINZAINE_HOURS;
+    let expectedHours = standardHours; // Default standard hours for quinzaine (e.g. 96h)
     let workedHours = 0;
     let primeHoursAmount = 0;
     let penalityHoursAmount = 0;
@@ -313,7 +322,7 @@ export const WorkforceDataEngine = {
       grossSalaryHtg: Number(grossSalary.toFixed(2)),
       netSalaryHtg: Number(netSalary.toFixed(2)),
       
-      attendanceScore: 100,
+      attendanceScore: expectedHours > 0 ? Math.min(100, Math.max(0, Math.round((workedHours / expectedHours) * 100))) : 100,
       punctualityScore: 100,
       scheduleCompliance: 100,
       leaveCompliance: 100,

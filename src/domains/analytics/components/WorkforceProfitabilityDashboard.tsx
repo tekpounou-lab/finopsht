@@ -505,11 +505,11 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
             </div>
 
             <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-              <span className="text-[10px] font-mono text-slate-400 uppercase">Revenu Généré</span>
+              <span className="text-[10px] font-mono text-slate-400 uppercase">Ventes Commerciales Attribuées</span>
               <div className="text-lg font-bold font-mono text-emerald-400 mt-1">
                 {formatMoney(execSummary.totalWorkforceRevenue)}
               </div>
-              <span className="text-[10px] text-slate-400">Ventes & valeur imputée</span>
+              <span className="text-[10px] text-slate-400" title="Ce montant représente les ventes commerciales attribuées aux employés de ce département et ne constitue pas le Chiffre d'Affaires comptable global (GL).">Ventes & valeur imputée (Hors GL)</span>
             </div>
 
             <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
@@ -963,9 +963,9 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
                         )}
                       </div>
                     </th>
-                    <th onClick={() => handleSort("employeeRevenue")} className="py-3 px-4 cursor-pointer hover:bg-slate-900 transition-colors">
+                    <th onClick={() => handleSort("employeeRevenue")} className="py-3 px-4 cursor-pointer hover:bg-slate-900 transition-colors" title="Ventes commerciales attribuées (Hors GL)">
                       <div className="flex items-center justify-between gap-1">
-                        <span>Revenu Généré</span>
+                        <span>Ventes Attribuées</span>
                         {sortField === "employeeRevenue" ? (
                           sortAscending ? <ArrowUp className="w-3 h-3 text-cyan-400" /> : <ArrowDown className="w-3 h-3 text-cyan-400" />
                         ) : (
@@ -1296,9 +1296,9 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
                         )}
                       </div>
                     </th>
-                    <th onClick={() => handleDeptSort("revenueGenerated")} className="py-3 px-4 cursor-pointer hover:bg-slate-900 transition-colors">
+                    <th onClick={() => handleDeptSort("revenueGenerated")} className="py-3 px-4 cursor-pointer hover:bg-slate-900 transition-colors" title="Ventes commerciales attribuées au département (Hors GL)">
                       <div className="flex items-center justify-between gap-1">
-                        <span>Revenu Généré</span>
+                        <span>Ventes Attribuées</span>
                         {deptSortField === "revenueGenerated" ? (
                           deptSortAscending ? <ArrowUp className="w-3 h-3 text-cyan-400" /> : <ArrowDown className="w-3 h-3 text-cyan-400" />
                         ) : (

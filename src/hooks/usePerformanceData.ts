@@ -11,6 +11,7 @@ import {
 import {
   selectSimplifiedMetrics,
   selectExpertMetrics,
+  selectCashBasisExpertMetrics,
 } from "../domains/performance/selectors";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
@@ -199,15 +200,29 @@ export function usePerformanceData(businessIdProp?: string) {
         const fetchedData = await PerformanceRepository.getPerformanceData(businessId, filters);
         
         if (isMounted) {
-          // Merge with live context if any dataset is empty in firestore during demo/mock mode
+          // Merge fetched data with live context using deduplication by ID
+          const mergeById = <T extends { id?: string }>(fetched: T[], context: T[] = []): T[] => {
+            const map = new Map<string, T>();
+            (context || []).forEach((item) => {
+              if (item?.id) map.set(item.id, item);
+            });
+            (fetched || []).forEach((item) => {
+              if (item?.id) {
+                const existing = map.get(item.id);
+                map.set(item.id, existing ? { ...existing, ...item } : item);
+              }
+            });
+            return Array.from(map.values());
+          };
+
           const merged: RawPerformanceDataSet = {
-            employees: fetchedData.employees.length > 0 ? fetchedData.employees : (ctxEmployees || []),
-            transactions: fetchedData.transactions.length > 0 ? fetchedData.transactions : (ctxTxs || []),
-            payrollRecords: fetchedData.payrollRecords.length > 0 ? fetchedData.payrollRecords : (ctxPayrolls || []),
-            attendanceRecords: fetchedData.attendanceRecords.length > 0 ? fetchedData.attendanceRecords : (ctxAtt || []),
-            branches: fetchedData.branches.length > 0 ? fetchedData.branches : (ctxBranches || []),
-            departments: fetchedData.departments.length > 0 ? fetchedData.departments : (ctxDepartments || []),
-            snapshots: fetchedData.snapshots,
+            employees: mergeById(fetchedData.employees, ctxEmployees),
+            transactions: mergeById(fetchedData.transactions, ctxTxs),
+            payrollRecords: mergeById(fetchedData.payrollRecords, ctxPayrolls),
+            attendanceRecords: mergeById(fetchedData.attendanceRecords, ctxAtt),
+            branches: mergeById(fetchedData.branches, ctxBranches),
+            departments: mergeById(fetchedData.departments, ctxDepartments),
+            snapshots: fetchedData.snapshots || [],
           };
 
           setRawDataSet(merged);
@@ -271,6 +286,10 @@ export function usePerformanceData(businessIdProp?: string) {
     return selectExpertMetrics(rawDataSet, filters);
   }, [rawDataSet, filters]);
 
+  const cashBasisMetrics: ExpertMetrics = useMemo(() => {
+    return selectCashBasisExpertMetrics(rawDataSet, filters);
+  }, [rawDataSet, filters]);
+
   const branches = useMemo(() => {
     const list = [...(rawDataSet.branches.length > 0 ? rawDataSet.branches : (ctxBranches || []))];
     const existingIds = new Set(list.map((b) => b.id));
@@ -322,6 +341,7 @@ export function usePerformanceData(businessIdProp?: string) {
     rawDataSet,
     simplifiedMetrics,
     expertMetrics,
+    cashBasisMetrics,
     branches,
     departments,
   };

@@ -292,20 +292,50 @@ export class InvoiceService {
     paymentMethod: NonNullable<Invoice["paymentMethod"]>,
     branchId?: string,
     departmentId?: string,
-    actor?: { uid: string; email: string; name?: string }
+    actor?: { uid: string; email: string; name?: string },
+    customAmount?: number,
+    paymentEventId?: string,
+    idempotencyKey?: string,
+    dbInstance?: any
   ): Promise<{ invoice: Invoice; paymentTransaction: LedgerTransaction }> {
-    const invoice = await InvoiceRepository.getInvoiceById(businessId, invoiceId);
+    const invoice = await InvoiceRepository.getInvoiceById(businessId, invoiceId, dbInstance);
     if (!invoice) {
       throw new Error(`Facture [${invoiceId}] introuvable.`);
     }
 
-    if (invoice.isPaid) {
+    const currentPaid = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
+    const totalAmount = Number(invoice.totalAmount) || 0;
+    const currentBalance = invoice.balance !== undefined ? Number(invoice.balance) : Math.max(0, totalAmount - currentPaid);
+
+    if (invoice.isPaid && currentBalance <= 0) {
       throw new Error(`La facture ${invoice.invoiceNumber} est déjà réglée.`);
     }
 
+    const amount = customAmount !== undefined ? Number(customAmount) : currentBalance;
+    if (!Number.isFinite(amount) || isNaN(amount) || amount <= 0) {
+      throw new Error(`Le montant du paiement doit être un nombre valide supérieur à 0 (fourni: ${customAmount ?? currentBalance}).`);
+    }
+
     const now = new Date().toISOString();
-    const paymentTxId = `tx_pay_${invoice.id}_${Date.now()}`;
-    const amount = Number(invoice.totalAmount) || 0;
+    const rawEvtId = paymentEventId || idempotencyKey || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const effectiveKey = idempotencyKey || rawEvtId;
+
+    // Idempotency conflict check: If payment with this key already exists on invoice with different amount, reject immediately
+    const existingPaymentWithKey = (invoice.payments || []).find(
+      (p) => (p.idempotencyKey && p.idempotencyKey === effectiveKey) || p.id === rawEvtId
+    );
+    if (existingPaymentWithKey && Math.abs(existingPaymentWithKey.amount - amount) > 0.001) {
+      throw new Error(
+        `Conflit d'idempotence: Une tentative de paiement avec la clé "${effectiveKey}" existe déjà avec un montant différent (${existingPaymentWithKey.amount} HTG vs ${amount} HTG requis).`
+      );
+    }
+
+    if (amount > currentBalance + 0.001) {
+      throw new Error(`Erreur de surpaiement: Le montant (${amount} HTG) dépasse le solde restant (${currentBalance} HTG).`);
+    }
+
+    const cleanEvtId = rawEvtId.replace(/^tx_pay_/, '');
+    const paymentTxId = `tx_pay_${invoice.id}_${cleanEvtId}`;
     const amountCents = Math.round(amount * 100);
 
     const debitAccount = (paymentMethod === "CASH")
@@ -342,6 +372,8 @@ export class InvoiceService {
         clientName: invoice.clientName,
         paymentMethod,
         currency: invoice.currency,
+        paymentEventId: rawEvtId,
+        idempotencyKey: idempotencyKey || rawEvtId,
         collectedByUid: actor?.uid,
         collectedByEmail: actor?.email
       },
@@ -349,16 +381,29 @@ export class InvoiceService {
       updated_at: now
     };
 
-    // Save payment ledger transaction
-    await LedgerRepository.save(paymentTx);
+    // Atomically post ledger payment transaction and update invoice state in Firestore
+    const { alreadyProcessed, updatedInvoice } = await InvoiceRepository.recordInvoicePaymentAtomic(
+      businessId,
+      invoiceId,
+      paymentTx,
+      paymentMethod,
+      dbInstance
+    );
 
-    // Mark invoice as paid in repository
-    await InvoiceRepository.markInvoiceAsPaid(businessId, invoiceId, paymentMethod, paymentTxId);
+    if (alreadyProcessed && updatedInvoice) {
+      return {
+        invoice: updatedInvoice,
+        paymentTransaction: paymentTx
+      };
+    }
 
-    const updatedInvoice: Invoice = {
+    const finalInvoice: Invoice = updatedInvoice || {
       ...invoice,
-      status: "PAID",
-      isPaid: true,
+      paidAmount: Math.min(totalAmount, currentPaid + amount),
+      amountPaid: Math.min(totalAmount, currentPaid + amount),
+      balance: Math.max(0, currentBalance - amount),
+      status: Math.max(0, currentBalance - amount) <= 0.001 ? "PAID" : "PARTIALLY_PAID",
+      isPaid: Math.max(0, currentBalance - amount) <= 0.001,
       paidAt: now,
       paymentMethod,
       paymentTransactionId: paymentTxId,
@@ -368,7 +413,7 @@ export class InvoiceService {
     // Emit INVOICE_PAID event
     EventBus.publish(
       EventBus.createEvent({
-        correlationId: `corr_inv_pay_${invoice.id}`,
+        correlationId: `corr_inv_pay_${invoice.id}_${rawEvtId}`,
         businessId,
         module: "CRM",
         aggregate: "Invoice",

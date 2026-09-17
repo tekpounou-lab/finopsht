@@ -1,16 +1,18 @@
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, QueryConstraint } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, runTransaction, QueryConstraint } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../../lib/firebase";
-import { Invoice, InvoiceStatus } from "../../types/crm";
+import { Invoice, InvoiceStatus, InvoicePayment } from "../../types/crm";
+import { LedgerTransaction } from "../../types";
 import { PaginatedRepository, PaginatedResult } from "../PaginatedRepository";
 
 export const InvoiceRepository = {
   /**
    * Saves or updates an Invoice document under tenant scope
    */
-  async saveInvoice(invoice: Invoice): Promise<void> {
+  async saveInvoice(invoice: Invoice, dbInstance?: any): Promise<void> {
+    const firestore = dbInstance || db;
     const path = `businesses/${invoice.businessId}/invoices/${invoice.id}`;
     try {
-      const docRef = doc(db, "businesses", invoice.businessId, "invoices", invoice.id);
+      const docRef = doc(firestore, "businesses", invoice.businessId, "invoices", invoice.id);
       await setDoc(docRef, {
         ...invoice,
         updatedAt: new Date().toISOString()
@@ -23,10 +25,11 @@ export const InvoiceRepository = {
   /**
    * Retrieves an invoice by ID
    */
-  async getInvoiceById(businessId: string, invoiceId: string): Promise<Invoice | null> {
+  async getInvoiceById(businessId: string, invoiceId: string, dbInstance?: any): Promise<Invoice | null> {
+    const firestore = dbInstance || db;
     const path = `businesses/${businessId}/invoices/${invoiceId}`;
     try {
-      const docRef = doc(db, "businesses", businessId, "invoices", invoiceId);
+      const docRef = doc(firestore, "businesses", businessId, "invoices", invoiceId);
       const snap = await getDoc(docRef);
       if (snap.exists()) {
         return snap.data() as Invoice;
@@ -133,6 +136,139 @@ export const InvoiceRepository = {
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  },
+
+  /**
+   * Atomically posts a payment event ledger transaction and updates invoice state
+   * (paidAmount, balance, status, payments array) in a single Firestore transaction.
+   * Enforces partial payments, idempotency on payment event ID, and balance invariants.
+   */
+  async recordInvoicePaymentAtomic(
+    businessId: string,
+    invoiceId: string,
+    paymentTx: LedgerTransaction,
+    paymentMethod: NonNullable<Invoice["paymentMethod"]>,
+    dbInstance?: any
+  ): Promise<{ alreadyPaid: boolean; alreadyProcessed: boolean; updatedInvoice?: Invoice }> {
+    const firestore = dbInstance || db;
+    const invoiceRef = doc(firestore, "businesses", businessId, "invoices", invoiceId);
+    const ledgerRef = doc(firestore, "businesses", businessId, "ledger", paymentTx.id);
+
+    try {
+      let alreadyProcessed = false;
+      let finalInvoice: Invoice | undefined;
+
+      await runTransaction(firestore, async (transaction) => {
+        const invSnap = await transaction.get(invoiceRef);
+        if (!invSnap.exists()) {
+          throw new Error(`Facture [${invoiceId}] introuvable.`);
+        }
+        const invData = invSnap.data() as Invoice;
+
+        // Security / Tenant Isolation check
+        if (invData.businessId !== businessId || paymentTx.business_id !== businessId) {
+          throw new Error(`Accès refusé: Violation d'isolation multi-tenant (${businessId}).`);
+        }
+
+        const existingPayments = invData.payments || [];
+
+        // Check if ledger transaction record already exists directly in Firestore
+        const ledgerSnap = await transaction.get(ledgerRef);
+        if (ledgerSnap.exists()) {
+          alreadyProcessed = true;
+          finalInvoice = invData;
+          return;
+        }
+
+        // Check idempotency: by payment Tx ID or paymentEventId metadata
+        const paymentEventId = (paymentTx.metadata?.paymentEventId as string) || paymentTx.id;
+        const idempotencyKey = (paymentTx.metadata?.idempotencyKey as string) || paymentEventId;
+        const paymentAmount = Number(paymentTx.amount) || 0;
+
+        const conflictingPayment = existingPayments.find(
+          (p) => ((p.idempotencyKey && p.idempotencyKey === idempotencyKey) || p.id === paymentEventId) && Math.abs(p.amount - paymentAmount) > 0.001
+        );
+        if (conflictingPayment) {
+          throw new Error(
+            `Conflit d'idempotence: Une tentative de paiement avec la clé "${idempotencyKey}" existe déjà avec un montant différent (${conflictingPayment.amount} HTG vs ${paymentAmount} HTG requis).`
+          );
+        }
+
+        const isDuplicate = existingPayments.some(
+          (p) => p.id === paymentEventId || p.transactionId === paymentTx.id || (p.idempotencyKey && p.idempotencyKey === idempotencyKey)
+        );
+
+        if (isDuplicate || (invData.isPaid && (invData.balance === 0 || invData.balance === undefined))) {
+          alreadyProcessed = true;
+          finalInvoice = invData;
+          return;
+        }
+
+        if (!Number.isFinite(paymentAmount) || isNaN(paymentAmount) || paymentAmount <= 0) {
+          throw new Error(`Le montant du paiement doit être un nombre valide supérieur à 0 (montant fourni: ${paymentAmount}).`);
+        }
+
+        const totalAmount = Number(invData.totalAmount) || 0;
+        const currentPaidAmount = Number(invData.paidAmount ?? invData.amountPaid ?? 0);
+        const currentBalance = invData.balance !== undefined ? Number(invData.balance) : Math.max(0, totalAmount - currentPaidAmount);
+
+        // Strict invariant check: Payment cannot exceed outstanding balance
+        if (paymentAmount > currentBalance + 0.001) {
+          throw new Error(
+            `Erreur de surpaiement: Le montant du paiement (${paymentAmount} HTG) dépasse le solde restant (${currentBalance} HTG) pour la facture ${invData.invoiceNumber}.`
+          );
+        }
+
+        const newPaidAmount = Math.min(totalAmount, currentPaidAmount + paymentAmount);
+        const newBalance = Math.max(0, totalAmount - newPaidAmount);
+        const newIsPaid = newBalance <= 0.001;
+        const newStatus: InvoiceStatus = newIsPaid ? "PAID" : "PARTIALLY_PAID";
+        const now = new Date().toISOString();
+
+        const newPaymentEvent: InvoicePayment = {
+          id: paymentEventId,
+          invoiceId,
+          amount: paymentAmount,
+          paymentDate: paymentTx.date || now.split("T")[0],
+          paymentMethod,
+          transactionId: paymentTx.id,
+          idempotencyKey,
+          notes: paymentTx.description,
+          recordedBy: paymentTx.metadata?.collectedByUid ? {
+            uid: paymentTx.metadata.collectedByUid,
+            email: paymentTx.metadata.collectedByEmail || "",
+          } : undefined,
+          createdAt: now,
+        };
+
+        const updatedPayments = [...existingPayments, newPaymentEvent];
+
+        // Post Ledger Transaction
+        transaction.set(ledgerRef, paymentTx, { merge: true });
+
+        // Update Invoice status & balance tracking
+        const updates: Partial<Invoice> = {
+          status: newStatus,
+          isPaid: newIsPaid,
+          paidAmount: newPaidAmount,
+          amountPaid: newPaidAmount,
+          balance: newBalance,
+          payments: updatedPayments,
+          ...(newIsPaid ? { paidAt: now } : (invData.paidAt ? { paidAt: invData.paidAt } : {})),
+          paymentMethod,
+          paymentTransactionId: paymentTx.id,
+          updatedAt: now,
+        };
+
+        transaction.update(invoiceRef, updates);
+        finalInvoice = { ...invData, ...updates };
+      });
+
+      return { alreadyPaid: alreadyProcessed, alreadyProcessed, updatedInvoice: finalInvoice };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `businesses/${businessId}/invoices/${invoiceId}`);
+      throw error;
     }
   },
 

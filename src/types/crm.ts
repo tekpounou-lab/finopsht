@@ -113,7 +113,9 @@ export interface InvoicePayment {
   paymentMethod: "BANK_TRANSFER" | "CASH" | "CHECK" | "MONCASH" | "NATCASH" | "CARD" | "OTHER";
   reference?: string;
   transactionId?: string;
+  idempotencyKey?: string;
   notes?: string;
+  recordedBy?: { uid: string; email: string; name?: string };
   createdAt: string;
 }
 
@@ -137,6 +139,8 @@ export interface Invoice {
   taxAmount: number;
   totalAmount: number;
   amountPaid?: number;
+  paidAmount?: number;
+  balance?: number;
   status: InvoiceStatus;
   accountingStatus?: "DRAFT" | "POSTED" | "REVERSED";
   notes?: string;

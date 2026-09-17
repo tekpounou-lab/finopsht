@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useI18n } from "../i18n";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import {
@@ -22,6 +22,10 @@ import { AnalyticsHealth, ExecutiveIntelligenceCenter } from "../domains/analyti
 import { PredictiveIntelligenceCenter } from "../domains/analytics/components/PredictiveIntelligenceCenter";
 import { WorkforceIntelligenceFramework } from "../domains/analytics/components/WorkforceIntelligenceFramework";
 import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
+
+import { useCashBasisSnapshot } from "../hooks/useCashBasisSnapshot";
+import { useAccrualBasisSnapshot } from "../hooks/useAccrualBasisSnapshot";
+import { ReconciliationBridge } from "./analytics/ReconciliationBridge";
 
 import { useBIUIState } from "./bi/hooks/useBIUIState";
 import { useBIDataAggregation } from "./bi/hooks/useBIDataAggregation";
@@ -75,7 +79,7 @@ export default function BusinessIntelligence({
   isLoading = false,
 }: BusinessIntelligenceProps) {
   const { language } = useI18n();
-  const { business: ctxBusiness } = useBusinessContext();
+  const { business: ctxBusiness, shifts: ctxShifts = [] } = useBusinessContext();
   const currentBusiness = propBusiness || ctxBusiness;
 
   const tbi = biTranslations[language as keyof typeof biTranslations] || biTranslations.fr;
@@ -121,6 +125,15 @@ export default function BusinessIntelligence({
 
   const [selectedDeptForExpenseModal, setSelectedDeptForExpenseModal] = useState<EnrichedDepartmentMetric | null>(null);
 
+  const filters = useMemo(() => ({
+    startDate: uiState.startDate,
+    endDate: uiState.endDate,
+    branchId: uiState.selectedBranchId,
+    departmentId: uiState.selectedDeptId,
+  }), [uiState.startDate, uiState.endDate, uiState.selectedBranchId, uiState.selectedDeptId]);
+  const { snapshot: cashSnapshot } = useCashBasisSnapshot(filters);
+  const { snapshot: accrualSnapshot } = useAccrualBasisSnapshot(filters);
+
   // Data Aggregation & Business Analytics Engine
   const dataAgg = useBIDataAggregation({
     currentBusiness,
@@ -130,6 +143,7 @@ export default function BusinessIntelligence({
     ledgerTransactions,
     payrollRecords,
     attendanceRecords,
+    shifts: ctxShifts,
     forensicLogs,
     selectedBranchId: uiState.selectedBranchId,
     selectedDeptId: uiState.selectedDeptId,
@@ -140,6 +154,7 @@ export default function BusinessIntelligence({
     endDate: uiState.endDate,
     rankBy: uiState.rankBy,
     language: language as "fr" | "ht" | "en",
+    isSimplifiedMode: uiState.isSimplifiedMode,
   });
 
   // AI CFO Advisor
@@ -241,40 +256,7 @@ export default function BusinessIntelligence({
     );
   }
 
-  // Simplified View
-  if (uiState.isSimplifiedMode) {
-    return (
-      <BISimplifiedView
-        language={language}
-        isSimplifiedMode={uiState.isSimplifiedMode}
-        setIsSimplifiedMode={uiState.setIsSimplifiedMode}
-        currentRole={currentRole}
-        currentBusiness={currentBusiness}
-        branches={branches}
-        departments={departments}
-        selectedBranchId={uiState.selectedBranchId}
-        setSelectedBranchId={uiState.setSelectedBranchId}
-        selectedDeptId={uiState.selectedDeptId}
-        setSelectedDeptId={uiState.setSelectedDeptId}
-        startDate={uiState.startDate}
-        setStartDate={uiState.setStartDate}
-        endDate={uiState.endDate}
-        setEndDate={uiState.setEndDate}
-        allBranchesLabel={tbi.allBranches}
-        allDepartmentsLabel={tbi.allDepartments}
-        totalRevenue={dataAgg.totalRevenue}
-        totalExpenses={dataAgg.totalExpenses}
-        netProfit={dataAgg.netProfit}
-        profitMarginPercentage={dataAgg.profitMarginPercentage}
-        attendanceAggregates={dataAgg.attendanceAggregates}
-        aiQuery={aiAdvisor.aiQuery}
-        setAiQuery={aiAdvisor.setAiQuery}
-        aiReport={aiAdvisor.aiReport}
-        aiLoading={aiAdvisor.aiLoading}
-        handleGenerateAiReport={aiAdvisor.handleGenerateAiReport}
-      />
-    );
-  }
+
 
   return (
     <div className="flex flex-col gap-6" id="performance-intelligence-module">
@@ -307,6 +289,19 @@ export default function BusinessIntelligence({
       {/* Observability Panel powered by Sprint BI Core v4 */}
       {currentRole === "SUPER_ADMIN" && <AnalyticsHealth />}
 
+      {/* Mode Status Banner */}
+      <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800/80 px-4 py-2.5 rounded-xl text-xs font-mono text-slate-300">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+          <span>
+            Mode Actif : <strong className="text-cyan-300 font-bold">{uiState.isSimplifiedMode ? "Mode Simple — Vue Constaté (Trésorerie / Décaissement)" : "Mode Expert — Vue Engagement (Économique)"}</strong>
+          </span>
+        </div>
+        <span className="text-[11px] text-slate-400">
+          {uiState.isSimplifiedMode ? "Comptabilité de caisse (Décaissements effectifs & flux réels sur les 6 onglets)" : "Comptabilité d'engagement (Périodes de travail & salaires engagés sur les 6 onglets)"}
+        </span>
+      </div>
+
       {/* BI TABS */}
       <div className="flex border-b border-slate-800 overflow-x-auto no-scrollbar gap-6 font-mono text-xs font-bold px-2">
         {[
@@ -334,10 +329,6 @@ export default function BusinessIntelligence({
       {/* TAB 1: EXECUTIVE */}
       {uiState.activeBiTab === "executive" && (
         <React.Fragment>
-          <div className="mb-8 mt-2">
-            <ExecutiveIntelligenceCenter />
-          </div>
-
           <BIExecutiveKpis
             tbi={tbi}
             isLoading={isLoading}
@@ -353,7 +344,20 @@ export default function BusinessIntelligence({
             totalAdvancesPending={dataAgg.totalAdvancesPending}
             biSnapshot={dataAgg.biSnapshot}
             handleSaveSnapshot={handleSaveSnapshot}
+            isSimplifiedMode={uiState.isSimplifiedMode}
+            cashSnapshot={cashSnapshot}
+            accrualSnapshot={accrualSnapshot}
           />
+
+          <div className="mb-8 mt-8">
+            <ExecutiveIntelligenceCenter />
+          </div>
+
+          {!uiState.isSimplifiedMode && (
+            <div className="mt-8">
+              <ReconciliationBridge snapshot={accrualSnapshot} />
+            </div>
+          )}
 
           <BIBranchDepartmentSection
             tbi={tbi}
@@ -384,6 +388,20 @@ export default function BusinessIntelligence({
           <BIPayrollTab
             payrollAggregates={dataAgg.payrollAggregates}
             isSocialTaxEnabled={dataAgg.isSocialTaxEnabled}
+            filteredPayrolls={dataAgg.filteredPayrolls}
+            filteredEmployees={dataAgg.filteredEmployees}
+            branches={branches}
+            departments={departments}
+            totalRevenue={dataAgg.totalRevenue}
+            totalExpenses={dataAgg.totalExpenses}
+            selectedCurrency={dataAgg.selectedCurrency}
+            formatCurrencyValue={dataAgg.formatCurrencyValue}
+            formatValueDirectly={dataAgg.formatValueDirectly}
+            ledgerTransactions={dataAgg.filteredTx}
+            isSimplifiedMode={uiState.isSimplifiedMode}
+            phase6cDataset={dataAgg.phase6cDataset}
+            phase6dDataset={dataAgg.phase6dDataset}
+            phase7Dataset={dataAgg.phase7Dataset}
           />
         </React.Fragment>
       )}

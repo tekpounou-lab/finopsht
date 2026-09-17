@@ -72,6 +72,45 @@ export class FinancialSnapshotBuilder {
   }
 
   /**
+   * Helper to validate status integrity.
+   * Strictly excludes REVERSED, VOID, VOIDED, CANCELLED, DRAFT, and is_reversed flag.
+   */
+  public static isValidFinancialTx(tx: any): boolean {
+    if (!tx) return false;
+    const status = (tx.status || "").toUpperCase();
+    if (status === "REVERSED" || status === "VOID" || status === "VOIDED" || status === "CANCELLED" || status === "DRAFT") {
+      return false;
+    }
+    if (tx.is_reversed === true || tx.isReversed === true) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Helper to enforce strict tenant isolation.
+   * Missing business_id or wrong business_id is strictly excluded.
+   */
+  public static isEligibleTenant(tx: any, targetBusinessId: string): boolean {
+    if (!targetBusinessId) return false;
+    const txBizId = tx.business_id || tx.businessId;
+    if (!txBizId || txBizId !== targetBusinessId) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Helper to enforce currency isolation.
+   * Does not mix HTG and USD without explicit conversion.
+   */
+  public static isEligibleCurrency(tx: any, targetCurrency: string = "HTG"): boolean {
+    if (!targetCurrency) return true;
+    const txCurr = (tx.currency || tx.currency_code || "HTG").toUpperCase();
+    return txCurr === targetCurrency.toUpperCase();
+  }
+
+  /**
    * Builds a complete, verified Financial Snapshot from ledger transactions.
    */
   public static buildSnapshot(
@@ -85,10 +124,12 @@ export class FinancialSnapshotBuilder {
     const asOfEndDate = endDate || new Date().toISOString().split("T")[0];
     const asOfStartDate = startDate || new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().split("T")[0];
 
-    // Filter transactions for business and up to end date, normalized with double-entry rules
+    // Filter transactions for business, valid status, currency, and up to end date, normalized with double-entry rules
     const relevantTxs = (transactions || [])
       .filter((tx) => {
-        if (businessId && tx.business_id && tx.business_id !== businessId) return false;
+        if (!this.isValidFinancialTx(tx)) return false;
+        if (!this.isEligibleTenant(tx, businessId)) return false;
+        if (!this.isEligibleCurrency(tx, currency)) return false;
         const txDate = extractTxDateString(tx.date || (tx as any).transaction_date || (tx as any).createdAt);
         return !txDate || txDate <= asOfEndDate;
       })
@@ -144,7 +185,11 @@ export class FinancialSnapshotBuilder {
       return { savedCount: 0, periods: [] };
     }
 
-    const businessTxs = transactions.filter(tx => !businessId || !tx.business_id || tx.business_id === businessId);
+    const businessTxs = transactions.filter(tx =>
+      this.isValidFinancialTx(tx) &&
+      this.isEligibleTenant(tx, businessId) &&
+      this.isEligibleCurrency(tx, currency)
+    );
     
     // Identify all unique monthly periods (YYYY-MM)
     const monthSet = new Set<string>();
@@ -316,17 +361,39 @@ export class FinancialSnapshotBuilder {
     let taxExpensesCents = 0;
 
     periodTxs.forEach((tx) => {
-      const amtCents = tx.amount_cents ?? Math.round((tx.amount || 0) * 100);
+      const rawAmount =
+        typeof tx.amount === "number" && !isNaN(tx.amount) && tx.amount !== 0 ? Math.abs(tx.amount) :
+        typeof (tx as any).amount_htg === "number" && !isNaN((tx as any).amount_htg) && (tx as any).amount_htg !== 0 ? Math.abs((tx as any).amount_htg) :
+        typeof (tx as any).amountHtg === "number" && !isNaN((tx as any).amountHtg) && (tx as any).amountHtg !== 0 ? Math.abs((tx as any).amountHtg) :
+        typeof (tx as any).credit === "number" && !isNaN((tx as any).credit) && (tx as any).credit > 0 ? (tx as any).credit :
+        typeof (tx as any).total === "number" && !isNaN((tx as any).total) && (tx as any).total !== 0 ? Math.abs((tx as any).total) : 0;
+
+      const amtCents = tx.amount_cents ?? (tx as any).amountCents ?? Math.round(rawAmount * 100);
       if (amtCents <= 0) return;
 
-      const creditAcc = tx.credit_account || "";
-      const debitAcc = tx.debit_account || "";
+      const creditAcc = String(tx.credit_account || (tx as any).creditAccount || "").toUpperCase();
+      const debitAcc = String(tx.debit_account || (tx as any).debitAccount || "").toUpperCase();
+      const txType = String(tx.type || "").toUpperCase();
+      const catUpper = String(tx.category || (tx as any).category_name || "").toUpperCase();
 
-      // Revenue entries (Credits to 4xxx / 7xxx)
-      if (creditAcc.startsWith("4000") || creditAcc.startsWith("4100")) {
-        operatingRevenueCents += amtCents;
-      } else if (creditAcc.startsWith("4") || creditAcc.startsWith("7")) {
-        otherRevenueCents += amtCents;
+      // Revenue entries (Credits to 4xxx / 7xxx or type INCOME/REVENUE/SALES/VENTE)
+      const isRevenue =
+        creditAcc.startsWith("4") || creditAcc.startsWith("7") ||
+        ["INCOME", "REVENUE", "SALES", "VENTE", "VENTES", "CREDIT"].includes(txType) ||
+        catUpper.includes("INCOME") || catUpper.includes("REVENUE") || catUpper.includes("VENTE") || catUpper.includes("SALES");
+
+      if (isRevenue) {
+        if (
+          creditAcc.startsWith("4000") ||
+          creditAcc.startsWith("4100") ||
+          creditAcc.startsWith("4") ||
+          ["INCOME", "REVENUE", "SALES", "VENTE", "VENTES"].includes(txType) ||
+          catUpper.includes("VENTE") || catUpper.includes("INCOME") || catUpper.includes("REVENUE")
+        ) {
+          operatingRevenueCents += amtCents;
+        } else {
+          otherRevenueCents += amtCents;
+        }
       }
 
       // Expense entries (Debits to 5xxx / 6xxx / 8xxx)

@@ -13,6 +13,7 @@ export interface ExecutiveFilters {
   status: string; // "ALL" or specific status
   currency: string; // "HTG" or "USD"
   businessUnit: string; // "ALL" or specific Unit
+  accountingMode?: "CASH" | "ACCRUAL";
 }
 
 export interface ExecutiveFilterContextState {
@@ -45,6 +46,7 @@ const defaultFilters: ExecutiveFilters = {
   status: "ALL",
   currency: "HTG",
   businessUnit: "ALL",
+  accountingMode: "CASH",
 };
 
 const ExecutiveFilterContext = createContext<ExecutiveFilterContextState | null>(null);
@@ -146,10 +148,20 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
         if (filters.departmentId !== "ALL" && txDept !== filters.departmentId) return false;
         if (filters.transactionType !== "ALL" && tx.type !== filters.transactionType) return false;
         if (filters.status !== "ALL" && tx.status !== filters.status) return false;
-        if (filters.currency && filters.currency !== "ALL" && tx.currency !== filters.currency) return false;
+        if (filters.currency && filters.currency !== "ALL" && (tx.currency || "HTG") !== filters.currency) return false;
         
         // Date range filtering using SSOT date normalization
-        const rawDate = tx.date || (tx as any).transaction_date || (tx as any).transactionDate || (tx as any).createdAt;
+        const rawDate =
+          tx.date ||
+          (tx as any).transaction_date ||
+          (tx as any).transactionDate ||
+          (tx as any).effectiveAccountingDate ||
+          (tx as any).effective_date ||
+          (tx as any).date_str ||
+          (tx as any).dateStr ||
+          (tx as any).created_at ||
+          (tx as any).createdAt ||
+          (tx as any).timestamp;
         const txDate = toDateOnly(rawDate);
         if (normBounds.startDate && (!txDate || txDate < normBounds.startDate)) return false;
         if (normBounds.endDate && (!txDate || txDate > normBounds.endDate)) return false;

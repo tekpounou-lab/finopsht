@@ -302,26 +302,45 @@ export default function AttendanceLedger({
 
     // Check Date Range Filter
     if (filters.date || filters.endDate) {
-      const recDateStr = normalizeDateStr(rec.date);
+      const rawDate = rec.date || (rec as any).attendance_date || (rec as any).date_presence || (rec as any).date_pointage || (rec as any).effective_date || (rec as any).timestamp || (rec as any).createdAt || (rec as any).created_at;
+      const recDateStr = normalizeDateStr(rawDate);
       const fDate = normalizeDateStr(filters.date);
       const eDate = normalizeDateStr(filters.endDate);
       if (!recDateStr) return false;
-      if (fDate && recDateStr < fDate) return false;
-      if (eDate && recDateStr > eDate) return false;
+      if (fDate && eDate) {
+        if (recDateStr < fDate || recDateStr > eDate) return false;
+      } else if (fDate) {
+        if (recDateStr < fDate) return false;
+      } else if (eDate) {
+        if (recDateStr > eDate) return false;
+      }
     }
     
     // Quick status mapping
     if (filters.status !== 'ALL') {
-      const isPresent = Boolean(rec.checkIn && !rec.checkOut);
-      const recStatus = (rec.status as string) || (isPresent ? "NORMAL" : "ABSENT");
+      const recStatus = String(rec.status || "").toUpperCase();
+      const hasWorked = Boolean(rec.realHours && Number(rec.realHours) > 0);
+      const isCheckedIn = Boolean(rec.checkIn);
+      const isPresent = isCheckedIn || hasWorked;
+      
+      const isNormal = 
+        recStatus === 'NORMAL' || 
+        recStatus === 'PRESENT' || 
+        recStatus === 'PRÉSENT' || 
+        recStatus === 'COMPLETED' || 
+        recStatus === 'VALIDE' || 
+        recStatus === 'VALIDATED' || 
+        recStatus === 'ACTIVE' || 
+        recStatus === 'PENDING_VERIFICATION' || 
+        (isPresent && recStatus !== 'LATE' && recStatus !== 'ABSENT');
+
       if (filters.status === 'NORMAL') {
-        const isNormal = recStatus === 'NORMAL' || recStatus === 'PENDING_VERIFICATION' || recStatus === 'ACTIVE' || recStatus === 'PRÉSENT' || recStatus === 'PRESENT' || isPresent;
         if (!isNormal) return false;
       } else if (filters.status === 'LATE') {
         if (recStatus !== 'LATE') return false;
       } else if (filters.status === 'ABSENT') {
         if (recStatus !== 'ABSENT' || isPresent) return false;
-      } else if (recStatus !== filters.status) {
+      } else if (recStatus !== filters.status.toUpperCase()) {
         return false;
       }
     }
@@ -956,9 +975,17 @@ export default function AttendanceLedger({
 
       <LiveMonitor 
         records={filteredRecords}
-        activeEmployeesCount={filteredRecords.filter(r => r.status === 'NORMAL' || r.status === 'PENDING_VERIFICATION' || (r.checkIn && !r.checkOut)).length}
-        lateEmployeesCount={filteredRecords.filter(r => r.status === 'LATE').length}
-        absentEmployeesCount={filteredRecords.filter(r => r.status === 'ABSENT').length}
+        activeEmployeesCount={filteredRecords.filter(r => {
+          const st = String(r.status || "").toUpperCase();
+          const hasWorked = Number(r.realHours) > 0 || Boolean(r.checkIn);
+          return st === 'NORMAL' || st === 'PRESENT' || st === 'PRÉSENT' || st === 'COMPLETED' || st === 'VALIDE' || st === 'VALIDATED' || st === 'ACTIVE' || st === 'PENDING_VERIFICATION' || (hasWorked && st !== 'ABSENT' && st !== 'LATE');
+        }).length}
+        lateEmployeesCount={filteredRecords.filter(r => String(r.status || "").toUpperCase() === 'LATE').length}
+        absentEmployeesCount={filteredRecords.filter(r => {
+          const st = String(r.status || "").toUpperCase();
+          const hasWorked = Number(r.realHours) > 0 || Boolean(r.checkIn);
+          return st === 'ABSENT' && !hasWorked;
+        }).length}
       />
 
       <FilterToolbar 

@@ -284,6 +284,19 @@ export default function PayrollTaxConfigurationSection() {
 
   return (
     <div className="space-y-8" id="payroll-tax-config-root">
+      {/* SSOT Consolidation & Deprecation Notice */}
+      <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-700/50 text-cyan-300 text-xs flex items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Info className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5 sm:mt-0" />
+          <div>
+            <span className="font-bold uppercase tracking-wider text-cyan-200">Consolidation SSOT des Politiques de Paie</span>
+            <p className="text-[11px] text-cyan-300/80 mt-0.5">
+              Les règles fiscales (ONA, OFATMA, Plancher de survie) sont désormais unifiées et administrées dans l'onglet principal <strong>« Politiques de Paie & Fiscalité »</strong>. Cette vue avancée est synchronisée en temps réel avec le référentiel canonique.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-900 pb-5">
         <div>

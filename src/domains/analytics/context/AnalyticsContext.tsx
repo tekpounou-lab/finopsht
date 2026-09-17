@@ -257,7 +257,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (filters.departmentId !== "ALL" && txDept !== filters.departmentId) return false;
       if (filters.transactionType !== "ALL" && tx.type !== filters.transactionType) return false;
       if (filters.status !== "ALL" && tx.status !== filters.status) return false;
-      if (filters.currency && filters.currency !== "ALL" && tx.currency !== filters.currency) return false;
+      if (filters.currency && filters.currency !== "ALL" && (tx.currency || "HTG") !== filters.currency) return false;
 
       return true;
     });
@@ -293,7 +293,17 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const filteredTransactions = useMemo(() => {
     return scopedTransactions.filter((tx) => {
       if (filters.startDate && filters.endDate) {
-        const rawDate = tx.date || (tx as any).created_at || (tx as any).timestamp;
+        const rawDate =
+          tx.date ||
+          (tx as any).transaction_date ||
+          (tx as any).transactionDate ||
+          (tx as any).effectiveAccountingDate ||
+          (tx as any).effective_date ||
+          (tx as any).date_str ||
+          (tx as any).dateStr ||
+          (tx as any).created_at ||
+          (tx as any).createdAt ||
+          (tx as any).timestamp;
         const txDate = normalizeDateStr(rawDate);
         if (!txDate || txDate < filters.startDate || txDate > filters.endDate) return false;
       }
@@ -374,22 +384,23 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const timer = setTimeout(() => {
       try {
-        const snap = AnalyticsEngine.generateSnapshot(
-          "CUSTOM",
-          activeCustomRange,
-          filteredEmployees,
-          scopedTransactions,
-          scopedAttendance,
-          scopedPayrolls,
+        const snap = AnalyticsEngine.generateSnapshot({
+          period: "CUSTOM",
+          customRange: activeCustomRange,
+          employees: filteredEmployees,
+          transactions: scopedTransactions,
+          attendanceLogs: scopedAttendance,
+          payrollRecords: scopedPayrolls,
           branches,
           departments,
-          effectiveContracts,
-          businessId,
-          (language as "fr" | "ht" | "en") || "fr",
-          effectiveActivities,
+          contracts: effectiveContracts,
+          businessId: businessId || "",
+          language: (language as "fr" | "ht" | "en") || "fr",
+          activities: effectiveActivities,
           businessSettings,
-          effectiveCycles
-        );
+          payrollCycles: effectiveCycles,
+          accountingMode: filters.accountingMode || "CASH",
+        });
         console.debug("[AnalyticsContext] Snapshot recalculated successfully:", {
           generatedAt: snap.generatedAt,
           revenue: snap.revenue.currentValue,
@@ -421,6 +432,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     effectiveActivities,
     businessSettings,
     effectiveCycles,
+    filters.accountingMode,
   ]);
 
   useEffect(() => {

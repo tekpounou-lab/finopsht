@@ -31,6 +31,7 @@ export const PerformanceIntelligenceCenter: React.FC = () => {
     error,
     simplifiedMetrics,
     expertMetrics,
+    cashBasisMetrics,
     branches,
     departments,
   } = usePerformanceData(business?.id);
@@ -143,12 +144,21 @@ export const PerformanceIntelligenceCenter: React.FC = () => {
         </div>
       ) : (
         /* Render Selected Mode View */
-        <div id="pic-content-container">
+        <div id="pic-content-container" className="space-y-4">
+          <div className="flex items-center justify-between bg-slate-900/50 border border-slate-800/80 px-4 py-2 rounded-xl text-xs font-mono text-slate-300">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span>
+                Mode Actif : <strong className="text-cyan-300 font-bold">{isExpertMode ? "Mode Expert — Vue Engagement (Économique)" : "Mode Simple — Vue Constaté (Trésorerie / Décaissement)"}</strong>
+              </span>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              {isExpertMode ? "Comptabilité d'engagement (Période de travail & salaires engagés)" : "Comptabilité de caisse (Décaissements effectifs & flux réels)"}
+            </span>
+          </div>
+
           {!isExpertMode ? (
-            <PICSimplifiedView
-              metrics={simplifiedMetrics}
-              onResetFilters={resetFilters}
-            />
+            <PICExpertView metrics={cashBasisMetrics} />
           ) : (
             <PICExpertView metrics={expertMetrics} />
           )}

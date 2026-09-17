@@ -48,13 +48,40 @@ export class PerformanceRepository {
       const payrollSnap = await resilientGetDocs(payrollQuery, `pic_payroll_${businessId}`);
       const payrollRecords = payrollSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      // 4. Fetch Attendance Records
+      // 4. Fetch Attendance Records & Logs (Deduplicated SSOT)
       const attendanceQuery = query(
         collection(db, "attendance_records"),
         where("business_id", "==", businessId)
       );
-      const attendanceSnap = await resilientGetDocs(attendanceQuery, `pic_attendance_${businessId}`);
-      const attendanceRecords = attendanceSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const logsQuery = query(
+        collection(db, "attendance_logs"),
+        where("business_id", "==", businessId)
+      );
+
+      const [attendanceSnap, logsSnap] = await Promise.all([
+        resilientGetDocs(attendanceQuery, `pic_attendance_${businessId}`).catch(() => ({ docs: [] as any[] })),
+        resilientGetDocs(logsQuery, `pic_logs_${businessId}`).catch(() => ({ docs: [] as any[] })),
+      ]);
+
+      const attMap = new Map<string, any>();
+      attendanceSnap.docs.forEach((d) => attMap.set(d.id, { id: d.id, ...d.data() }));
+      logsSnap.docs.forEach((d) => {
+        const existing = attMap.get(d.id);
+        const data = d.data();
+        if (!existing) {
+          attMap.set(d.id, { id: d.id, ...data });
+        } else {
+          attMap.set(d.id, {
+            ...existing,
+            ...data,
+            checkIn: data.checkIn || existing.checkIn,
+            checkOut: data.checkOut || existing.checkOut,
+            realHours: data.realHours ?? existing.realHours,
+            status: data.status || existing.status,
+          });
+        }
+      });
+      const attendanceRecords = Array.from(attMap.values());
 
       // 5. Fetch Branches & Departments
       const branchQuery = query(

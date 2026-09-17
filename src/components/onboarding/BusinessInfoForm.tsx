@@ -85,6 +85,52 @@ export const BusinessInfoForm: React.FC<BusinessInfoFormProps> = ({ onBackToChoi
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+
+    // Handle complete deletion
+    if (!rawVal.trim() || rawVal === "+" || rawVal === "+509" || rawVal === "+509 ") {
+      if (rawVal.length < ownerPhone.length && (rawVal === "+509" || rawVal === "+509 " || rawVal === "+")) {
+        setOwnerPhone("");
+        return;
+      }
+    }
+
+    if (!rawVal.trim()) {
+      setOwnerPhone("");
+      return;
+    }
+
+    // Extract digits only
+    const digits = rawVal.replace(/\D/g, "");
+    if (!digits) {
+      setOwnerPhone("");
+      return;
+    }
+
+    let local = digits;
+    if (local.startsWith("509")) {
+      local = local.slice(3);
+    }
+
+    if (local.length === 0) {
+      if (rawVal.length < ownerPhone.length) {
+        setOwnerPhone("");
+      } else {
+        setOwnerPhone("+509 ");
+      }
+      return;
+    }
+
+    // Limit to 8 digits for +509 format (e.g. 3000-0000)
+    const capped = local.slice(0, 8);
+    if (capped.length <= 4) {
+      setOwnerPhone(`+509 ${capped}`);
+    } else {
+      setOwnerPhone(`+509 ${capped.slice(0, 4)}-${capped.slice(4)}`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -98,6 +144,12 @@ export const BusinessInfoForm: React.FC<BusinessInfoFormProps> = ({ onBackToChoi
     }
     if (!ownerPhone.trim()) {
       setErrorMsg("Veuillez renseigner votre numéro de téléphone personnel.");
+      return;
+    }
+
+    const phoneRegex = /^\+509\s\d{4}-\d{4}$/;
+    if (!phoneRegex.test(ownerPhone.trim())) {
+      setErrorMsg("Le numéro de téléphone doit respecter le format attendu : +509 3000-0000 (8 chiffres après +509).");
       return;
     }
 
@@ -351,11 +403,17 @@ export const BusinessInfoForm: React.FC<BusinessInfoFormProps> = ({ onBackToChoi
                   type="tel"
                   required
                   value={ownerPhone}
-                  onChange={(e) => setOwnerPhone(e.target.value)}
+                  onChange={handlePhoneChange}
                   placeholder="+509 3000-0000"
-                  className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors text-sm"
+                  pattern="^\+509\s[0-9]{4}-[0-9]{4}$"
+                  title="Format attendu : +509 3000-0000"
+                  maxLength={15}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors text-sm font-mono"
                 />
               </div>
+              <span className="text-[11px] text-slate-500 mt-1.5 block">
+                Format attendu : <span className="font-mono text-slate-400">+509 3000-0000</span> (8 chiffres)
+              </span>
             </div>
           </div>
 

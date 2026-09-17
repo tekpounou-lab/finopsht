@@ -41,6 +41,7 @@ const ConnectedForensicLogs = lazyWithRetry(() => import("./ConnectedForensicLog
 const ConnectedPersonnel = lazyWithRetry(() => import("./ConnectedPersonnel"));
 const ConnectedSchedules = lazyWithRetry(() => import("./ConnectedSchedules"));
 const PerformanceIntelligenceCenter = lazyWithRetry(() => import("../pages/PerformanceIntelligenceCenter"));
+const CrmCenter = lazyWithRetry(() => import("./crm/CrmCenter"));
 const ConnectedBusinessIntelligence = lazyWithRetry(() => import("./ConnectedBusinessIntelligence"));
 const SuperAdminPlatform = lazyWithRetry(() => import("../pages/SuperAdminPlatform"));
 const NotificationsCenter = lazyWithRetry(() => import("./NotificationsCenter"));
@@ -352,6 +353,23 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
             {normalizedActiveTab === "performance" && (
               <PerformanceIntelligenceCenter />
+            )}
+
+            {normalizedActiveTab === "crm" && (
+              <CrmCenter
+                businessId={liveBusiness?.id || "BIZ_MAIN"}
+                currentRole={currentRole}
+                currentUser={{
+                  name: resolvedUserName || authUser?.displayName || "Administrateur",
+                  id: authUser?.uid || "usr_1",
+                  email: authUser?.email || ""
+                }}
+                currentBusiness={liveBusiness || null}
+                initialSubTab={initialSubTab as any}
+                onAddTransaction={() => {}}
+                onAddForensicLog={() => {}}
+                onAddEvent={() => {}}
+              />
             )}
 
             {normalizedActiveTab === "cfo" && (

@@ -338,7 +338,7 @@ export default function CommandPalette({
                           </div>
                           <div className="p-2 bg-slate-900/50 rounded border border-slate-800 text-center">
                             <span className="text-[9px] uppercase tracking-wider text-slate-500 block">Indice de Santé</span>
-                            <span className="text-xs font-bold text-cyan-400 mt-0.5 block">{aiReport.metrics?.financial_health_score ?? 85}/100</span>
+                            <span className="text-xs font-bold text-cyan-400 mt-0.5 block">{aiReport.metrics?.financial_health_score != null ? `${aiReport.metrics.financial_health_score}/100` : "N/D"}</span>
                           </div>
                         </div>
 

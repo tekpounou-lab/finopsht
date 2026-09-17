@@ -46,6 +46,7 @@ class EnterpriseApprovalEngine {
 
     const instance: ApprovalInstance = {
       id: instanceId,
+      business_id: params.businessId,
       businessId: params.businessId,
       workflowInstanceId: params.workflowInstanceId,
       entityId: params.entityId,

@@ -128,7 +128,12 @@ export const finopsEventOrchestrator = {
                   retryCount: 0
                 }, { merge: true });
               },
-              { maxRetries: 2, baseDelayMs: 200, jitterStrategy: "FULL" },
+              { 
+                maxRetries: 1, 
+                baseDelayMs: 200, 
+                jitterStrategy: "FULL",
+                shouldRetry: (err: any) => !String(err?.message || err).toLowerCase().includes("permission")
+              },
               `finopsEventOrchestrator:events:${eventId}`
             );
           } catch (storageErr: any) {

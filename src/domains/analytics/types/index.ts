@@ -2,6 +2,9 @@ import { Role } from "../../../types";
 import { WorkforceProfitabilitySnapshot } from "./workforceProfitability";
 
 export * from "./workforceProfitability";
+export * from "./phase6c";
+export * from "./phase6d";
+export * from "./phase7";
 
 export type AnalyticsPeriod =
   | "TODAY"
@@ -113,6 +116,8 @@ export interface AnalyticsSnapshot {
   revenue: KPIComparison;
   quickbooksSalesRevenue: KPIComparison;
   expenses: KPIComparison;
+  operationalExpenses: KPIComparison;
+  totalExpenses?: KPIComparison;
   profit: KPIComparison;
   cashOnHand: KPIComparison;
   burnRate: KPIComparison;
@@ -138,6 +143,7 @@ export interface AnalyticsSnapshot {
   businessHealthScore: number;
   profitMargin: number;
   payrollCostRatio: number;
+  hrROI?: number;
   payrollAggregates?: PayrollAggregates;
   isSocialTaxEnabled?: boolean;
   workforceProfitability?: WorkforceProfitabilitySnapshot;

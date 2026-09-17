@@ -67,9 +67,14 @@ export function buildLedgerTransactions(
         
         // Reinforce alignment: HR Personnel is the SSOT for employee department affiliation
         if (emp.departmentId || (emp as any).department_id) {
-          resolvedDepId = emp.departmentId || (emp as any).department_id;
-          const edep = departments.find(d => d.id === resolvedDepId);
-          if (edep) resolvedDepName = edep.name;
+          const empDeptRaw = emp.departmentId || (emp as any).department_id;
+          const edep = ReferenceResolver.resolveDepartment(departments, empDeptRaw);
+          if (edep) {
+            resolvedDepId = edep.id;
+            resolvedDepName = edep.name;
+          } else {
+            resolvedDepId = empDeptRaw;
+          }
         }
         // If branch is the fallback and employee has a specific branch, use it
         if (resolvedBranchId === currentBusiness.id + "_branch" && (emp.branchId || (emp as any).branch_id)) {

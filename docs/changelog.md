@@ -1,5 +1,53 @@
 # FINOPS ERP — Architectural Changelog
 
+## [4.1.0] - 2026-09-16
+### Enacted & Validated (Forensic BI Date-Integrity Remediation & SSOT Alignment)
+- **Forensic Root Cause Remediation**:
+  - **RC-01 & RC-04 (Inclusive Fall-Through Elimination)**: Replaced permissive `if (!date) return true;` pattern with canonical `matchesDateFilter` in `src/utils/dateNormalization.ts`. Records lacking valid dates are strictly excluded whenever a date range filter is active.
+  - **RC-02 (Canonical Date Resolvers)**: Standardized multi-field date extraction across all domains:
+    - `resolveAnalyticsTxDate`: Enforces cash-basis (settlement/payment date) vs accrual-basis (accounting date) rules.
+    - `resolveAnalyticsAttendanceDate`: Enforces pointage/work date vs document metadata dates.
+    - `resolveAnalyticsPayrollDate`: Enforces payment disbursement date vs accrual period end.
+  - **RC-03 & RC-05 (SSOT Alignment in `Vue d'ensemble`)**: Connected `useBIDataAggregation` directly to `AnalyticsEngine.generateSnapshot` (`computedSnapshot`/`effectiveSnapshot`) for filtered views, eliminating dual calculation drift.
+  - **RC-06 (Active Headcount Leakage Fix)**: Prevented total enterprise employee roster fallback from leaking into filtered periods with no attendance/payroll activity.
+  - **Trend Bucket Asymmetry & Cash-on-Hand Protection**: Corrected future transaction date leakage in `AnalyticsEngine` cash-on-hand calculation and unified custom period bucket matching.
+- **Verification & Test Suite**:
+  - Added dedicated forensic test suite `src/tests/unit/ForensicDateFilteringIntegrity.test.ts` (9 tests passing).
+
+## [4.0.0] - 2026-09-14
+### Enacted & Certified (FINOPS v4.0 Certified Baseline & Architecture Freeze)
+- **Official Certification Verdict**: `A — ACCOUNTING SAFE / SSOT CERTIFIED — WITHIN AUDITED SCOPE`.
+- **Audit Taxonomy Introduced**:
+  - Distinguishes **CERTIFIED** (Phase 5 empirical audit proof, 18/18 P0 gates), **PROTECTED** (architectural rules such as append-only reversals and maker-checker), **VERIFIED** (regression-tested during freeze), **DEFERRED** (Phase 6 roadmap), and **OPEN** (external scope).
+  - Clarified Haitian statutory payroll rules as technically verified under test while maintaining independence from external statutory regulatory audits.
+- **Change-Control Governance Hierarchy**:
+  - Established 5 change-control governance levels (Level 0 Frozen Core, Level 1 Restricted Engine & Security, Level 2 Canonical Domain Services, Level 3 Presentation & BI, Level 4 Platform Extensions & Adapters), decoupling change control from component type.
+  - Enacted mandatory formal re-certification gate for `AnalyticsEngine` and derived financial KPI calculations.
+- **Phase 6 Governance Model Codified**:
+  - Formally closed Phase 5. Phase 6 operates strictly under the "Certified Core Extension" model: develop *around* the Certified Core without modifying or redefining core accounting mechanics.
+- **Formal Certified Baseline Specification**:
+  - Published comprehensive baseline specification in `docs/FINOPS_CERTIFIED_BASELINE.md`.
+  - Added ADR-009 to `docs/decision-log.md`.
+- **Audit Verification Results**:
+  - `tsc --noEmit`: 0 errors across entire workspace.
+  - Vitest regression suite: 59/59 test suites passed, 342/342 tests passing.
+  - Full production build: Clean client and server bundles (`dist/`, `dist/server.cjs`).
+  - Runtime health: HTTP 200 on `/` and `/api/health`.
+
+## [2.10.0] - 2026-09-12
+
+### Added & Validated (Cash Basis Architecture — Phase 1 Foundation & Phase 2 Adapters)
+- **Phase 1: Canonical Contract & Treasury Classification**:
+  - Implemented `NormalizedCashMovement` canonical contract with strict Zod validation schema (`src/domains/cash/validation/normalizedCashMovement.schema.ts`).
+  - Implemented hybrid `TreasuryClassification` engine (`src/domains/cash/classification/TreasuryClassification.ts`) matching SSOT chart of accounts codes (`1000_CASH`, `1010_BANK`), Class 10 prefixes, and explicit payment methods.
+  - Implemented deterministic ID generation (`generateCashMovementId`) incorporating direction and optional payment events.
+  - Added 25 unit tests covering contract invariants and classification logic.
+- **Phase 2: Operational Source Adapters (`src/domains/cash/adapters/`)**:
+  - `PayrollCashAdapter`: Normalizes actual disbursed payroll records (`OUTFLOW`, `PAYROLL`) using true settlement dates (`paidAt`, `disbursedAt`). Strictly rejects accrual end dates.
+  - `InvoiceCashAdapter`: Normalizes actual cash collections from customer invoices (`INFLOW`, `INVOICE_COLLECTION`), supporting multiple partial payment events and linking to transaction IDs. Strictly ignores unpaid accrual invoices.
+  - `LedgerCashAdapter`: Normalizes General Ledger entries touching treasury accounts, classifies internal transfers (`TRANSFER`), supports both consolidated transfer movements and split legs (`OUTFLOW`/`INFLOW`), and extracts deduplication metadata.
+  - Added 21 unit tests in `src/tests/unit/cash/CashAdapters.test.ts` (46 cash unit tests total, 100% passing).
+
 ## [2.9.0] - 2026-09-10
 ### Fixed & Enhanced (Personnel Profile Actions & Official Payslip Generation)
 - **Personnel Profile Pane Action Buttons Integration**:

@@ -66,7 +66,10 @@ export const EmployeeAttendanceSnapshotService = {
 
     const matchesEmp = (obj: any) => {
       const oid = obj.employeeId || obj.employee_id || obj.userId || obj.user_id;
-      return oid === employee.id || (employee as any).employee_id === oid;
+      if (oid === employee.id || (employee as any).employee_id === oid) return true;
+      const email = obj.employee_email || obj.email || obj.courriel || obj.email_employe;
+      if (email && employee.email && String(email).toLowerCase().trim() === employee.email.toLowerCase().trim()) return true;
+      return false;
     };
 
     // 2. Filter biometric attendance records for employee & date window

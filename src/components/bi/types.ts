@@ -71,4 +71,34 @@ export interface PayrollAggregates {
   cnsContributions: number;
   employerChargesSocials: number;
   totalEmploymentCost: number;
+  grossPayroll?: number;
+  netPayroll?: number;
+  employerTaxes?: number;
+  employeeTaxes?: number;
+  overtimeCost?: number;
+  latePenalties?: number;
+  absencePenalties?: number;
+  payrollRatio?: number;
+  activeEmployeesCount?: number;
+}
+
+export type BIDataState = "AVAILABLE" | "ZERO" | "NO_DATA" | "NOT_ELIGIBLE" | "NOT_CALCULATED";
+
+export interface BIPayrollTabProps {
+  payrollAggregates?: PayrollAggregates;
+  isSocialTaxEnabled: boolean;
+  filteredPayrolls?: PayrollRecord[];
+  filteredEmployees?: Employee[];
+  branches?: Branch[];
+  departments?: Department[];
+  totalRevenue?: number;
+  totalExpenses?: number;
+  selectedCurrency?: string;
+  formatCurrencyValue?: (val: number) => string;
+  formatValueDirectly?: (val: number) => string;
+  ledgerTransactions?: LedgerTransaction[];
+  isSimplifiedMode?: boolean;
+  phase6cDataset?: any;
+  phase6dDataset?: any;
+  phase7Dataset?: any;
 }

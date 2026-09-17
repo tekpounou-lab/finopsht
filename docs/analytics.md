@@ -6,6 +6,34 @@ The Analytics Engine in `src/domains/analytics/` computes real-time performance 
 
 ---
 
+## 0. FINOPS SSOT CONSTITUTIONAL PRINCIPLE
+
+> **FINOPS SSOT PRINCIPLE**
+>
+> The Dashboard, Performance Intelligence, CRM, Reports, AI CFO, and Predictive Intelligence modules **MUST NEVER** implement independent financial or HR KPI calculations.
+>
+> All authoritative metrics **MUST** originate from the SSOT `AnalyticsEngine` (`src/domains/analytics/services/AnalyticsEngine.ts`) and its canonical accounting/data model.
+>
+> UI modules are **consumers of SSOT results**, not owners of business calculation logic.
+>
+> If two screens display the same KPI, they **MUST** consume the same KPI definition, same source-of-truth pipeline, same accounting context, same date normalization rules, and same entity-resolution rules.
+>
+> A KPI discrepancy between modules is considered a **critical architectural defect**.
+
+### SSOT INVARIANT
+
+For identical:
+- **business**
+- **period**
+- **filters**
+- **accounting basis** (Cash vs Accrual)
+- **currency**
+- **data snapshot**
+
+The same KPI **MUST** return the exact same value, regardless of which FINOPS module or UI screen requested it.
+
+---
+
 ## 1. Metric Registry & Single Source of Truth (SSOT)
 
 - **Payroll Cost (Masse Salariale)**: Sum of all `PayrollRecord` gross salaries executed within the selected period range (indexed by `PayrollCycle` dates: `startDate`, `endDate`, `effectiveAccountingDate` or cycle ID).

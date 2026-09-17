@@ -22,7 +22,7 @@ export class CommissionEngine {
     operationalDepartmentId: string,
     activePlans: CommissionPlan[] = [],
     employeeCommissionPlanId?: string,
-    defaultCommissionRate: number = 0.05
+    defaultCommissionRate: number = 0
   ): CommissionCalculationResult {
     if (transactionAmount <= 0) {
       return { commissionAmount: 0, effectiveRate: 0 };
@@ -115,44 +115,71 @@ export class CommissionEngine {
 
   /**
    * Resolves commission rate with strict priority:
-   * Contract commissionRate > Employee commissionRate / commission_rate > Model Defaults
+   * 1. Temporal/historical rates in contract for the given transaction date
+   * 2. Contract commissionRate
+   * 3. Employee commissionRate / commission_rate
+   * 4. Employee commission plan rate (if plan passed or present)
+   * 5. Canonical PayrollPolicy defaultCommissionRate
+   * 
+   * Invariant:
+   * - FIXED model strictly resolves to 0.
+   * - Explicit 0 is preserved as 0 (never replaced by a fallback).
+   * - Missing configuration returns 0 or policy default, never an undocumented 5%.
    */
-  static resolveCommissionRate(employee: any, contract?: any, saleDate?: string): number {
-    // 1. Check for temporal/historical rates in contract
+  static resolveCommissionRate(employee: any, contract?: any, saleDate?: string, policyDefaultRate?: number): number {
+    const rawModel = employee?.paymentModel || employee?.payRegime || employee?.pay_profile || (contract as any)?.payRegime;
+    if (rawModel && String(rawModel).toUpperCase() === "FIXED") {
+      return 0;
+    }
+
+    // 1. Check for temporal/historical rates in contract for specific transaction date
     if (contract?.historical_commission_rates && Array.isArray(contract.historical_commission_rates) && saleDate) {
       const historicalMatch = contract.historical_commission_rates.find((hr: any) => {
         const from = hr.effective_from || '1970-01-01';
         const to = hr.effective_to || '2099-12-31';
         return saleDate >= from && saleDate <= to;
       });
-      if (historicalMatch && historicalMatch.rate !== undefined) {
+      if (historicalMatch && historicalMatch.rate !== undefined && historicalMatch.rate !== null) {
         const numRate = Number(historicalMatch.rate);
-        return numRate > 1 ? numRate / 100 : numRate;
+        return !isNaN(numRate) ? (numRate > 1 ? numRate / 100 : numRate) : 0;
       }
     }
 
+    // 2. Check employee direct commissionRate (Employee Profile SSOT)
     let rawRate: any =
       employee?.commission_rate ??
       (employee as any)?.commission_rate ??
       employee?.commissionRate ??
-      (employee as any)?.commissionRate ??
-      contract?.commissionRate ??
-      (contract as any)?.commission_rate;
+      (employee as any)?.commissionRate;
 
     if (rawRate !== undefined && rawRate !== null) {
       if (typeof rawRate === "string") {
         rawRate = rawRate.replace("%", "").trim();
       }
       const numRate = Number(rawRate);
-      if (!isNaN(numRate) && numRate > 0) {
+      if (!isNaN(numRate) && numRate >= 0) {
         return numRate > 1 ? numRate / 100 : numRate;
       }
     }
 
-    // Default fallback rate (5%) if employee is on COMMISSION or HYBRID pay profile but no rate set
-    const model = (employee?.paymentModel || employee?.payRegime || employee?.pay_profile || "").toString().toUpperCase();
-    if (model === "COMMISSION" || model === "HYBRID") {
-      return 0.05;
+    // 3. Check contract direct commissionRate
+    let contractRate: any = contract?.commissionRate ?? (contract as any)?.commission_rate;
+    if (contractRate !== undefined && contractRate !== null) {
+      if (typeof contractRate === "string") {
+        contractRate = contractRate.replace("%", "").trim();
+      }
+      const numRate = Number(contractRate);
+      if (!isNaN(numRate) && numRate >= 0) {
+        return numRate > 1 ? numRate / 100 : numRate;
+      }
+    }
+
+    // 4. Check explicit policy default commission rate if provided
+    if (policyDefaultRate !== undefined && policyDefaultRate !== null) {
+      const numDefault = Number(policyDefaultRate);
+      if (!isNaN(numDefault) && numDefault >= 0) {
+        return numDefault > 1 ? numDefault / 100 : numDefault;
+      }
     }
 
     return 0;

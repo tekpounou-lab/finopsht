@@ -36,6 +36,14 @@ export interface SnapshotBuilderInput {
   advances?: any[];
   overtimeRequests?: any[];
   absenceEvents?: any[];
+  policy?: {
+    latePenaltyCents?: number;
+    absencePenaltyCents?: number;
+    standardQuinzaineHours?: number;
+    standardHoursPerCycle?: number;
+    defaultCommissionRate?: number;
+    workingDaysBasis?: number;
+  };
   manualAdjustmentsOverride?: {
     bonuses?: number;
     penalties?: number;
@@ -174,13 +182,22 @@ export class PayrollInputSnapshotBuilder {
       workedHours = workedDays * 8;
     }
 
-    const expectedHours = (cycle as any).expected_hours || 96; // Standard 2-week quindena expected hours
+    const policy = input.policy;
+
+    const latePenaltyPerOccurrenceHtg = policy?.latePenaltyCents !== undefined
+      ? policy.latePenaltyCents / 100
+      : 0;
+
+    const workingDaysBasis = policy?.workingDaysBasis || 22;
+    const standardHours = policy?.standardHoursPerCycle || policy?.standardQuinzaineHours || 96;
+
+    const expectedHours = (cycle as any).expected_hours || standardHours;
     const extraHours = workedHours > expectedHours ? Number((workedHours - expectedHours).toFixed(2)) : 0;
     const missingHours = workedHours < expectedHours ? Number((expectedHours - workedHours).toFixed(2)) : 0;
 
     const overtimeContribution = empAttendance.reduce((sum, a) => sum + ((a as any).overtimePay || 0), 0);
-    const latePenaltiesHtg = empAttendance.filter((a) => a.status === "LATE").length * 50;
-    const absencePenaltiesHtg = empAttendance.filter((a) => a.status === "ABSENT").length * Math.round(baseSalaryHtg / 22);
+    const latePenaltiesHtg = empAttendance.filter((a) => a.status === "LATE").length * latePenaltyPerOccurrenceHtg;
+    const absencePenaltiesHtg = empAttendance.filter((a) => a.status === "ABSENT").length * Math.round(baseSalaryHtg / workingDaysBasis);
     const totalPenaltyAmount = latePenaltiesHtg + absencePenaltiesHtg;
 
     const attendanceSection: PayrollAttendanceSnapshot = {

@@ -85,10 +85,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      id: "intelligence_group",
-      label: "Performance & CRM",
+      id: "commercial_group",
+      label: "Ventes & Relation Client",
       items: [
-        { id: "performance", label: "Performance & CRM", icon: TrendingUp, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR"] },
+        { id: "crm", label: "CRM & Facturation", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
+      ],
+    },
+    {
+      id: "intelligence_group",
+      label: "Performance & Décisionnel BI",
+      items: [
+        { id: "performance", label: "Performance Intelligence (PIC)", icon: TrendingUp, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR"] },
         { id: "cfo", label: "Assistant IA CFO", icon: Sparkles, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
       ],
     },

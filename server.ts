@@ -17,6 +17,7 @@ import { getAdminApp } from "./src/lib/firebaseAdmin";
 import { ServerProvisioningService } from "./src/services/business/ServerProvisioningService";
 import { BusinessActivationService } from "./src/services/business/BusinessActivationService";
 import { InvitationService } from "./src/services/business/InvitationService";
+import { approvalRouter } from "./src/modules/workflow/approval/serverApprovalRoutes";
 import firebaseConfig from "./firebase-applet-config.json";
 
 import crypto from "crypto";
@@ -234,7 +235,7 @@ function repairJsonString(jsonStr: string): string {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = 3000;
 
   // CORS configuration to allow requests from localhost, cloud run, and production domains
   app.use(cors({
@@ -466,6 +467,9 @@ async function startServer() {
       });
     }
   });
+
+  // API endpoint: Phase 6A Approval Gateway
+  app.use("/api/approvals", approvalRouter);
 
   // API endpoint: Enterprise Provisioning (Bypasses rules, updates claims)
   app.post("/api/provisioning/create-business", async (req, res) => {
@@ -1104,7 +1108,8 @@ Schema:
     const vite = await createViteServer({
       server: { 
         middlewareMode: true,
-        hmr: false
+        hmr: false,
+        ws: false
       },
       appType: "spa",
     });
