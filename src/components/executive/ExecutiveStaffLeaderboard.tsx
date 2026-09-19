@@ -1,26 +1,22 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Award } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveStaffLeaderboardProps {
   snapshot: AnalyticsSnapshot | null;
   employees?: any[];
 }
 
-export const ExecutiveStaffLeaderboard: React.FC<ExecutiveStaffLeaderboardProps> = ({
+const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProps> = ({
   snapshot,
   employees = [],
 }) => {
-  useEffect(() => {
-    console.log("[EXECUTIVE_STAFF_LEADERBOARD] Active Snapshot SSOT loaded:", {
-      employeeScorecardsCount: snapshot?.employeeScorecards?.length,
-      employeesCount: employees.length,
-    });
-  }, [snapshot, employees]);
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_STAFF_LEADERBOARD", snapshot);
 
   const leaderboardData = React.useMemo(() => {
-    if (snapshot?.employeeScorecards && snapshot.employeeScorecards.length > 0) {
-      return snapshot.employeeScorecards.slice(0, 6).map((sc) => ({
+    if (stabilizedSnapshot?.employeeScorecards && stabilizedSnapshot.employeeScorecards.length > 0) {
+      return stabilizedSnapshot.employeeScorecards.slice(0, 6).map((sc) => ({
         employeeId: sc.employeeId,
         employeeName: sc.employeeName,
         netPaid: sc.netPaid || sc.commissions || 0,
@@ -40,7 +36,7 @@ export const ExecutiveStaffLeaderboard: React.FC<ExecutiveStaffLeaderboardProps>
       performanceScore: emp.performanceScore || 92,
       branchName: emp.branchName || "Bureau Central",
     }));
-  }, [snapshot, employees]);
+  }, [stabilizedSnapshot, employees]);
 
   return (
     <div className="bg-slate-900/70 border border-slate-800/80 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
@@ -114,3 +110,10 @@ export const ExecutiveStaffLeaderboard: React.FC<ExecutiveStaffLeaderboardProps>
     </div>
   );
 };
+
+export const ExecutiveStaffLeaderboard = React.memo(
+  ExecutiveStaffLeaderboardComponent,
+  (prev, next) =>
+    prev.employees === next.employees &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);

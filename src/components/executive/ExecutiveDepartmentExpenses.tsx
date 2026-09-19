@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { Briefcase, Layers, Wallet, TrendingDown } from "lucide-react";
 import { AnalyticsSnapshot, DepartmentPerformance } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveDepartmentExpensesProps {
   snapshot: AnalyticsSnapshot | null;
@@ -8,28 +9,20 @@ interface ExecutiveDepartmentExpensesProps {
 
 type ExpenseViewMode = "all" | "operational" | "payroll";
 
-export const ExecutiveDepartmentExpenses: React.FC<ExecutiveDepartmentExpensesProps> = ({
+const ExecutiveDepartmentExpensesComponent: React.FC<ExecutiveDepartmentExpensesProps> = ({
   snapshot,
 }) => {
   const [viewMode, setViewMode] = useState<ExpenseViewMode>("all");
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_DEPARTMENT_EXPENSES", snapshot);
 
-  useEffect(() => {
-    console.debug("[EXECUTIVE_DEPARTMENT_EXPENSES] Active Snapshot SSOT loaded:", {
-      totalExpenses: snapshot?.expenses?.currentValue,
-      operationalExpenses: snapshot?.operationalExpenses?.currentValue,
-      payrollCost: snapshot?.payrollCost?.currentValue,
-      departmentPerformanceCount: snapshot?.departmentPerformance?.length,
-    });
-  }, [snapshot]);
-
-  const rawDeptList = snapshot?.departmentPerformance || [];
+  const rawDeptList = stabilizedSnapshot?.departmentPerformance || [];
 
   // Calculate totals according to view mode based on SSOT data
   const modeTotals = useMemo(() => {
-    const totalAll = snapshot?.totalExpenses?.currentValue ?? snapshot?.expenses?.currentValue ?? 0;
-    const totalOperational = snapshot?.operationalExpenses?.currentValue ?? 
+    const totalAll = stabilizedSnapshot?.totalExpenses?.currentValue ?? stabilizedSnapshot?.expenses?.currentValue ?? 0;
+    const totalOperational = stabilizedSnapshot?.operationalExpenses?.currentValue ?? 
       rawDeptList.reduce((sum, d) => sum + (d.nonPayrollExpenses || 0), 0);
-    const totalPayroll = snapshot?.payrollCost?.currentValue ?? 
+    const totalPayroll = stabilizedSnapshot?.payrollCost?.currentValue ?? 
       rawDeptList.reduce((sum, d) => sum + (d.payrollCost || 0), 0);
 
     return {
@@ -37,7 +30,7 @@ export const ExecutiveDepartmentExpenses: React.FC<ExecutiveDepartmentExpensesPr
       operational: totalOperational,
       payroll: totalPayroll,
     };
-  }, [snapshot, rawDeptList]);
+  }, [stabilizedSnapshot, rawDeptList]);
 
   const activeTotal = modeTotals[viewMode];
 
@@ -196,3 +189,8 @@ export const ExecutiveDepartmentExpenses: React.FC<ExecutiveDepartmentExpensesPr
     </div>
   );
 };
+
+export const ExecutiveDepartmentExpenses = React.memo(
+  ExecutiveDepartmentExpensesComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);

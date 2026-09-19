@@ -176,8 +176,7 @@ const inFlightDocPromises = new Map<string, Promise<DocumentSnapshot>>();
 const inFlightQueryPromises = new Map<string, Promise<QuerySnapshot>>();
 
 const isDebugEnabled = typeof window !== "undefined" && 
-  Boolean(import.meta.env?.DEV) && 
-  import.meta.env?.VITE_DEBUG_FIRESTORE === "true";
+  (typeof process !== "undefined" ? process.env?.VITE_DEBUG_FIRESTORE === "true" : import.meta.env?.VITE_DEBUG_FIRESTORE === "true");
 
 export interface ResilientFetchOptions {
   forceRefresh?: boolean;

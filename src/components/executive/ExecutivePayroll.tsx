@@ -1,30 +1,25 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Wallet, AlertTriangle } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutivePayrollProps {
   snapshot: AnalyticsSnapshot | null;
   isSocialTaxEnabled?: boolean;
 }
 
-export const ExecutivePayroll: React.FC<ExecutivePayrollProps> = ({
+const ExecutivePayrollComponent: React.FC<ExecutivePayrollProps> = ({
   snapshot,
   isSocialTaxEnabled = false,
 }) => {
-  useEffect(() => {
-    console.log("[EXECUTIVE_PAYROLL] Active Snapshot SSOT loaded:", {
-      payrollCost: snapshot?.payrollCost?.currentValue,
-      commissionsPaid: snapshot?.commissionsPaid?.currentValue,
-      revenue: snapshot?.revenue?.currentValue,
-    });
-  }, [snapshot]);
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_PAYROLL", snapshot);
 
-  const payrollVal = snapshot?.payrollCost?.currentValue || 0;
-  const revVal = snapshot?.revenue?.currentValue || 0;
+  const payrollVal = stabilizedSnapshot?.payrollCost?.currentValue || 0;
+  const revVal = stabilizedSnapshot?.revenue?.currentValue || 0;
   const payrollRatio = revVal > 0 ? Math.min(100, Math.round((payrollVal / revVal) * 100)) : 0;
-  const commissions = snapshot?.commissionsPaid?.currentValue || 0;
+  const commissions = stabilizedSnapshot?.commissionsPaid?.currentValue || 0;
   const basePayroll = Math.max(0, payrollVal - commissions);
-  const advances = snapshot?.advanceExposure?.currentValue || 0;
+  const advances = stabilizedSnapshot?.advanceExposure?.currentValue || 0;
 
   return (
     <div className="bg-slate-900/70 border border-slate-800/80 hover:border-amber-500/40 transition-colors p-5 rounded-2xl flex flex-col justify-between shadow-lg relative overflow-hidden">
@@ -65,3 +60,11 @@ export const ExecutivePayroll: React.FC<ExecutivePayrollProps> = ({
     </div>
   );
 };
+
+export const ExecutivePayroll = React.memo(
+  ExecutivePayrollComponent,
+  (prev, next) =>
+    prev.isSocialTaxEnabled === next.isSocialTaxEnabled &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);
+

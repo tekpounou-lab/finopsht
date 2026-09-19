@@ -28,10 +28,10 @@ class EnterpriseLogger {
   private initLogLevel() {
     let envLevel: string | undefined;
 
-    if (typeof import.meta !== "undefined" && (import.meta as any).env) {
-      envLevel = (import.meta as any).env.VITE_LOG_LEVEL;
-    } else if (typeof process !== "undefined" && process.env) {
+    if (typeof process !== "undefined" && process.env) {
       envLevel = process.env.LOG_LEVEL || process.env.VITE_LOG_LEVEL;
+    } else {
+      envLevel = import.meta.env?.VITE_LOG_LEVEL as string | undefined;
     }
 
     if (envLevel) {
@@ -40,7 +40,7 @@ class EnterpriseLogger {
       // Default to INFO in dev, WARN in prod
       const isProd = 
         (typeof process !== "undefined" && process.env?.NODE_ENV === "production") ||
-        (typeof import.meta !== "undefined" && (import.meta as any).env?.PROD);
+        Boolean(import.meta.env?.PROD);
       this.currentLevel = isProd ? LogLevel.WARN : LogLevel.INFO;
     }
   }

@@ -1,24 +1,20 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Building } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveBranchRevenueProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveBranchRevenue: React.FC<ExecutiveBranchRevenueProps> = ({ snapshot }) => {
-  useEffect(() => {
-    console.log("[EXECUTIVE_BRANCH_REVENUE] Active Snapshot SSOT loaded:", {
-      totalRevenue: snapshot?.revenue?.currentValue,
-      branchPerformanceCount: snapshot?.branchPerformance?.length,
-    });
-  }, [snapshot]);
+const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = ({ snapshot }) => {
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_BRANCH_REVENUE", snapshot);
 
-  const totalRev = snapshot?.revenue?.currentValue || 0;
+  const totalRev = stabilizedSnapshot?.revenue?.currentValue || 0;
 
   const branchData = React.useMemo(() => {
-    if (snapshot?.branchPerformance && snapshot.branchPerformance.length > 0) {
-      return snapshot.branchPerformance.map((bp) => ({
+    if (stabilizedSnapshot?.branchPerformance && stabilizedSnapshot.branchPerformance.length > 0) {
+      return stabilizedSnapshot.branchPerformance.map((bp) => ({
         name: bp.branchName || "Bureau Central",
         revenue: bp.revenue || totalRev,
         percentage: totalRev > 0 ? Math.round(((bp.revenue || totalRev) / totalRev) * 100) : 100,
@@ -31,7 +27,7 @@ export const ExecutiveBranchRevenue: React.FC<ExecutiveBranchRevenueProps> = ({ 
         percentage: 100,
       },
     ];
-  }, [snapshot, totalRev]);
+  }, [stabilizedSnapshot, totalRev]);
 
   return (
     <div className="bg-slate-900/70 border border-slate-800/80 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
@@ -76,3 +72,9 @@ export const ExecutiveBranchRevenue: React.FC<ExecutiveBranchRevenueProps> = ({ 
     </div>
   );
 };
+
+export const ExecutiveBranchRevenue = React.memo(
+  ExecutiveBranchRevenueComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);
+

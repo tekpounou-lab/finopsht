@@ -1,29 +1,23 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { UserCheck, TrendingUp } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveAttendanceProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveAttendance: React.FC<ExecutiveAttendanceProps> = ({ snapshot }) => {
-  useEffect(() => {
-    console.log("[EXECUTIVE_ATTENDANCE] Active Snapshot SSOT loaded:", {
-      attendanceRate: snapshot?.attendanceRate?.currentValue,
-      activeStaff: snapshot?.activeStaff?.currentValue,
-      absenceRate: snapshot?.absenceRate?.currentValue,
-      latenessRate: snapshot?.latenessRate?.currentValue,
-    });
-  }, [snapshot]);
+const ExecutiveAttendanceComponent: React.FC<ExecutiveAttendanceProps> = ({ snapshot }) => {
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_ATTENDANCE", snapshot);
 
   const attRate = Math.min(
     100,
-    Math.max(0, Math.round(snapshot?.attendanceRate?.currentValue ?? 71))
+    Math.max(0, Math.round(stabilizedSnapshot?.attendanceRate?.currentValue ?? 71))
   );
-  const activeStaffCount = snapshot?.activeStaff?.currentValue ?? 16;
+  const activeStaffCount = stabilizedSnapshot?.activeStaff?.currentValue ?? 16;
   const checkedInCount = Math.round((activeStaffCount * attRate) / 100);
-  const absenceRate = snapshot?.absenceRate?.currentValue ?? Math.max(0, 100 - attRate);
-  const latenessRate = snapshot?.latenessRate?.currentValue ?? 0;
+  const absenceRate = stabilizedSnapshot?.absenceRate?.currentValue ?? Math.max(0, 100 - attRate);
+  const latenessRate = stabilizedSnapshot?.latenessRate?.currentValue ?? 0;
 
   const borderTone =
     attRate >= 90
@@ -82,3 +76,9 @@ export const ExecutiveAttendance: React.FC<ExecutiveAttendanceProps> = ({ snapsh
     </div>
   );
 };
+
+export const ExecutiveAttendance = React.memo(
+  ExecutiveAttendanceComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);
+

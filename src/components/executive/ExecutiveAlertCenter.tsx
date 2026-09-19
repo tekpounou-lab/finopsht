@@ -1,27 +1,21 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
 import { ExecutiveAlertEngine, ExecutiveAlert } from "../../domains/analytics/services/ExecutiveAlertEngine";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveAlertCenterProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveAlertCenter: React.FC<ExecutiveAlertCenterProps> = ({ snapshot }) => {
+const ExecutiveAlertCenterComponent: React.FC<ExecutiveAlertCenterProps> = ({ snapshot }) => {
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<Record<string, boolean>>({});
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_ALERT_CENTER", snapshot);
 
   const alerts: ExecutiveAlert[] = React.useMemo(() => {
-    if (!snapshot) return [];
-    return ExecutiveAlertEngine.generateAlerts(snapshot);
-  }, [snapshot]);
-
-  useEffect(() => {
-    console.log("[EXECUTIVE_ALERT_CENTER] Active Snapshot SSOT loaded:", {
-      totalAlerts: alerts.length,
-      criticalCount: alerts.filter((a) => a.severity === "CRITICAL").length,
-      revenueVal: snapshot?.revenue?.currentValue,
-    });
-  }, [snapshot, alerts]);
+    if (!stabilizedSnapshot) return [];
+    return ExecutiveAlertEngine.generateAlerts(stabilizedSnapshot);
+  }, [stabilizedSnapshot]);
 
   const activeAlerts = alerts.filter(
     (a) => a.severity !== "INFO" && !acknowledgedAlerts[a.description]
@@ -96,3 +90,8 @@ export const ExecutiveAlertCenter: React.FC<ExecutiveAlertCenterProps> = ({ snap
     </div>
   );
 };
+
+export const ExecutiveAlertCenter = React.memo(
+  ExecutiveAlertCenterComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);

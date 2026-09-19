@@ -1,27 +1,21 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Wallet, TrendingUp } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveTreasuryProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveTreasury: React.FC<ExecutiveTreasuryProps> = ({ snapshot }) => {
-  useEffect(() => {
-    console.log("[EXECUTIVE_TREASURY] Active Snapshot SSOT loaded:", {
-      cashOnHand: snapshot?.cashOnHand?.currentValue,
-      burnRate: snapshot?.burnRate?.currentValue,
-      revenue: snapshot?.revenue?.currentValue,
-      expenses: snapshot?.expenses?.currentValue,
-    });
-  }, [snapshot]);
+const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot }) => {
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_TREASURY", snapshot);
 
-  const cashVal = snapshot?.cashOnHand?.currentValue || 0;
-  const dailyBurn = snapshot?.burnRate?.currentValue || 0;
+  const cashVal = stabilizedSnapshot?.cashOnHand?.currentValue || 0;
+  const dailyBurn = stabilizedSnapshot?.burnRate?.currentValue || 0;
   const monthlyBurn = Math.round(dailyBurn * 30);
   const runwayDays = dailyBurn > 0 ? Math.round(cashVal / dailyBurn) : cashVal > 0 ? 999 : 0;
-  const revVal = snapshot?.revenue?.currentValue || 0;
-  const expVal = snapshot?.expenses?.currentValue || 0;
+  const revVal = stabilizedSnapshot?.revenue?.currentValue || 0;
+  const expVal = stabilizedSnapshot?.expenses?.currentValue || 0;
   const netPeriodCashFlow = revVal - expVal;
 
   return (
@@ -84,3 +78,8 @@ export const ExecutiveTreasury: React.FC<ExecutiveTreasuryProps> = ({ snapshot }
     </div>
   );
 };
+
+export const ExecutiveTreasury = React.memo(
+  ExecutiveTreasuryComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);

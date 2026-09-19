@@ -1,28 +1,21 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { CheckCircle, Lightbulb } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
 import { ExecutiveRecommendationEngine, ActionableRecommendation } from "../../domains/analytics/services/ExecutiveRecommendationEngine";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveActionsChecklistProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveActionsChecklist: React.FC<ExecutiveActionsChecklistProps> = ({ snapshot }) => {
+const ExecutiveActionsChecklistComponent: React.FC<ExecutiveActionsChecklistProps> = ({ snapshot }) => {
   const [completedActions, setCompletedActions] = useState<Record<string, boolean>>({});
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_ACTIONS_CHECKLIST", snapshot);
 
   const recommendations: ActionableRecommendation[] = React.useMemo(() => {
-    if (!snapshot) return [];
-    return ExecutiveRecommendationEngine.generateRecommendations(snapshot);
-  }, [snapshot]);
-
-  useEffect(() => {
-    console.log("[EXECUTIVE_ACTIONS_CHECKLIST] Active Snapshot SSOT loaded:", {
-      recommendationsCount: recommendations.length,
-      revenue: snapshot?.revenue?.currentValue,
-      expenses: snapshot?.expenses?.currentValue,
-      activeStaff: snapshot?.activeStaff?.currentValue,
-    });
-  }, [snapshot, recommendations]);
+    if (!stabilizedSnapshot) return [];
+    return ExecutiveRecommendationEngine.generateRecommendations(stabilizedSnapshot);
+  }, [stabilizedSnapshot]);
 
   const toggleAction = (title: string) => {
     setCompletedActions((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -101,3 +94,8 @@ export const ExecutiveActionsChecklist: React.FC<ExecutiveActionsChecklistProps>
     </div>
   );
 };
+
+export const ExecutiveActionsChecklist = React.memo(
+  ExecutiveActionsChecklistComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);

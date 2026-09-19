@@ -69,6 +69,13 @@ export class PerformanceService {
   }
 
   /**
+   * Clears all tracked realtime subscriptions.
+   */
+  public static clearAllSubscriptions(): void {
+    this.activeSubscriptions.clear();
+  }
+
+  /**
    * Records a raw metric entry.
    */
   public static logMetric(metric: PerformanceMetric): void {

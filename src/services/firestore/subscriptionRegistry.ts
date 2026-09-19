@@ -204,9 +204,6 @@ class SubscriptionRegistry {
     }
 
     // New native listener
-    this.activeListenersCount++;
-    updateHealthListeners(this.activeListenersCount);
-    
     const callbacks = new Set<(snap: any, changes?: any[]) => void>([onNext]);
     const errorCallbacks = new Set<(err: any) => void>();
     if (onError) {
@@ -231,6 +228,7 @@ class SubscriptionRegistry {
       state.perfUnsub = PerformanceService.registerSubscription(key);
     } catch (e) {}
     this.subscriptions.set(key, state);
+    updateHealthListeners(this.subscriptions.size);
     this.printDiagnostics();
 
     return () => {
@@ -269,8 +267,7 @@ class SubscriptionRegistry {
         sub.perfUnsub?.();
       } catch (err) {}
       this.subscriptions.delete(key);
-      this.activeListenersCount = Math.max(0, this.activeListenersCount - 1);
-      updateHealthListeners(this.activeListenersCount);
+      updateHealthListeners(this.subscriptions.size);
       this.cleanupsExecutedCount++;
     }
 
@@ -321,9 +318,8 @@ class SubscriptionRegistry {
           sub.perfUnsub?.();
         } catch {}
         this.subscriptions.delete(oldestKey);
-        this.activeListenersCount = Math.max(0, this.activeListenersCount - 1);
-        updateHealthListeners(this.activeListenersCount);
-        logger.info(`[FirestoreSubscriptionRegistry] Pruned oldest subscription "${LogSanitizer.sanitizeString(oldestKey)}" to respect max listener threshold (${this.activeListenersCount}/${this.MAX_ACTIVE_LISTENERS}).`);
+        updateHealthListeners(this.subscriptions.size);
+        logger.info(`[FirestoreSubscriptionRegistry] Pruned oldest subscription "${LogSanitizer.sanitizeString(oldestKey)}" to respect max listener threshold (${this.subscriptions.size}/${this.MAX_ACTIVE_LISTENERS}).`);
       }
     }
   }
@@ -342,10 +338,9 @@ class SubscriptionRegistry {
       }
     }
     if (cleaned > 0) {
-      this.activeListenersCount = Math.max(0, this.activeListenersCount - cleaned);
-      updateHealthListeners(this.activeListenersCount);
+      updateHealthListeners(this.subscriptions.size);
       this.cleanupsExecutedCount += cleaned;
-      logger.info(`[FirestoreSubscriptionRegistry] Garbage collected ${cleaned} unused listeners. Active listeners: ${this.activeListenersCount}`);
+      logger.info(`[FirestoreSubscriptionRegistry] Garbage collected ${cleaned} unused listeners. Active listeners: ${this.subscriptions.size}`);
     }
     return cleaned;
   }
@@ -375,22 +370,35 @@ class SubscriptionRegistry {
     }
   }
 
+  public getActiveListenerCount(): number {
+    return this.subscriptions.size;
+  }
+
   public purgeAll(): void {
     logger.warn(`[FirestoreSubscriptionRegistry] Purging ALL ${this.subscriptions.size} active subscriptions.`);
     for (const [, sub] of this.subscriptions.entries()) {
+      sub.isClosed = true;
+      if (sub.retryTimeout) {
+        clearTimeout(sub.retryTimeout);
+        sub.retryTimeout = null;
+      }
+      sub.callbacks.clear();
+      sub.errorCallbacks.clear();
       try {
-        sub.unsubscribe();
+        if (typeof sub.unsubscribe === "function") {
+          sub.unsubscribe();
+        }
       } catch (e) {}
     }
     this.subscriptions.clear();
-    this.activeListenersCount = 0;
+    PerformanceService.clearAllSubscriptions();
     this.rateLimiter.reset();
     updateHealthListeners(0);
   }
 
   public getDiagnostics() {
     return {
-      activeListeners: this.activeListenersCount,
+      activeListeners: this.subscriptions.size,
       duplicatesPrevented: this.duplicatesPreventedCount,
       cleanupsExecuted: this.cleanupsExecutedCount,
     };
@@ -404,7 +412,7 @@ class SubscriptionRegistry {
     }));
 
     return {
-      activeListeners: this.activeListenersCount,
+      activeListeners: this.subscriptions.size,
       duplicatesPrevented: this.duplicatesPreventedCount,
       cleanupsExecuted: this.cleanupsExecutedCount,
       activeKeysCount: keys.length,
@@ -414,7 +422,7 @@ class SubscriptionRegistry {
 
   private printDiagnostics() {
     logger.debug(
-      `[FirestoreRealtimeManager] Active: ${this.activeListenersCount} | Dups Prevented: ${this.duplicatesPreventedCount} | Cleanups: ${this.cleanupsExecutedCount}`
+      `[FirestoreRealtimeManager] Active: ${this.subscriptions.size} | Dups Prevented: ${this.duplicatesPreventedCount} | Cleanups: ${this.cleanupsExecutedCount}`
     );
   }
 }

@@ -789,7 +789,7 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
               }),
             2,
             800,
-            ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+            ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"]
           );
 
           let responseText = response.text?.trim() || "{}";
@@ -892,8 +892,7 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
             errMsg.includes("overloaded");
 
           if (isNetworkOrQuotaError) {
-            const cleanErr = getCleanErrorMessage(error);
-            console.info(`[AI CFO Analysis] Quota or network fallback active (${cleanErr}). Serving FinancialRatioEngine analysis.`);
+            console.info("[AI CFO Analysis] Transient rate limit or network event encountered. Activating local FinancialRatioEngine deterministic analysis.");
             break;
           }
           console.info(`[AI CFO Analysis Attempt ${attempts} Retry]: ${getCleanErrorMessage(error)}`);

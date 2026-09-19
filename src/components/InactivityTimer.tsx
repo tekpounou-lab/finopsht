@@ -26,12 +26,17 @@ export function InactivityTimer() {
       return;
     }
 
+    // Always reset last active timestamp when user signs in or component initializes with active user
+    lastActiveRef.current = Date.now();
+    setShowWarning(false);
+    setTimeLeft(60);
+
     const resetActivity = () => {
       lastActiveRef.current = Date.now();
-      if (showWarning) {
-        setShowWarning(false);
-        setTimeLeft(60);
-      }
+      setShowWarning((prev) => {
+        if (prev) setTimeLeft(60);
+        return false;
+      });
     };
 
     // Events to track user activity
@@ -47,7 +52,7 @@ export function InactivityTimer() {
 
       if (elapsed >= INACTIVITY_TIME) {
         // Exceeded 15 minutes, trigger logout
-        clearInterval(timerRef.current!);
+        if (timerRef.current) clearInterval(timerRef.current);
         if (countdownRef.current) clearInterval(countdownRef.current);
         logout();
       } else if (elapsed >= INACTIVITY_TIME - WARNING_TIME) {
@@ -57,9 +62,7 @@ export function InactivityTimer() {
         setShowWarning(true);
       } else {
         // User is active, ensure warning is hidden
-        if (showWarning) {
-          setShowWarning(false);
-        }
+        setShowWarning((prev) => (prev ? false : prev));
       }
     }, 1000);
 
@@ -70,7 +73,7 @@ export function InactivityTimer() {
       if (timerRef.current) clearInterval(timerRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [user, showWarning, logout]);
+  }, [user?.uid, logout]);
 
   // Handle manual sign out from the countdown warning
   const handleSignOutNow = async () => {

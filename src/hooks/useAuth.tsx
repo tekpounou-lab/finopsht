@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { Role, Employee } from "../types";
@@ -151,11 +151,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     console.log(`[FlowState] Computed flowState: ${flowState} (UID: ${auth.currentUser?.uid || "anonymous"}, role: ${identity?.role}, bizStatus: ${identity?.business?.status}, onboarding: ${identity?.onboardingStatus})`);
   }, [flowState, auth.currentUser?.uid, identity?.role, identity?.business?.status, identity?.onboardingStatus]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     console.log("[Auth] User initiated logout");
     EnterpriseIdentityOrchestrator.clearSessionCache();
     await signOut(auth);
-  };
+  }, []);
 
   const targetRoute = useMemo(() => {
     switch (flowState) {

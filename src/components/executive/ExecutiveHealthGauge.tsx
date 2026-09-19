@@ -1,30 +1,25 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
 import { ExecutiveScoreEngine } from "../../domains/analytics/services/ExecutiveScoreEngine";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveHealthGaugeProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveHealthGauge: React.FC<ExecutiveHealthGaugeProps> = ({ snapshot }) => {
+const ExecutiveHealthGaugeComponent: React.FC<ExecutiveHealthGaugeProps> = ({ snapshot }) => {
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_HEALTH_GAUGE", snapshot);
+
   const healthScore = React.useMemo(() => {
-    if (!snapshot) return 0;
-    if (snapshot.businessHealthScore !== undefined) {
-      return snapshot.businessHealthScore;
+    if (!stabilizedSnapshot) return 0;
+    if (stabilizedSnapshot.businessHealthScore !== undefined) {
+      return stabilizedSnapshot.businessHealthScore;
     }
-    const scorecards = ExecutiveScoreEngine.calculateScorecards(snapshot);
+    const scorecards = ExecutiveScoreEngine.calculateScorecards(stabilizedSnapshot);
     if (!scorecards || scorecards.length === 0) return 0;
     const total = scorecards.reduce((acc, curr) => acc + curr.score, 0);
     return Math.round(total / scorecards.length);
-  }, [snapshot]);
-
-  useEffect(() => {
-    console.log("[EXECUTIVE_HEALTH_GAUGE] Active Snapshot SSOT loaded:", {
-      healthScore,
-      revenue: snapshot?.revenue?.currentValue,
-      expenses: snapshot?.expenses?.currentValue,
-    });
-  }, [snapshot, healthScore]);
+  }, [stabilizedSnapshot]);
 
   const status = React.useMemo(() => {
     if (healthScore >= 80)
@@ -118,3 +113,9 @@ export const ExecutiveHealthGauge: React.FC<ExecutiveHealthGaugeProps> = ({ snap
     </div>
   );
 };
+
+export const ExecutiveHealthGauge = React.memo(
+  ExecutiveHealthGaugeComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);
+

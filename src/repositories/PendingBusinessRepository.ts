@@ -224,7 +224,11 @@ export const PendingBusinessRepository = {
         onUpdate(records);
       },
       (error) => {
-        console.error("[PendingBusinessRepository] listenAllPending query error:", error);
+        if (error?.code === "permission-denied") {
+          console.warn("[PendingBusinessRepository] listenAllPending permission-denied (non-fatal, user lacks SUPER_ADMIN or session is in transition):", error);
+        } else {
+          console.error("[PendingBusinessRepository] listenAllPending query error:", error);
+        }
         onUpdate([]);
       }
     );

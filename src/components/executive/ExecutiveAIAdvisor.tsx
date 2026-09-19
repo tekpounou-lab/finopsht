@@ -1,28 +1,21 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Gauge } from "lucide-react";
 import { AnalyticsSnapshot } from "../../domains/analytics/types";
+import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/useLoggedSnapshot";
 
 interface ExecutiveAIAdvisorProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
-export const ExecutiveAIAdvisor: React.FC<ExecutiveAIAdvisorProps> = ({ snapshot }) => {
-  useEffect(() => {
-    console.log("[EXECUTIVE_AI_ADVISOR] Active Snapshot SSOT loaded:", {
-      revenue: snapshot?.revenue?.currentValue,
-      expenses: snapshot?.expenses?.currentValue,
-      payroll: snapshot?.payrollCost?.currentValue,
-      attendanceRate: snapshot?.attendanceRate?.currentValue,
-      activeStaff: snapshot?.activeStaff?.currentValue,
-    });
-  }, [snapshot]);
+const ExecutiveAIAdvisorComponent: React.FC<ExecutiveAIAdvisorProps> = ({ snapshot }) => {
+  const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_AI_ADVISOR", snapshot);
 
-  const revVal = snapshot?.revenue?.currentValue || 0;
-  const expVal = snapshot?.expenses?.currentValue || 0;
-  const payrollVal = snapshot?.payrollCost?.currentValue || 0;
-  const netProfit = snapshot?.profit?.currentValue ?? (revVal - expVal);
-  const attendanceRate = snapshot?.attendanceRate?.currentValue ?? 71;
-  const activeStaff = snapshot?.activeStaff?.currentValue ?? 16;
+  const revVal = stabilizedSnapshot?.revenue?.currentValue || 0;
+  const expVal = stabilizedSnapshot?.expenses?.currentValue || 0;
+  const payrollVal = stabilizedSnapshot?.payrollCost?.currentValue || 0;
+  const netProfit = stabilizedSnapshot?.profit?.currentValue ?? (revVal - expVal);
+  const attendanceRate = stabilizedSnapshot?.attendanceRate?.currentValue ?? 71;
+  const activeStaff = stabilizedSnapshot?.activeStaff?.currentValue ?? 16;
   const checkedInCount = Math.round((activeStaff * attendanceRate) / 100);
   const absenteeCount = Math.max(0, activeStaff - checkedInCount);
   const payrollRatio = revVal > 0 ? Math.min(100, Math.round((payrollVal / revVal) * 100)) : 0;
@@ -101,3 +94,9 @@ export const ExecutiveAIAdvisor: React.FC<ExecutiveAIAdvisorProps> = ({ snapshot
     </div>
   );
 };
+
+export const ExecutiveAIAdvisor = React.memo(
+  ExecutiveAIAdvisorComponent,
+  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+);
+

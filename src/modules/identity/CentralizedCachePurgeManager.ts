@@ -1,8 +1,12 @@
 import { realtimeManager } from "../../services/firestore/realtimeManager";
 import { subscriptionRegistry } from "../../services/firestore/subscriptionRegistry";
+import { FirestoreRealtimeManager } from "../../services/firestore/FirestoreRealtimeManager";
 import { DashboardQueryService } from "../../services/query/DashboardQueryService";
 import { EmployeeQueryService } from "../../services/query/EmployeeQueryService";
 import { SecurityAuditLogger } from "../../services/security/SecurityAuditLogger";
+import { SessionHealthService } from "../../services/auth/SessionHealthService";
+import { SnapshotRetention } from "../../services/business/snapshot/SnapshotRetentionManager";
+import { SynchronizationEngine } from "../runtime/SynchronizationEngine";
 
 export class CentralizedCachePurgeManager {
   private static lastKnownUid: string | null = null;
@@ -10,7 +14,7 @@ export class CentralizedCachePurgeManager {
 
   /**
    * Synchronously and completely purges all in-memory caches, active Firestore
-   * listeners, local and session storage keys, and resets state across the ERP.
+   * listeners, background engines/timers, local and session storage keys, and resets state across the ERP.
    */
   static purgeAllCaches(options: {
     previousUid?: string | null;
@@ -38,7 +42,32 @@ export class CentralizedCachePurgeManager {
         console.warn("[CentralizedCachePurgeManager] subscriptionRegistry.purgeAll warning:", e);
       }
 
-      // 2. Invalidate query service memory caches
+      try {
+        FirestoreRealtimeManager.clearAll();
+      } catch (e) {
+        console.warn("[CentralizedCachePurgeManager] FirestoreRealtimeManager.clearAll warning:", e);
+      }
+
+      // 2. Halt all background daemons and recurring engine timers
+      try {
+        SessionHealthService.stopMonitoring();
+      } catch (e) {
+        console.warn("[CentralizedCachePurgeManager] SessionHealthService.stopMonitoring warning:", e);
+      }
+
+      try {
+        SnapshotRetention.stopDaemon();
+      } catch (e) {
+        console.warn("[CentralizedCachePurgeManager] SnapshotRetention.stopDaemon warning:", e);
+      }
+
+      try {
+        SynchronizationEngine.stopSync();
+      } catch (e) {
+        console.warn("[CentralizedCachePurgeManager] SynchronizationEngine.stopSync warning:", e);
+      }
+
+      // 3. Invalidate query service memory caches
       try {
         DashboardQueryService.invalidateCache();
       } catch (e) {
