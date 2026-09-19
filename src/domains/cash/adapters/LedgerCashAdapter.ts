@@ -24,6 +24,8 @@ import { validateNormalizedCashMovement } from "../validation/normalizedCashMove
 import { TreasuryClassification } from "../classification/TreasuryClassification";
 import type { CashAdapterResult, BatchAdaptResult } from "./adapter.types";
 import { resolveAnalyticsTxDate } from "../../../utils/dateNormalization";
+import { DEFAULT_PAYMENT_METHODS } from "../../../repositories/PaymentMethodRepository";
+import type { PaymentMethod } from "../../../repositories/PaymentMethodRepository";
 
 /** Valid ISO Date format (YYYY-MM-DD) */
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -43,10 +45,20 @@ function extractDateOnly(dateVal?: string): string | undefined {
   return undefined;
 }
 
-function mapPaymentMethod(raw?: string): RecognizedPaymentMethod | undefined {
+function mapPaymentMethod(raw?: string, paymentMethods?: PaymentMethod[]): RecognizedPaymentMethod | undefined {
   if (!raw) return undefined;
   const upper = raw.trim().toUpperCase();
-  switch (upper) {
+  const methods = paymentMethods || (DEFAULT_PAYMENT_METHODS as PaymentMethod[]);
+  const found = methods.find(m => m.code === upper || m.id === raw);
+  if (!found || found.status !== "ACTIVE") {
+    return undefined; // Must return undefined for unrecognized, inactive, or non-cash payment methods
+  }
+  if (found.accountingEffect === "NON_CASH") {
+    return undefined; // Explicitly non-cash
+  }
+  // Map back to a RecognizedPaymentMethod if possible
+  const category = found.category;
+  switch (category) {
     case "CASH":
       return "CASH";
     case "BANK":
@@ -54,18 +66,14 @@ function mapPaymentMethod(raw?: string): RecognizedPaymentMethod | undefined {
       return "BANK_TRANSFER";
     case "CHECK":
       return "CHECK";
-    case "MONCASH":
-      return "MONCASH";
-    case "NATCASH":
-      return "NATCASH";
+    case "MOBILE_MONEY":
+      if (found.code === "MONCASH") return "MONCASH";
+      if (found.code === "NATCASH") return "NATCASH";
+      return "MOBILE_MONEY";
     case "CARD":
       return "CARD";
     case "WIRE":
       return "WIRE";
-    case "MOBILE_MONEY":
-      return "MOBILE_MONEY";
-    case "NON_CASH":
-      return undefined;
     default:
       return "OTHER";
   }
@@ -102,6 +110,8 @@ export interface LedgerAdaptOptions {
    * If false, a single consolidated movement with direction = 'TRANSFER' is emitted.
    */
   splitTransfers?: boolean;
+  /** Injected active payment methods for dynamic resolution and rules classification */
+  paymentMethods?: PaymentMethod[];
 }
 
 export class LedgerCashAdapter {
@@ -234,7 +244,7 @@ export class LedgerCashAdapter {
 
     const txTypeUpper = (tx.type || "").toUpperCase();
     const catUpper = (tx.category || (tx as any).category_name || (tx as any).categoryName || "").toUpperCase();
-    const pMethod = mapPaymentMethod(tx.paymentMethod || tx.payment_method);
+    const pMethod = mapPaymentMethod(tx.paymentMethod || tx.payment_method, options.paymentMethods);
 
     const isIncomeType =
       ["INCOME", "REVENUE", "SALES", "VENTE", "VENTES", "CREDIT"].includes(txTypeUpper) ||
@@ -246,8 +256,12 @@ export class LedgerCashAdapter {
 
     const rawPMethodUpper = (tx.paymentMethod || tx.payment_method || "").toUpperCase().trim();
 
-    // If neither account was explicitly classified as class 10 treasury, but the transaction is an operational Income/Expense and not marked NON_CASH, default to treasury (caisse/bank)
-    if (!isDebitTreasury && !isCreditTreasury && rawPMethodUpper !== "NON_CASH") {
+    const activeMethods = options.paymentMethods || (DEFAULT_PAYMENT_METHODS as PaymentMethod[]);
+    const matchedMethod = activeMethods.find(m => m.code === rawPMethodUpper || m.id === (tx.paymentMethod || tx.payment_method));
+    const isExplicitCashPaymentMethod = matchedMethod ? (matchedMethod.accountingEffect === "TREASURY" && matchedMethod.status === "ACTIVE") : false;
+
+    // If neither account was explicitly classified as class 10 treasury, ONLY default to treasury if an explicit, supported cash payment method is provided
+    if (!isDebitTreasury && !isCreditTreasury && isExplicitCashPaymentMethod) {
       if (isIncomeType) {
         isDebitTreasury = true;
       } else if (

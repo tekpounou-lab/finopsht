@@ -870,7 +870,15 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
         } catch (error: any) {
           lastError = error;
           const errMsg = String(error.message || error).toLowerCase();
-          const isSpendCapOr503 = 
+          const isNetworkOrQuotaError = 
+            errMsg.includes("fetch failed") ||
+            errMsg.includes("failed to fetch") ||
+            errMsg.includes("network") ||
+            errMsg.includes("econnreset") ||
+            errMsg.includes("etimedout") ||
+            errMsg.includes("enotfound") ||
+            errMsg.includes("socket hang up") ||
+            errMsg.includes("connection") ||
             errMsg.includes("spending cap") || 
             errMsg.includes("spend cap") || 
             errMsg.includes("billing") || 
@@ -883,11 +891,12 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
             errMsg.includes("high demand") ||
             errMsg.includes("overloaded");
 
-          if (isSpendCapOr503) {
-            console.warn(`[AI CFO Analysis] API Model 503/Quota/429/Demand limit reached. Breaking loop to trigger FinancialRatioEngine fallback immediately.`);
+          if (isNetworkOrQuotaError) {
+            const cleanErr = getCleanErrorMessage(error);
+            console.info(`[AI CFO Analysis] Quota or network fallback active (${cleanErr}). Serving FinancialRatioEngine analysis.`);
             break;
           }
-          console.warn(`[AI CFO Analysis Attempt ${attempts} Failed]: ${error.message}`);
+          console.info(`[AI CFO Analysis Attempt ${attempts} Retry]: ${getCleanErrorMessage(error)}`);
         }
       }
 

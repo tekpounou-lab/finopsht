@@ -52,6 +52,31 @@
       },
       "required": ["id", "ownerUid", "ownerEmail", "businessName", "selectedPlan", "status"]
     },
+    "PaymentMethod": {
+      "title": "Payment Method Definition",
+      "description": "Database-driven Payment Method Registry mapping methods to accounting rules and treasury classification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string", "enum": ["CASH", "BANK", "BANK_TRANSFER", "MOBILE_MONEY", "CARD", "CHECK", "WIRE", "CREDIT", "OTHER"] },
+        "accountingEffect": { "type": "string", "enum": ["TREASURY", "NON_CASH"] },
+        "treasuryAccountCode": { "type": "string" },
+        "supportedDirections": { "type": "array", "items": { "type": "string", "enum": ["INFLOW", "OUTFLOW"] } },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "scope": { "type": "string", "enum": ["GLOBAL", "TENANT"] },
+        "business_id": { "type": "string" },
+        "sortOrder": { "type": "number" },
+        "metadata": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "code", "name", "category", "accountingEffect", "supportedDirections", "status", "scope", "sortOrder"]
+    },
     "BusinessTaxConfiguration": {
       "title": "Business Tax Configuration",
       "description": "Configurable payroll tax rates, survival floor, and historical effective periods.",
@@ -974,6 +999,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Real-time in-app operational, HR, financial, and security notifications."
+    },
+    "/payment_methods/{methodId}": {
+      "schema": "PaymentMethod",
+      "description": "Canonical database-driven payment methods available globally or customized per-tenant."
     }
   }
 }

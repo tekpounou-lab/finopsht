@@ -717,4 +717,6 @@ export { IntegrityValidator, ForeignKeyIntegrityViolationError } from "../servic
 export { PendingBusinessRepository } from "./PendingBusinessRepository";
 export { UserProfileRepository } from "./UserProfileRepository";
 export { InvitationRepository } from "./InvitationRepository";
+export { PaymentMethodRepository } from "./PaymentMethodRepository";
+export type { PaymentMethod, PaymentMethodSnapshot } from "./PaymentMethodRepository";
 

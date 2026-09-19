@@ -1024,6 +1024,22 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
       allow write: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
     }
+
+    match /payment_methods/{methodId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() || 
+        resource.data.scope == "GLOBAL" || 
+        (resource.data.scope == "TENANT" && isTenantScoped(getBusinessId(resource.data)))
+      );
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() || 
+        (request.resource.data.scope == "TENANT" && isTenantAdminOrManager(getBusinessId(request.resource.data)))
+      );
+      allow update, delete: if isAuthenticated() && (
+        isSuperAdmin() || 
+        (resource.data.scope == "TENANT" && isTenantAdminOrManager(getBusinessId(resource.data)) && getBusinessId(request.resource.data) == getBusinessId(resource.data))
+      );
+    }
   }
 }
 

@@ -10,7 +10,8 @@ import {
   FileText,
   Radio,
   Clock,
-  Loader2
+  Loader2,
+  CreditCard
 } from "lucide-react";
 import { 
   useTenantManagement, 
@@ -34,6 +35,9 @@ const SuperAdminPlanManager = lazyWithRetry(() =>
 );
 const SuperAdminSecurityCenter = lazyWithRetry(() => 
   import("../components/superadmin/SuperAdminSecurityCenter").then((m: any) => ({ default: m.SuperAdminSecurityCenter || m.default }))
+);
+const SuperAdminPaymentMethodRegistry = lazyWithRetry(() => 
+  import("../components/superadmin/SuperAdminPaymentMethodRegistry").then((m: any) => ({ default: m.SuperAdminPaymentMethodRegistry || m.default }))
 );
 const SystemHealthConsole = lazyWithRetry(() => 
   import("./SystemHealthConsole").then((m: any) => ({ default: m.SystemHealthConsole || m.default }))
@@ -287,6 +291,19 @@ export function SuperAdminPlatform({ initialTab = "tenants" }: SuperAdminPlatfor
 
         <button
           type="button"
+          onClick={() => setActiveTab("payment-methods")}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+            activeTab === "payment-methods"
+              ? "bg-indigo-600 text-white shadow-md shadow-indigo-900/30"
+              : "text-slate-400 hover:text-white hover:bg-slate-900"
+          }`}
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>Modes de Paiement</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab("security")}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-medium transition-all cursor-pointer ${
             activeTab === "security"
@@ -395,6 +412,12 @@ export function SuperAdminPlatform({ initialTab = "tenants" }: SuperAdminPlatfor
             onSeedDefaults={handleSeedDefaults}
             onAssignTenantPlan={handleAssignTenantPlan}
           />
+        </Suspense>
+      )}
+
+      {activeTab === "payment-methods" && (
+        <Suspense fallback={<TabLoadingFallback message="Chargement de l'annuaire des modes de paiement..." />}>
+          <SuperAdminPaymentMethodRegistry />
         </Suspense>
       )}
 
