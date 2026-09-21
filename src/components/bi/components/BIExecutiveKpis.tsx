@@ -50,7 +50,13 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
 }) => {
   const rev = isSimplifiedMode ? (cashSnapshot?.cashIn?.total ?? totalRevenue) : (accrualSnapshot?.revenueRecognized ?? totalRevenue);
   const exp = isSimplifiedMode ? (cashSnapshot?.cashOut?.total ?? totalExpenses) : (accrualSnapshot?.expensesAccrued ?? totalExpenses);
-  const profit = isSimplifiedMode ? (cashSnapshot?.netCashFlow ?? netProfit) : (accrualSnapshot?.netIncome ?? netProfit);
+  
+  // DEF-9B-02: Canonical Net Cash Flow vs Operating Result.
+  // In simplified mode, "Variation de trésorerie" MUST strictly bind to canonical net cash flow (inflows - outflows),
+  // NEVER falling back to Net Profit (Revenue - Expenses).
+  const cashVariation = cashSnapshot?.netCashFlow ?? biSnapshot?.netCashFlow?.currentValue ?? 0;
+  const operatingResult = accrualSnapshot?.operatingResult ?? accrualSnapshot?.netIncome ?? netProfit;
+  const card3Value = isSimplifiedMode ? cashVariation : operatingResult;
   const payroll = isSimplifiedMode ? (cashSnapshot?.cashOut?.payrollPaid ?? (payrollAggregates?.payrollPaid || 0)) : (accrualSnapshot?.payrollAccrued?.total ?? (payrollAggregates?.totalEmploymentCost || 0));
 
   return (
@@ -129,21 +135,30 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             </div>
           </motion.div>
 
-          {/* Net Profit */}
+          {/* Net Cash Flow (Simplified) / Operating Result (Accrual) - DEF-9B-02 & DEF-9B-03 */}
           <motion.div
             whileHover={{ y: -3, scale: 1.02, boxShadow: "0 10px 20px -6px rgba(0, 0, 0, 0.45)" }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-cyan-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
-              {isSimplifiedMode ? "Variation de trésorerie" : "Résultat économique / EBITDA"}
+              {isSimplifiedMode ? "Variation de trésorerie" : "Résultat net d'exploitation"}
             </span>
-            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${profit >= 0 ? "text-cyan-400" : "text-rose-400"}`} title={`${profit >= 0 ? "+" : ""}${(profit || 0).toLocaleString()} HTG`}>
-              {profit >= 0 ? "+" : ""}{(profit || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
+            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${card3Value >= 0 ? "text-cyan-400" : "text-rose-400"}`} title={`${card3Value >= 0 ? "+" : ""}${(card3Value || 0).toLocaleString()} HTG`}>
+              {card3Value >= 0 ? "+" : ""}{(card3Value || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
             </div>
             <div className="flex items-center gap-1 text-[10px] text-slate-400 truncate">
-              <span className="font-semibold text-cyan-400">{profitMarginPercentage}%</span>
-              <span className="truncate">{tbi.profitMargin}</span>
+              {isSimplifiedMode ? (
+                <>
+                  <span className="font-semibold text-cyan-400">Flux net</span>
+                  <span className="truncate">Encaissements - Décaissements</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold text-cyan-400">{profitMarginPercentage}%</span>
+                  <span className="truncate">{tbi.profitMargin}</span>
+                </>
+              )}
             </div>
           </motion.div>
 
@@ -224,13 +239,13 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             </div>
           </motion.div>
 
-          {/* 7-Day Forecast */}
+          {/* 7-Day Net Operating Projection - DEF-9B-04 */}
           <motion.div
             whileHover={{ y: -3, scale: 1.02, boxShadow: "0 10px 20px -6px rgba(0, 0, 0, 0.45)" }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-fuchsia-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">Forecast (7 Jours)</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">Projection d'exploitation (7 Jours)</span>
             <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${(biSnapshot?.forecast?.forecast7Days || 0) >= 0 ? "text-fuchsia-400" : "text-rose-400"}`} title={`${(biSnapshot?.forecast?.forecast7Days || 0).toLocaleString()} HTG`}>
               {(biSnapshot?.forecast?.forecast7Days || 0) >= 0 ? "+" : ""}{(biSnapshot?.forecast?.forecast7Days || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
             </div>

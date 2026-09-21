@@ -31,9 +31,11 @@ class FeatureFlagConfigServiceClass {
 
   private loadFlags(): ResolverFlags {
     try {
-      const stored = localStorage.getItem("finops_resolver_flags");
-      if (stored) {
-        return { ...DEFAULT_FLAGS, ...JSON.parse(stored) };
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        const stored = localStorage.getItem("finops_resolver_flags");
+        if (stored) {
+          return { ...DEFAULT_FLAGS, ...JSON.parse(stored) };
+        }
       }
     } catch (e) {
       console.warn("[ResolverFeatureFlag] Failed to load resolver flags:", e);
@@ -44,8 +46,10 @@ class FeatureFlagConfigServiceClass {
   public saveFlags(flags: Partial<ResolverFlags>) {
     this.flags = { ...this.flags, ...flags };
     try {
-      localStorage.setItem("finops_resolver_flags", JSON.stringify(this.flags));
-      console.log("[ResolverFeatureFlag] Saved new resolver configurations:", this.flags);
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        localStorage.setItem("finops_resolver_flags", JSON.stringify(this.flags));
+        console.log("[ResolverFeatureFlag] Saved new resolver configurations:", this.flags);
+      }
     } catch (e) {
       console.error("[ResolverFeatureFlag] Failed to store resolver flags:", e);
     }

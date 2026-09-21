@@ -34,7 +34,16 @@ export interface AccrualBasisSnapshot {
   netIncome: number;
   grossMargin: number;
   operatingMargin: number;
-  ebitda: number;
+  /**
+   * DEF-9B-03: Canonical Net Operating Result (Résultat net d'exploitation).
+   * Revenue Recognized - Expenses Accrued - Payroll Accrued.
+   */
+  operatingResult?: number;
+  /**
+   * @deprecated DEF-9C-05: EBITDA is not calculated due to absence of D&A subledgers.
+   * Use operatingResult instead.
+   */
+  ebitda?: number;
   workingCapital: {
     accountsReceivable: number;
     accountsPayable: number;

@@ -94,6 +94,12 @@ export interface TrendPoint {
   hours: number;
 }
 
+/**
+ * DEF-9B-04: Short-term Net Operating Projection (Résultat d'exploitation projeté).
+ * Note: This metric projects net accounting operating result based on current net profit
+ * and daily operating expense burn rate (Profit - Daily Burn * Days).
+ * It is NOT physical cash runway.
+ */
 export interface ShortTermForecast {
   forecast7Days: number;
   forecast15Days: number;
@@ -119,6 +125,12 @@ export interface AnalyticsSnapshot {
   operationalExpenses: KPIComparison;
   totalExpenses?: KPIComparison;
   profit: KPIComparison;
+  /**
+   * DEF-9B-02: Canonical Net Cash Flow (Variation de trésorerie)
+   * Net Cash Flow = Total Settled Inflows - Total Settled Outflows
+   * Derived canonically from CashBasisEngine.
+   */
+  netCashFlow?: KPIComparison;
   cashOnHand: KPIComparison;
   burnRate: KPIComparison;
   

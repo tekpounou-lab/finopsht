@@ -374,7 +374,7 @@ export const DesignSystemCatalog: React.FC = () => {
           />
           <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
             <AiMessage content="Bonjour ! Je suis l'Assistant FINOPS. Votre masse salariale ce mois-ci est parfaitement conforme aux prévisions budgétaires." />
-            <AiThinking message="Calcul automatique des précomptes fiscaux IRI..." />
+            <AiThinking message="Précomptes fiscaux IRI en attente du barème officiel DGI..." />
           </div>
         </Stack>
       )}

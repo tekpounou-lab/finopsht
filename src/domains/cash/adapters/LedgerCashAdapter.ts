@@ -229,13 +229,11 @@ export class LedgerCashAdapter {
 
     const debitClassification = TreasuryClassification.classify({
       accountCode: debitAccount,
-      paymentMethod: tx.paymentMethod || tx.payment_method,
       businessId,
     });
 
     const creditClassification = TreasuryClassification.classify({
       accountCode: creditAccount,
-      paymentMethod: tx.paymentMethod || tx.payment_method,
       businessId,
     });
 

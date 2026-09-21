@@ -257,7 +257,11 @@ export const PayrollService = {
         });
       } else if (typeof (emp as any).workedHours === "number" && !isNaN((emp as any).workedHours)) {
         totalWorkedHours = Number((emp as any).workedHours);
+      } else if ((paymentModel as string) === "HOURLY" || (emp as any).paymentModel === "HOURLY" || (emp as any).pay_regime === "HOURLY") {
+        // DEF-9B-08: Hourly workers strictly require attendance or logged hours; unrecorded attendance = 0 worked hours
+        totalWorkedHours = 0;
       } else {
+        // Salaried / Fixed employees default to standard cycle quinzaine hours unless unexcused absence records exist
         totalWorkedHours = standardQuinzaineHours;
       }
 
@@ -320,6 +324,7 @@ export const PayrollService = {
       );
 
       // 5. Commissions: Applied on GL sales for the period using employee RH rate
+      // DEF-9B-08: If no commission rate is defined in contract or policies, rate is strictly 0.00 (NO SYNTHETIC 5% FALLBACK).
       let commissions = 0;
       let totalSales = 0;
       const commissionRate =
@@ -327,7 +332,7 @@ export const PayrollService = {
         (emp as any).commissionRate ??
         (emp as any).commission_percent ??
         policies.defaultCommissionRate ??
-        0.05;
+        0;
 
       const empSalesTxs = ledgerTransactions.filter(
         (tx) =>

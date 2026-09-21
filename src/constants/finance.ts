@@ -95,6 +95,29 @@ export const STATUTORY_TAX_RATES = {
  */
 export const SURVIVAL_FLOOR_HTG = 15000;
 
+/**
+ * DEF-9B-01: Haitian Individual Income Tax (IRI — Impôt sur le Revenu Individuel) Status.
+ * 
+ * Statutory implementation is strictly BLOCKED due to absent official DGI policy data.
+ * Under FINOPS ERP constitutional rules, progressive tax brackets and rates MUST NOT
+ * be invented, estimated, or hardcoded with fictitious values.
+ * 
+ * Required Authoritative Policy Data to enable implementation:
+ * 1. Official DGI (Direction Générale des Impôts) progressive tax bracket tiers in HTG.
+ * 2. Statutory personal exemption / standard deduction threshold (abattement forfaitaire).
+ * 3. Formal annualized-to-monthly/quinzaine conversion and prorating formulas.
+ * 4. Statutory dependent deduction rules (déductions pour charges de famille).
+ * 
+ * Until these authoritative policy data are formally provided by domain configuration:
+ * IRI deduction evaluates strictly to 0.00 HTG (NO_DATA / NO SYNTHETIC RATES).
+ */
+export const IRI_IMPLEMENTATION_BLOCKED_BY_POLICY_DATA = {
+  STATUS: "BLOCKED",
+  REASON: "ABSENT_AUTHORITATIVE_DGI_POLICY_DATA",
+  MESSAGE: "IRI progressive tax calculation requires official DGI bracket tables, standard deduction thresholds, and quinzaine conversion rules.",
+  DEFAULT_DEDUCTION_HTG: 0,
+} as const;
+
 // ============================================================================
 // 2. CHART OF ACCOUNTS (COA) STANDARD
 // ============================================================================

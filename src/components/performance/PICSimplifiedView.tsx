@@ -30,21 +30,27 @@ export const PICSimplifiedView: React.FC<PICSimplifiedViewProps> = ({
     <div className="space-y-6" id="pic-simplified-container">
       {/* Top 4 Core Strategic KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="pic-simplified-kpi-grid">
-        {/* 1. Masse Salariale */}
+        {/* 1. Chiffre d'Affaires (GL) */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg relative overflow-hidden" id="kpi-card-payroll">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Masse Salariale</span>
-            <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-              <DollarSign className="w-4 h-4" />
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Chiffre d'Affaires</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-medium">GL</span>
+            </div>
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <TrendingUp className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3">
             <div className="text-2xl font-bold text-slate-100">
-              {metrics.totalPayroll.toLocaleString()} <span className="text-xs font-normal text-slate-400">HTG</span>
+              {metrics.totalRevenue.toLocaleString()} <span className="text-xs font-normal text-slate-400">HTG</span>
             </div>
             <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
-              <span className="text-indigo-300 font-medium">+{metrics.totalCommissions.toLocaleString()} HTG</span>
-              <span>commissions</span>
+              <span className="text-emerald-400 font-medium flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Grand Livre (GL)
+              </span>
+              <span>• Recettes reconnues</span>
             </div>
           </div>
         </div>

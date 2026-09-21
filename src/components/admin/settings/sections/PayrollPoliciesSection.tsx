@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { FileText, Calendar, Clock, Percent, DollarSign, ShieldAlert, Zap, ShieldCheck, TrendingUp, Loader2 } from "lucide-react";
+import { FileText, Calendar, Clock, Percent, DollarSign, ShieldAlert, Zap, ShieldCheck, TrendingUp, Loader2, Play, AlertCircle, HelpCircle, ToggleLeft, ToggleRight } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useBusinessContext } from "../../../../contexts/BusinessContext";
 import { useBusinessAdmin } from "../../../../hooks/useBusinessAdmin";
 import { BusinessAdministrationRepository } from "../../../../repositories/BusinessAdministrationRepository";
 import { TaxPolicyEngine } from "../../../../services/payroll/TaxPolicyEngine";
+import { ConfigurationResolver } from "../../../../services/config/ConfigurationResolver";
 import { toast } from "sonner";
 import { isQuotaExceededError } from "../../../../utils/resilientFirestore";
 
@@ -12,6 +13,15 @@ export default function PayrollPoliciesSection() {
   const { businessSettings, business } = useBusinessContext();
   const { updateSettings, loading: hookLoading } = useBusinessAdmin();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Resolution Test Panel States
+  const [testKey, setTestKey] = useState("commission_rate");
+  const [testEmpId, setTestEmpId] = useState("");
+  const [testEmpCustomVal, setTestEmpCustomVal] = useState("");
+  const [testEffectiveDate, setTestEffectiveDate] = useState(new Date().toISOString().split("T")[0]);
+  const [resolutionResult, setResolutionResult] = useState<any>(null);
+  const [isResolving, setIsResolving] = useState(false);
+  const [canonicalMode, setCanonicalMode] = useState<"STRICT" | "CUSTOM">("STRICT");
 
   const businessId = business?.id || "BIZ_MAIN";
 
@@ -39,7 +49,7 @@ export default function PayrollPoliciesSection() {
       enable_social_taxes: resolvedIsTaxEnabled,
       enable_survival_floor: resolvedIsFloorEnabled,
       survival_floor_htg: resolvedFloorAmount,
-      default_commission_rate: (businessSettings?.payroll?.default_commission_rate ?? ((businessSettings?.payroll_policies?.defaultCommissionRate || 0.05) * 100)),
+      default_commission_rate: (businessSettings?.payroll?.default_commission_rate ?? ((businessSettings?.payroll_policies?.defaultCommissionRate || 0) * 100)),
       require_attendance_for_payroll: resolvedIsAttendanceRequired,
       ...(businessSettings?.payroll || {})
     }
@@ -70,7 +80,7 @@ export default function PayrollPoliciesSection() {
         enable_social_taxes: isTax,
         enable_survival_floor: isFloor,
         survival_floor_htg: floor,
-        default_commission_rate: (businessSettings.payroll?.default_commission_rate ?? ((businessSettings.payroll_policies?.defaultCommissionRate || 0.05) * 100)),
+        default_commission_rate: (businessSettings.payroll?.default_commission_rate ?? ((businessSettings.payroll_policies?.defaultCommissionRate || 0) * 100)),
         require_attendance_for_payroll: isAtt,
         ...(businessSettings.payroll || {})
       });
@@ -134,7 +144,7 @@ export default function PayrollPoliciesSection() {
         overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
         latePenaltyCents: latePenaltyCents,
         absencePenaltyCents: absencePenaltyCents,
-        defaultCommissionRate: (Number(data.default_commission_rate) || 5) / 100,
+        defaultCommissionRate: (Number(data.default_commission_rate) || 0) / 100,
         requireAttendanceForPayroll: requireAttendance,
       };
 
@@ -176,7 +186,7 @@ export default function PayrollPoliciesSection() {
           overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
           latePenaltyCents: latePenaltyCents,
           absencePenaltyCents: absencePenaltyCents,
-          defaultCommissionRate: (Number(data.default_commission_rate) || 5) / 100,
+          defaultCommissionRate: (Number(data.default_commission_rate) || 0) / 100,
           requireAttendanceForPayroll: requireAttendance,
         },
         "usr_admin"
@@ -457,7 +467,213 @@ export default function PayrollPoliciesSection() {
             </div>
           </div>
         </div>
+
+        {/* SECTION 9C.5: CANONICAL DEFAULTS & CUSTOM PARALYSIS RULES */}
+        <div className="glass rounded-2xl p-6 md:col-span-2 space-y-6 border border-slate-800/80">
+          <div className="flex items-center justify-between border-b border-slate-900 pb-4">
+            <div>
+              <h4 className="text-xs font-bold text-slate-200 uppercase tracking-widest flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                Règles de Résolution & Conformité Légale (SSOT)
+              </h4>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Configurez le mode de priorité des paramètres et l'isolation des définitions statutaires.
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-2 bg-slate-900/50 border border-slate-800 p-1.5 rounded-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setCanonicalMode("STRICT");
+                  toast.success("Mode de Résolution Strict activé !");
+                }}
+                className={`px-3 py-1.5 text-[10px] font-bold rounded-lg uppercase transition-all ${
+                  canonicalMode === "STRICT"
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-inner"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Strict Defaults
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCanonicalMode("CUSTOM");
+                  toast.info("Mode Personnalisé activé.");
+                }}
+                className={`px-3 py-1.5 text-[10px] font-bold rounded-lg uppercase transition-all ${
+                  canonicalMode === "CUSTOM"
+                    ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Custom Rules
+              </button>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-950/40 border border-slate-900 rounded-xl flex items-start gap-3">
+            <AlertCircle className={`w-5 h-5 shrink-0 mt-0.5 ${canonicalMode === "STRICT" ? "text-emerald-400" : "text-cyan-400"}`} />
+            <div className="space-y-1">
+              <h5 className="text-[11px] font-bold text-slate-200 uppercase tracking-wide">
+                {canonicalMode === "STRICT" ? "Garantie Statutaire Active (Zod Enforced)" : "Surcharge de Paramètres Active"}
+              </h5>
+              <p className="text-[11px] text-slate-400 leading-relaxed font-light">
+                {canonicalMode === "STRICT" 
+                  ? "En mode STRICT, le système valide automatiquement chaque entrée par rapport aux définitions légales et rejette les valeurs aberrantes. Les commissions par défaut et les heures de cycle sont rigoureusement contrôlées pour exclure tout comportement non déterministe."
+                  : "Le mode CUSTOM autorise des dérogations d'entreprise spécifiques, tant que celles-ci passent la validation d'intégrité de schéma standard."
+                }
+              </p>
+            </div>
+          </div>
+
+          {/* REAL-TIME RESOLUTION TEST PANEL */}
+          <div className="border-t border-slate-900 pt-6">
+            <h5 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+              Simulateur de Résolution de Paramètres en Temps Réel
+            </h5>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-950/20 border border-slate-900 p-4 rounded-xl">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Paramètre de Résolution</label>
+                <select
+                  value={testKey}
+                  onChange={(e) => setTestKey(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
+                >
+                  <option value="commission_rate">Taux de Commission (commission_rate)</option>
+                  <option value="standard_hours">Heures Standard de Cycle (standard_hours)</option>
+                  <option value="survival_floor_htg">Seuil de Survie Social (survival_floor_htg)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date Effective</label>
+                <input
+                  type="date"
+                  value={testEffectiveDate}
+                  onChange={(e) => setTestEffectiveDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">ID Employé (Override Context)</label>
+                <input
+                  type="text"
+                  placeholder="Ex: emp_david"
+                  value={testEmpId}
+                  onChange={(e) => setTestEmpId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Taux Individuel Surchargé (Optionnel)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Ex: 0.12 (12%)"
+                  value={testEmpCustomVal}
+                  onChange={(e) => setTestEmpCustomVal(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center mt-4">
+              <p className="text-[10px] text-slate-500 font-light flex items-center gap-1">
+                <HelpCircle className="w-3 h-3" />
+                Vérifie l'exactitude de l'ordre de priorité : Override Employé &rarr; Paramètres Tenant &rarr; Politique Globale.
+              </p>
+              
+              <button
+                type="button"
+                disabled={isResolving}
+                onClick={async () => {
+                  setIsResolving(true);
+                  try {
+                    const parsedVal = testEmpCustomVal !== "" ? Number(testEmpCustomVal) : undefined;
+                    const res = await ConfigurationResolver.resolve(testKey, {
+                      businessId,
+                      effectiveDate: testEffectiveDate,
+                      employeeContext: testEmpId ? {
+                        id: testEmpId,
+                        customValue: parsedVal
+                      } : undefined
+                    });
+                    setResolutionResult(res);
+                    toast.success("Résolution calculée avec succès !");
+                  } catch (e) {
+                    console.error(e);
+                    toast.error("Échec de la résolution du paramètre.");
+                  } finally {
+                    setIsResolving(false);
+                  }
+                }}
+                className="bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+              >
+                {isResolving ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Play className="w-3 h-3 fill-slate-950" />
+                )}
+                Exécuter la Résolution
+              </button>
+            </div>
+
+            {/* RESULTS VIEW */}
+            {resolutionResult && (
+              <div className="mt-4 p-4 bg-slate-950/60 border border-slate-800/60 rounded-xl space-y-3 font-mono animate-fadeIn">
+                <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Statut du Résolveur</span>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                    resolutionResult.status === "RESOLVED"
+                      ? "bg-emerald-950/40 text-emerald-400 border border-emerald-500/20"
+                      : "bg-red-950/40 text-red-400 border border-red-500/20"
+                  }`}>
+                    {resolutionResult.status}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                  <div>
+                    <p className="text-[9px] text-slate-500 uppercase tracking-tight">Valeur Résolue</p>
+                    <p className="text-sm font-bold text-slate-100 mt-1">
+                      {resolutionResult.value !== null && resolutionResult.value !== undefined
+                        ? typeof resolutionResult.value === "number" && testKey.endsWith("_rate")
+                          ? `${(resolutionResult.value * 100).toFixed(1)}%`
+                          : resolutionResult.value.toLocaleString()
+                        : "N/A"
+                      }
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[9px] text-slate-500 uppercase tracking-tight">Source de l'Information</p>
+                    <p className="text-sm font-bold text-cyan-400 mt-1">{resolutionResult.source}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-[9px] text-slate-500 uppercase tracking-tight">Version de la Règle</p>
+                    <p className="text-sm font-bold text-slate-300 mt-1">v{resolutionResult.version || "1.0.0-canonical"}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-[9px] text-slate-500 uppercase tracking-tight">ID de Configuration</p>
+                    <p className="text-xs text-slate-400 truncate mt-1" title={resolutionResult.configurationId}>
+                      {resolutionResult.configurationId || "N/A"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
+

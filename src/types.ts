@@ -122,8 +122,12 @@ export interface Employee {
   contractType?: "cdi" | "cdd" | "freelance";
   payRegime?: "fixe" | "commission" | "hybrid";
   commissionRate?: number;
+  hourlyRateHtg?: number;
+  hourlyRate?: number;
+  revenuePercentage?: number;
   onboardingComplete?: boolean;
   isActive?: boolean;
+  is_active?: boolean;
   emailNotificationsEnabled?: boolean;
   notificationPreferences?: {
     emailAlerts?: boolean;
@@ -374,6 +378,9 @@ export interface LedgerTransaction {
   creditCents?: number;
   referenceTransactionId?: string; // ID of the original transaction when reversed or corrected
   isLocked?: boolean;
+  is_settled?: boolean;
+  isSettled?: boolean;
+  transaction_date?: string;
   metadata?: {
     importedBy?: string;
     payrollCycleId?: string;

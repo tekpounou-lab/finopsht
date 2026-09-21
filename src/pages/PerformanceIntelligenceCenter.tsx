@@ -158,7 +158,7 @@ export const PerformanceIntelligenceCenter: React.FC = () => {
           </div>
 
           {!isExpertMode ? (
-            <PICExpertView metrics={cashBasisMetrics} />
+            <PICSimplifiedView metrics={simplifiedMetrics} onResetFilters={resetFilters} />
           ) : (
             <PICExpertView metrics={expertMetrics} />
           )}

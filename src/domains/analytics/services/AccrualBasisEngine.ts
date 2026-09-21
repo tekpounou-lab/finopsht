@@ -134,7 +134,7 @@ export class AccrualBasisEngine {
       const g = pr.gross_salary_cents ? pr.gross_salary_cents / 100 : (pr.grossSalary || pr.baseSalary || 0);
       const erCnss = pr.cnss_employer_cents ? pr.cnss_employer_cents / 100 : 0;
       const erOfatma = pr.ofatma_employer_cents ? pr.ofatma_employer_cents / 100 : 0;
-      const eTaxes = (erCnss + erOfatma) > 0 ? (erCnss + erOfatma) : ((pr as any).employerTaxes !== undefined ? (pr as any).employerTaxes : g * 0.17);
+      const eTaxes = (erCnss + erOfatma) > 0 ? (erCnss + erOfatma) : ((pr as any).employerTaxes !== undefined ? (pr as any).employerTaxes : 0);
       const netP = pr.net_salary_cents ? pr.net_salary_cents / 100 : (pr.netPaid || 0);
 
       grossSalary += g;
@@ -152,7 +152,15 @@ export class AccrualBasisEngine {
     const netIncome = revenueRecognized - expensesAccrued - payrollTotal;
     const grossMargin = revenueRecognized > 0 ? Math.round(((revenueRecognized - expensesAccrued) / revenueRecognized) * 100) : 0;
     const operatingMargin = revenueRecognized > 0 ? Math.round((netIncome / revenueRecognized) * 100) : 0;
-    const ebitda = netIncome;
+    
+    // DEF-9C-05: Remediate EBITDA aliasing.
+    // True EBITDA requires adding back Interest, Taxes, Depreciation, and Amortization.
+    // In the current FINOPS General Ledger, depreciation and amortization accounts are not tracked
+    // in operational subledgers. Aliasing netIncome to EBITDA is misleading.
+    // Canonical metric is operatingResult (Résultat net d'exploitation).
+    const operatingResult = netIncome;
+    /** @deprecated DEF-9C-05: EBITDA is not calculated due to absence of D&A subledgers. Use operatingResult instead. */
+    const ebitda = undefined;
 
     const workingCapital = {
       accountsReceivable: Math.max(0, accountsReceivable),
@@ -178,7 +186,7 @@ export class AccrualBasisEngine {
       const g = pr.gross_salary_cents ? pr.gross_salary_cents / 100 : (pr.grossSalary || pr.baseSalary || 0);
       const erCnss = pr.cnss_employer_cents ? pr.cnss_employer_cents / 100 : 0;
       const erOfatma = pr.ofatma_employer_cents ? pr.ofatma_employer_cents / 100 : 0;
-      const eTaxes = (erCnss + erOfatma) > 0 ? (erCnss + erOfatma) : ((pr as any).employerTaxes !== undefined ? (pr as any).employerTaxes : g * 0.17);
+      const eTaxes = (erCnss + erOfatma) > 0 ? (erCnss + erOfatma) : ((pr as any).employerTaxes !== undefined ? (pr as any).employerTaxes : 0);
       existing.payroll += (g + eTaxes);
       departmentMap.set(deptId, existing);
     });
@@ -199,7 +207,7 @@ export class AccrualBasisEngine {
         const g = pr.gross_salary_cents ? pr.gross_salary_cents / 100 : (pr.grossSalary || pr.baseSalary || 0);
         const erCnss = pr.cnss_employer_cents ? pr.cnss_employer_cents / 100 : 0;
         const erOfatma = pr.ofatma_employer_cents ? pr.ofatma_employer_cents / 100 : 0;
-        const eTaxes = (erCnss + erOfatma) > 0 ? (erCnss + erOfatma) : ((pr as any).employerTaxes !== undefined ? (pr as any).employerTaxes : g * 0.17);
+        const eTaxes = (erCnss + erOfatma) > 0 ? (erCnss + erOfatma) : ((pr as any).employerTaxes !== undefined ? (pr as any).employerTaxes : 0);
         empGross += g;
         empEmployer += eTaxes;
         empComm += pr.commissions || (pr.commission_cents ? pr.commission_cents / 100 : 0);
@@ -230,6 +238,7 @@ export class AccrualBasisEngine {
         payable: payrollPayable
       },
       netIncome,
+      operatingResult,
       grossMargin,
       operatingMargin,
       ebitda,

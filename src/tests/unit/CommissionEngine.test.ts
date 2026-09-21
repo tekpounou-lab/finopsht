@@ -130,4 +130,28 @@ describe("CommissionEngine Unit Tests — SSOT & Commission Calculation Validati
     // 63,227.40 × 0.45 = 28,452.33 HTG
     expect(result.totalCommission).toBe(28452.33);
   });
+
+  it("Phase 9C.5.4: Required Commission Test Matrix (Tests 1 to 5)", () => {
+    // Test 1: Employee = 7% (0.07)
+    const emp1 = { id: "e1", commission_rate: 0.07 };
+    expect(CommissionEngine.resolveCommissionRate(emp1)).toBe(0.07);
+
+    // Test 2: Employee = explicit 0% (0)
+    const emp2 = { id: "e2", commission_rate: 0 };
+    expect(CommissionEngine.resolveCommissionRate(emp2)).toBe(0);
+
+    // Test 3: Employee = missing, Tenant = 5% (0.05)
+    const emp3 = { id: "e3" };
+    expect(CommissionEngine.resolveCommissionRate(emp3, null, undefined, 0.05)).toBe(0.05);
+
+    // Test 4: Employee = missing, Tenant = missing, Global = missing
+    const emp4 = { id: "e4" };
+    expect(CommissionEngine.resolveCommissionRate(emp4, null, undefined, undefined)).toBeNull();
+
+    // Test 5: Verify display formatting distinctions
+    expect(CommissionEngine.formatCommissionRateDisplay(0.07)).toBe("7%");
+    expect(CommissionEngine.formatCommissionRateDisplay(0)).toBe("0%");
+    expect(CommissionEngine.formatCommissionRateDisplay(null)).toBe("Non configuré (NO_DATA)");
+    expect(CommissionEngine.formatCommissionRateDisplay(undefined)).toBe("Non configuré (NO_DATA)");
+  });
 });

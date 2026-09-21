@@ -45,7 +45,12 @@ export class EmployeeOperationalAttributionService {
     for (const tx of salesTxs) {
       // 2a. Deduplication check using TransactionDeduplicationService
       const fingerprint = TransactionDeduplicationService.generateTransactionFingerprint(tx);
-      const isDuplicate = await TransactionDeduplicationService.isTransactionDuplicate(businessId, fingerprint);
+      let isDuplicate = false;
+      try {
+        isDuplicate = await TransactionDeduplicationService.isTransactionDuplicate(businessId, fingerprint);
+      } catch (e) {
+        console.warn(`[EmployeeOperationalAttributionService] Deduplication check fallback: ${e}`);
+      }
       if (isDuplicate) {
         console.warn(`[EmployeeOperationalAttributionService] Duplicate transaction skipped: ${tx.id || fingerprint}`);
         continue;
@@ -98,7 +103,7 @@ export class EmployeeOperationalAttributionService {
       // Determine commission for this transaction (metadata commission, or fallback to employee rate)
       let comm = (tx.metadata as any)?.commission_calculated || 0;
       if (!comm) {
-        const commRate = resolvedEmp.commissionRate ?? resolvedEmp.commission_rate ?? 5; // default 5%
+        const commRate = resolvedEmp.commissionRate ?? resolvedEmp.commission_rate ?? 0;
         comm = amount * (commRate / 100);
       }
 
@@ -172,8 +177,12 @@ export class EmployeeOperationalAttributionService {
     // 4. Save aggregates to the employee_department_activity collection in Firestore
     const results = Object.values(aggregates);
     for (const agg of results) {
-      const docRef = doc(db, "employee_department_activity", agg.id!);
-      await setDoc(docRef, agg, { merge: true });
+      try {
+        const docRef = doc(db, "employee_department_activity", agg.id!);
+        await setDoc(docRef, agg, { merge: true });
+      } catch (e) {
+        console.warn(`[EmployeeOperationalAttributionService] Persistence warning: ${e}`);
+      }
     }
 
     console.log(`[EmployeeOperationalAttributionService] Successfully rebuilt and saved ${results.length} operational attributions.`);

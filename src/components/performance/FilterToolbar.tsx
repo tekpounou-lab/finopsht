@@ -154,23 +154,23 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
       {/* Main Filter Controls: Dates, Branch, Department, Metric, Search */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3" id="pic-filter-inputs-grid">
         {/* Date Range Inputs */}
-        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 min-w-0 overflow-hidden transition-colors focus-within:border-cyan-500/50 focus-within:ring-1 focus-within:ring-cyan-500/20">
           <Calendar className="w-4 h-4 text-cyan-400 shrink-0" />
-          <div className="flex items-center gap-1.5 w-full text-xs">
+          <div className="flex items-center gap-1 w-full min-w-0 text-xs">
             <input
               type="date"
               value={filters.startDate}
               onChange={(e) => onDateRangeChange(e.target.value, filters.endDate)}
-              className="bg-transparent text-slate-200 focus:outline-none w-full text-[11px]"
+              className="bg-transparent text-slate-200 focus:outline-none w-full min-w-0 text-[11px] sm:text-xs [color-scheme:dark] cursor-pointer"
               title="Date de début"
               id="pic-input-start-date"
             />
-            <span className="text-slate-500">→</span>
+            <span className="text-slate-500 shrink-0 select-none">→</span>
             <input
               type="date"
               value={filters.endDate}
               onChange={(e) => onDateRangeChange(filters.startDate, e.target.value)}
-              className="bg-transparent text-slate-200 focus:outline-none w-full text-[11px]"
+              className="bg-transparent text-slate-200 focus:outline-none w-full min-w-0 text-[11px] sm:text-xs [color-scheme:dark] cursor-pointer"
               title="Date de fin"
               id="pic-input-end-date"
             />
@@ -178,12 +178,12 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
         </div>
 
         {/* Branch Selector */}
-        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 min-w-0 overflow-hidden">
           <Building className="w-4 h-4 text-indigo-400 shrink-0" />
           <select
             value={filters.branchId}
             onChange={(e) => onBranchChange(e.target.value)}
-            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full cursor-pointer"
+            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full min-w-0 cursor-pointer"
             id="pic-select-branch"
           >
             <option value="ALL" className="bg-slate-900 text-slate-200">
@@ -198,12 +198,12 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
         </div>
 
         {/* Department Selector */}
-        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 min-w-0 overflow-hidden">
           <Layers className="w-4 h-4 text-purple-400 shrink-0" />
           <select
             value={filters.departmentId}
             onChange={(e) => onDepartmentChange(e.target.value)}
-            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full cursor-pointer"
+            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full min-w-0 cursor-pointer"
             id="pic-select-department"
           >
             <option value="ALL" className="bg-slate-900 text-slate-200">
@@ -218,12 +218,12 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
         </div>
 
         {/* Metric Type Selector */}
-        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 min-w-0 overflow-hidden">
           <Filter className="w-4 h-4 text-emerald-400 shrink-0" />
           <select
             value={filters.metricType}
             onChange={(e) => onMetricTypeChange(e.target.value as PICMetricType)}
-            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full cursor-pointer"
+            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full min-w-0 cursor-pointer"
             id="pic-select-metric-type"
           >
             {metricTypes.map((m) => (
@@ -235,14 +235,14 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
         </div>
 
         {/* Search Query */}
-        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 min-w-0 overflow-hidden">
           <Search className="w-4 h-4 text-slate-400 shrink-0" />
           <input
             type="text"
             placeholder="Filtrer employé / mot-clé..."
             value={filters.searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full placeholder-slate-500"
+            className="bg-transparent text-slate-200 text-xs focus:outline-none w-full min-w-0 placeholder-slate-500"
             id="pic-input-search-query"
           />
         </div>

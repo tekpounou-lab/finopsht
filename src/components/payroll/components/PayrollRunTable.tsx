@@ -69,7 +69,7 @@ export const PayrollRunTable: React.FC<PayrollRunTableProps> = ({
       const base = extractVal(r.theoretical_quincena_base_cents, (r as any).baseSalary ?? ((r as any).base_salary_cents ? (r as any).base_salary_cents / 100 : 0));
       const sales = extractVal(r.sales_cents, (r as any).salesHtg);
       
-      const commRateNum = r.commission_rate_used ?? r.commission_rate ?? ((r as any).commissionRate ?? 0.05);
+      const commRateNum = r.commission_rate_used ?? r.commission_rate ?? ((r as any).commissionRate ?? 0.0);
       const rateDisplay = r.pay_profile === "FIXED" ? "-" : `${Math.round(commRateNum * 100)}%`;
 
       const commission = extractVal(r.commission_cents, (r as any).commissions);

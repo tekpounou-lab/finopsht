@@ -265,7 +265,7 @@ export default function DocumentsManager({
       employeeId: "",
       contractType: "cdi",
       payRegime: "fixe",
-      salaryBaseHtg: 30000,
+      salaryBaseHtg: 0,
       commissionRate: 0,
     },
   });

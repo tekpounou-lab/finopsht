@@ -129,10 +129,10 @@ export const WorkforceIntelligenceFramework: React.FC = () => {
           employeeId: emp.id,
           business_id: business?.id || "",
           type,
-          baseSalaryHtg: emp.salaryBaseHtg || emp.baseSalary || 30000,
-          hourlyRateHtg: 250,
-          commissionRate: emp.commissionRate || 10,
-          revenuePercentage: 5
+          baseSalaryHtg: emp.salaryBaseHtg || emp.baseSalary || 0,
+          hourlyRateHtg: emp.hourlyRateHtg || emp.hourlyRate || 0,
+          commissionRate: emp.commissionRate || 0,
+          revenuePercentage: emp.revenuePercentage || 0
         };
       }
     });
@@ -616,11 +616,11 @@ export const WorkforceIntelligenceFramework: React.FC = () => {
               </div>
 
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
-                <span className="text-[9px] uppercase tracking-wider text-slate-500 font-mono block">Ratio ROI de Masse Salariale</span>
+                <span className="text-[9px] uppercase tracking-wider text-slate-500 font-mono block">Multiple de Productivité RH</span>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-xl font-black text-cyan-400 font-mono">{workforceAnalyticsMetrics.hrRoi}x</span>
                 </div>
-                <p className="text-[9px] text-slate-500 mt-1">{isFr ? "Chiffre d'affaires / Masse Salariale" : "Rapò Lajan Salè vs Antre"}</p>
+                <p className="text-[9px] text-slate-500 mt-1">{isFr ? "Chiffre d'affaires généré / Masse salariale" : "Miltiplikatè Lajan Salè vs Antre"}</p>
               </div>
 
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-850">

@@ -1695,9 +1695,9 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
                           <div key={emp.id} className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800/60 font-mono">
                             <span className="font-bold text-white">{emp.name}</span>
                             <div className="space-x-4 text-[11px]">
-                              <span className="text-rose-400">Coût: {formatMoney(emp.cost)}</span>
+                              <span className="text-rose-400">Coût: {emp.cost !== null ? formatMoney(emp.cost) : "Non configuré (NO_DATA)"}</span>
                               <span className="text-emerald-400">Revenu: {formatMoney(emp.revenue)}</span>
-                              <span className="text-cyan-300 font-bold">Marge: {formatMoney(emp.profit)}</span>
+                              <span className="text-cyan-300 font-bold">Marge: {emp.profit !== null ? formatMoney(emp.profit) : "Non configuré (NO_DATA)"}</span>
                             </div>
                           </div>
                         ))}

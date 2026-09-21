@@ -163,7 +163,8 @@ describe("FinancialRatioEngine Canonical Semantic States & Zero vs NO_DATA Tests
         id: "snap_htg",
         revenue: { currentValue: 50000 },
         expenses: { currentValue: 20000 },
-        profit: { currentValue: 30000 }
+        profit: { currentValue: 30000 },
+        netCashFlow: { currentValue: 30000 }
       },
       ledger: []
     });
@@ -176,7 +177,8 @@ describe("FinancialRatioEngine Canonical Semantic States & Zero vs NO_DATA Tests
         id: "snap_usd",
         revenue: { currentValue: 5000 },
         expenses: { currentValue: 2000 },
-        profit: { currentValue: 3000 }
+        profit: { currentValue: 3000 },
+        netCashFlow: { currentValue: 3000 }
       },
       ledger: []
     });

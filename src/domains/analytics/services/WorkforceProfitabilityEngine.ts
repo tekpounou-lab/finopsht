@@ -20,6 +20,7 @@ import { filterOperationalEmployees } from "../../../services/workforce/Employee
 import { RevenueAttributionService } from "../../../services/RevenueAttributionService";
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 import { ReferenceResolver } from "../../../services/ReferenceResolver";
+import { CommissionEngine } from "../../../services/CommissionEngine";
 
 export class WorkforceProfitabilityEngine {
   /**
@@ -274,7 +275,13 @@ export class WorkforceProfitabilityEngine {
       else if (roi >= 0) profitabilityLabel = "Needs Attention";
       else profitabilityLabel = "Critical";
 
-      // Health Score Calculation (0-100)
+      // DEF-9B-09: Executive Operational Performance Heuristic (Score 0-100).
+      // This is an internal operational heuristic, NOT an audited actuarial or financial credit index.
+      // Component factor weights:
+      // 1. Attendance Rate: 25% (0-100% attendance rate * 0.25)
+      // 2. Productivity Score: 25% (0-100 commercial volume score * 0.25)
+      // 3. Profitability Component: 25% (ROI scaled against a 200% benchmark * 0.25)
+      // 4. Compliance / Punctuality: 25% (Base 100 minus 5pts/late and 15pts/unauthorized absence * 0.25)
       const attendanceComponent = attendanceRate * 0.25;
       const productivityComponent = productivityScore * 0.25;
       const profitabilityComponent = Math.min(100, Math.max(0, (roi / 200) * 100)) * 0.25;
@@ -455,13 +462,33 @@ export class WorkforceProfitabilityEngine {
       const employeeBreakdown = deptEmployees.map((e) => {
         const deptSales = e.crossDepartmentAttribution?.[dept.id]?.revenue || 0;
         const isHome = e.departmentId === dept.id;
-        const actualComm = deptSales * 0.05; // default 5%
+        
+        // Resolve default commission rate from business policies without default fallback to 0 (to preserve NO_DATA)
+        const tenantDefaultCommRate = businessSettings?.payroll_policies?.defaultCommissionRate ?? businessSettings?.payroll?.default_commission_rate;
+        const originalEmp = safeEmployees.find(emp => emp.id === e.employeeId);
+        const resolvedCommRate = CommissionEngine.resolveCommissionRate(originalEmp, undefined, undefined, tenantDefaultCommRate ?? undefined);
+        
+        let actualComm: number | null = null;
+        let employeeCommRate: number | null = null;
+        let commissionStatus: "RESOLVED" | "NO_DATA" = "NO_DATA";
+
+        if (resolvedCommRate !== null) {
+          employeeCommRate = resolvedCommRate;
+          actualComm = deptSales * resolvedCommRate;
+          commissionStatus = "RESOLVED";
+        }
+
+        const cost = isHome ? e.financial.totalEmploymentCost : actualComm;
+        const profit = cost !== null ? deptSales - cost : null;
+
         return {
           id: e.employeeId,
           name: e.employeeName,
-          cost: Math.round(isHome ? e.financial.totalEmploymentCost : actualComm),
+          cost: cost !== null ? Math.round(cost) : null,
           revenue: Math.round(deptSales),
-          profit: Math.round(deptSales - (isHome ? e.financial.totalEmploymentCost : actualComm)),
+          profit: profit !== null ? Math.round(profit) : null,
+          commissionRate: employeeCommRate,
+          commissionStatus,
         };
       });
 

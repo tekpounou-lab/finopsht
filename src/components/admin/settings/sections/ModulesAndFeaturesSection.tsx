@@ -52,12 +52,12 @@ const MODULES_CATALOG: ErpModuleConfig[] = [
   {
     id: "payroll",
     title: "Moteur de Paie Enterprise",
-    description: "Gestion automatisée de la paie, calculs d'impôts (ONA 6%, OFATMA 2%, IRI), génération de bulletins de paie et virements directs.",
+    description: "Gestion automatisée de la paie, calculs des cotisations sociales (ONA 6%, OFATMA 2%), génération de bulletins de paie et virements directs.",
     category: "PAIE_RH",
     categoryLabel: "Paie & RH",
     tier: "STARTER",
     icon: FileText,
-    subFeatures: ["Déductions ONA / OFATMA / IRI", "Génération Bulletins PDF", "Virement Bancaire Direct"]
+    subFeatures: ["Déductions ONA / OFATMA", "Génération Bulletins PDF", "Virement Bancaire Direct"]
   },
   {
     id: "attendance",

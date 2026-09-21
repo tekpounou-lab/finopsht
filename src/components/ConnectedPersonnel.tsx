@@ -311,8 +311,9 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
 
     const onaAmount = Math.round(grossGains * 0.06);
     const ofatmaAmount = Math.round(grossGains * 0.02);
-    const iriAmount = Math.round(grossGains * 0.10);
-    const sumDeductions = onaAmount + ofatmaAmount + iriAmount;
+    // IRI progressive calculation is pending authoritative DGI policy data
+    const iriAmount = 0;
+    const sumDeductions = onaAmount + ofatmaAmount;
     const finalNet = grossGains - sumDeductions;
 
     currentItemY += 6;
@@ -329,9 +330,9 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
 
     currentItemY += 6;
     doc.text("Impôt Progressif sur le Revenu (IRI)", 20, currentItemY);
-    doc.text("Barème DGI", 100, currentItemY);
+    doc.text("En attente DGI", 100, currentItemY);
     doc.text("-", 140, currentItemY);
-    doc.text(`${iriAmount.toLocaleString()} HTG`, 170, currentItemY);
+    doc.text("En attente DGI", 170, currentItemY);
 
     currentItemY += 4;
     doc.setFillColor(248, 250, 252);

@@ -89,7 +89,7 @@ export default function CreateBusinessWizard({
   >([]);
   const [newInviteName, setNewInviteName] = useState("");
   const [newInviteEmail, setNewInviteEmail] = useState("");
-  const [newInviteSalary, setNewInviteSalary] = useState("35000");
+  const [newInviteSalary, setNewInviteSalary] = useState("");
   const [newInviteRole, setNewInviteRole] = useState<Role>("EMPLOYEE");
 
   // Add customized department
@@ -152,13 +152,13 @@ export default function CreateBusinessWizard({
           {
             name: newInviteName.trim(),
             email: emailToValidate,
-            baseSalary: parseInt(newInviteSalary) || 30000,
+            baseSalary: parseInt(newInviteSalary) || 0,
             role: newInviteRole,
           },
         ]);
         setNewInviteName("");
         setNewInviteEmail("");
-        setNewInviteSalary("35000");
+        setNewInviteSalary("");
         setNewInviteRole("EMPLOYEE");
       } catch (err) {
         console.error("Error validating email in team invitation step:", err);

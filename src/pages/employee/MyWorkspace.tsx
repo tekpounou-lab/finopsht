@@ -330,7 +330,7 @@ export function MyWorkspace({
 
   const currentMonthTransactions = myTransactions.filter((t) => (t.date && t.date.startsWith(currentMonthPrefix)) || ((t as any).createdAt && String((t as any).createdAt).startsWith(currentMonthPrefix)));
   const activeTransactionsSet = currentMonthTransactions.length > 0 ? currentMonthTransactions : myTransactions;
-  const totalCommissions = activeTransactionsSet.reduce((acc, curr) => acc + ((curr as any).commission || (curr.amount ? curr.amount * 0.05 : 0)), 0);
+  const totalCommissions = activeTransactionsSet.reduce((acc, curr) => acc + ((curr as any).commission || 0), 0);
 
   const computedScorecard = {
     attendanceConsistencyScore,

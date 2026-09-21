@@ -197,12 +197,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                     const snap = snapshot?.find((s) => s.employeeId === rec.employeeId);
                     const hours = snap ? snap.workedHours : Math.round((rec.worked_minutes || 0) / 60);
                     const empMatch = employees?.find(e => e.id === rec.employeeId);
-                    const commRate = rec.commission_rate_used ?? rec.commission_rate ?? (empMatch ? CommissionEngine.resolveCommissionRate(empMatch) : 0);
+                    const commRate = rec.commission_rate_used ?? rec.commission_rate ?? (empMatch ? CommissionEngine.resolveCommissionRate(empMatch) : null);
                     const rateFormatted = CommissionEngine.formatCommissionRateDisplay(commRate);
-                    const sales = rec.sales_cents !== undefined ? fromCents(rec.sales_cents) : (snap?.salesHtg !== undefined ? snap.salesHtg : (snap ? (snap.commissionsHtg > 0 && commRate > 0 ? snap.commissionsHtg / commRate : 0) : 0));
+                    const commRateNum = commRate ?? 0;
+                    const sales = rec.sales_cents !== undefined ? fromCents(rec.sales_cents) : (snap?.salesHtg !== undefined ? snap.salesHtg : (snap ? (snap.commissionsHtg > 0 && commRateNum > 0 ? snap.commissionsHtg / commRateNum : 0) : 0));
                     const commAmount = (rec.commission_cents !== undefined && rec.commission_cents > 0)
                       ? fromCents(rec.commission_cents)
-                      : (sales > 0 && commRate > 0 ? sales * commRate : 0);
+                      : (sales > 0 && commRateNum > 0 ? sales * commRateNum : 0);
                     const prime = snap ? snap.overtimeContribution : (rec.overtime_cents ? fromCents(rec.overtime_cents) : 0);
                     const penality = snap ? snap.absencePenaltiesHtg : (rec.penalties_cents ? fromCents(rec.penalties_cents) : 0);
                     const bonus = snap ? snap.bonusesHtg : (rec.bonuses_cents ? rec.bonuses_cents / 100 : 0);

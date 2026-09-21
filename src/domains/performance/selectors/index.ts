@@ -468,8 +468,8 @@ export function selectCashBasisExpertMetrics(
 
   const totalRevenue = Math.round(cashStatement.totalInflow);
   const totalExpenses = Math.round(cashStatement.totalOutflow);
-  const netProfit = Math.round(cashStatement.netCashFlow);
-  const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
+  const netCashFlow = Math.round(cashStatement.netCashFlow);
+  const cashFlowMargin = totalRevenue > 0 ? Math.round((netCashFlow / totalRevenue) * 100) : 0;
 
   const snap = AnalyticsEngine.generateSnapshot(
     "CUSTOM",
@@ -484,6 +484,9 @@ export function selectCashBasisExpertMetrics(
     businessId,
     "fr"
   );
+
+  const netProfit = Math.round(snap.profit.currentValue);
+  const profitMargin = Math.round(snap.profitMargin);
 
   const totalPayroll = Math.round(
     cashStatement.periodMovements
@@ -518,6 +521,8 @@ export function selectCashBasisExpertMetrics(
     totalExpenses,
     netProfit,
     profitMargin,
+    netCashFlow,
+    cashFlowMargin,
     averageHoursWorked,
     overtimeHoursTotal,
     totalCommissions: Math.round(totalCommissions),

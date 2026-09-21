@@ -106,7 +106,8 @@ export class CommissionEngine {
    * Formats a raw commission rate for UI display as a percentage string (e.g. 0.45 -> "45%", 0.05 -> "5%", 0.17 -> "17%").
    */
   static formatCommissionRateDisplay(rawRate: number | string | undefined | null): string {
-    if (rawRate === undefined || rawRate === null || isNaN(Number(rawRate))) return "0%";
+    if (rawRate === undefined || rawRate === null) return "Non configuré (NO_DATA)";
+    if (isNaN(Number(rawRate))) return "0%";
     const num = Number(rawRate);
     if (num === 0) return "0%";
     const percent = num <= 1 ? Math.round(num * 100 * 100) / 100 : num;
@@ -126,7 +127,7 @@ export class CommissionEngine {
    * - Explicit 0 is preserved as 0 (never replaced by a fallback).
    * - Missing configuration returns 0 or policy default, never an undocumented 5%.
    */
-  static resolveCommissionRate(employee: any, contract?: any, saleDate?: string, policyDefaultRate?: number): number {
+  static resolveCommissionRate(employee: any, contract?: any, saleDate?: string, policyDefaultRate?: number): number | null {
     const rawModel = employee?.paymentModel || employee?.payRegime || employee?.pay_profile || (contract as any)?.payRegime;
     if (rawModel && String(rawModel).toUpperCase() === "FIXED") {
       return 0;
@@ -182,7 +183,7 @@ export class CommissionEngine {
       }
     }
 
-    return 0;
+    return null;
   }
 
   /**
@@ -206,7 +207,7 @@ export class CommissionEngine {
     const resolvedRate = CommissionEngine.resolveCommissionRate(employee, contract);
     const effectiveRate = defaultCommissionRate !== undefined
       ? (defaultCommissionRate > 1 ? defaultCommissionRate / 100 : defaultCommissionRate)
-      : resolvedRate;
+      : (resolvedRate ?? 0);
 
     Object.entries(salesByDept).forEach(([deptId, data]) => {
       if (data.salesAmount <= 0) {

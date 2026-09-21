@@ -90,37 +90,57 @@ export class FinancialRatioEngine {
       ? "NO_DATA" 
       : hasExplicitExpense ? (totalExpenses === 0 ? "ZERO" : "VALUE") : "ZERO";
     
+    // Extract canonical cash flow from the snapshot
+    let netCashFlowVal: number | null = null;
+    let hasExplicitCashFlow = false;
+
+    if (activeSnapshot) {
+      if (activeSnapshot.netCashFlow !== undefined && activeSnapshot.netCashFlow !== null) {
+        netCashFlowVal = typeof activeSnapshot.netCashFlow === "number" 
+          ? activeSnapshot.netCashFlow 
+          : (activeSnapshot.netCashFlow?.currentValue !== undefined && activeSnapshot.netCashFlow?.currentValue !== null 
+              ? Number(activeSnapshot.netCashFlow.currentValue) 
+              : null);
+        hasExplicitCashFlow = netCashFlowVal !== null;
+      } else if (activeSnapshot.cashFlow !== undefined && activeSnapshot.cashFlow !== null) {
+        netCashFlowVal = Number(activeSnapshot.cashFlow);
+        hasExplicitCashFlow = !isNaN(netCashFlowVal);
+      }
+    }
+
     let profitState: MetricSemanticState = "NO_DATA";
     let marginState: MetricSemanticState = "NO_DATA";
     let profitMargin = "DONNÉES INSUFFISANTES";
-    let cashFlowState = "Données comptables non disponibles (NO_DATA)";
+    let cashFlowState = "Données de flux de trésorerie non disponibles (NO_DATA)";
     let cashState: MetricSemanticState = "NO_DATA";
     
     if (!hasSnapshotData) {
       profitState = "NO_DATA";
       marginState = "NO_DATA";
       profitMargin = "DONNÉES INSUFFISANTES";
-      cashFlowState = "Données comptables non disponibles (NO_DATA)";
-      cashState = "NO_DATA";
     } else if (totalRevenue === 0 && totalExpenses === 0) {
       profitState = "ZERO";
       marginState = "UNDEFINED"; // 0/0 cannot be computed mathematically
       profitMargin = "INDÉTERMINÉ (0/0)";
-      cashFlowState = `Solde nul (0 ${currency})`;
-      cashState = "ZERO";
     } else if (totalRevenue > 0) {
       profitState = balance === 0 ? "ZERO" : "VALUE";
       marginState = "VALUE";
       profitMargin = ((balance / totalRevenue) * 100).toFixed(1) + "%";
-      cashFlowState = balance >= 0 ? `Stable (+${balance.toLocaleString()} ${currency})` : `Déficitaire (${balance.toLocaleString()} ${currency})`;
-      cashState = "VALUE";
     } else {
       // totalRevenue === 0 and totalExpenses > 0
       profitState = "VALUE";
       marginState = "VALUE";
       profitMargin = "-100.0%";
-      cashFlowState = `Déficitaire (${balance.toLocaleString()} ${currency})`;
-      cashState = "VALUE";
+    }
+
+    if (hasExplicitCashFlow && netCashFlowVal !== null) {
+      cashState = netCashFlowVal === 0 ? "ZERO" : "VALUE";
+      cashFlowState = netCashFlowVal >= 0 
+        ? `Stable (+${netCashFlowVal.toLocaleString()} ${currency})` 
+        : `Déficitaire (${netCashFlowVal.toLocaleString()} ${currency})`;
+    } else {
+      cashState = "NO_DATA";
+      cashFlowState = "Données de flux de trésorerie non disponibles (NO_DATA)";
     }
     
     // 2. Timesheet evaluation & Semantic State Detection
@@ -214,8 +234,12 @@ export class FinancialRatioEngine {
       
     const next_fortnight_payroll = hasPayrollData ? Math.round(avgPayroll * 1.05) : 0;
     
-    const end_of_month_cash_flow = hasSnapshotData 
-      ? Math.round(balance + (totalRevenue * 0.42) - (totalExpenses * 0.38))
+    // Starting balance for forecast cash flow must come from the canonical cash source (netCashFlowVal) if available.
+    // If cash flow is unavailable, the projection is blocked/unresolved.
+    const startingCash = hasExplicitCashFlow && netCashFlowVal !== null ? netCashFlowVal : 0;
+    
+    const end_of_month_cash_flow = hasExplicitCashFlow && netCashFlowVal !== null
+      ? Math.round(startingCash + (totalRevenue * 0.42) - (totalExpenses * 0.38))
       : 0;
       
     const budget_overrun_risk: "FAIBLE" | "MOYEN" | "ÉLEVÉ" | "LOW" | "NORMAL" | "HIGH" | "NO_DATA" = !hasSnapshotData 
@@ -245,9 +269,9 @@ export class FinancialRatioEngine {
       financialHealthScore = Math.max(0, Math.min(100, score));
     }
     
-    const forecastJustification = hasSnapshotData || hasPayrollData || hasAttendanceData
-      ? "Modélisation prédictive issue d'une extension de régression déterministe sur les cycles et écritures comptables réelles."
-      : "Données comptables et RH insuffisantes pour calculer des projections fiables. Affichage en mode strict sans interpolation.";
+    const forecastJustification = hasExplicitCashFlow
+      ? "PROJECTION HYPOTHÉTIQUE NON-AUTORITATIVE (EXPERIMENTAL HEURISTIC) : Modélisation prédictive basée sur le flux de trésorerie net réel de la période. Les coefficients de transition (0.42 et 0.38) ne sont pas certifiés comme réglementaires."
+      : "Données de trésorerie réelles (cash flow) insuffisantes ou non certifiées. Projections bloquées (NO_DATA / UNDEFINED) pour préserver la conformité financière.";
 
     return {
       summary: `[Gouvernance Heuristique locale] Analyse opérationnelle de ${business?.name || "FinOps"}. ` +

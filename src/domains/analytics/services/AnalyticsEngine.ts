@@ -889,18 +889,12 @@ export class AnalyticsEngine {
         .filter((t) => isIncomeTx(t))
         .reduce((sum, t) => sum + getTxAmount(t), 0);
 
-      const payrollSalesSum = payrolls.reduce((sum, pr: any) => {
-        const factor = getRecordProrationFactor(pr, range);
-        if (factor <= 0) return sum;
-        const s = (pr.sales_cents ? pr.sales_cents / 100 : (pr.salesHtg || pr.salesVolume || pr.sales_gl || pr.sales || 0));
-        return sum + (s * factor);
-      }, 0);
-
-      // Prioritize GL (Grand Livre) transactions if present, otherwise fallback to payroll sales
-      if (glIncomeSum > 0) {
-        return glIncomeSum;
-      }
-      return payrollSalesSum;
+      // DEF-9B-05: Strict Revenue Semantics.
+      // Accounting revenue MUST strictly originate from posted GL Income (or cash inflows in cash mode).
+      // Operational employee sales (sales_cents on payroll records) represent commercial attribution
+      // for commissions and workforce productivity, NOT general ledger recognized company revenue.
+      // Therefore, if glIncomeSum is 0, accounting revenue is 0.00 (NO FALLBACK to payroll sales).
+      return glIncomeSum;
     };
 
     const sumQuickBooksRevenue = (txs: LedgerTransaction[]) =>
@@ -1020,8 +1014,35 @@ export class AnalyticsEngine {
       : (curPayrollVariance < 0.01 ? "RECONCILED" : "UNRECONCILED");
 
     // Total operational expenses: Non-payroll GL expenses + GL payroll (if posted) or Payroll Subledger cost (if GL not posted)
-    const totalCurExpenses = curNonPayrollExp + (curGlPayrollExp > 0 ? curGlPayrollExp : curPayrollCost);
-    const totalPrevExpenses = prevNonPayrollExp + (prevGlPayrollExp > 0 ? prevGlPayrollExp : prevPayrollCost);
+    const accrualCurExpenses = curNonPayrollExp + (curGlPayrollExp > 0 ? curGlPayrollExp : curPayrollCost);
+    const accrualPrevExpenses = prevNonPayrollExp + (prevGlPayrollExp > 0 ? prevGlPayrollExp : prevPayrollCost);
+
+    const curCashStatement = CanonicalCashEngine.executePipeline(
+      {
+        payrollRecords: curPayroll,
+        ledgerTransactions: curTxs,
+      },
+      {
+        businessId: actualBizId,
+        startDate: current.startDate,
+        endDate: current.endDate,
+      }
+    );
+
+    const prevCashStatement = CanonicalCashEngine.executePipeline(
+      {
+        payrollRecords: prevPayroll,
+        ledgerTransactions: prevTxs,
+      },
+      {
+        businessId: actualBizId,
+        startDate: previous.startDate,
+        endDate: previous.endDate,
+      }
+    );
+
+    const totalCurExpenses = actualAccountingMode === "CASH" ? curCashStatement.totalOutflow : accrualCurExpenses;
+    const totalPrevExpenses = actualAccountingMode === "CASH" ? prevCashStatement.totalOutflow : accrualPrevExpenses;
 
     console.debug("[KPI:Expenses] Pipeline step breakdown:", {
       expenseTransactionsCount: curTxs.filter((t) => t.type !== "INCOME" && t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED").length,
@@ -1052,8 +1073,11 @@ export class AnalyticsEngine {
       profitResult: curProfitVal,
     });
 
-    // Cash on hand: Cumulative sum of INCOME minus EXPENSES/PAYROLL and ADVANCES
-    // Since cash on hand is a running total, we calculate it across all transactions up to current.endDate
+    // DEF-9B-06: CashOnHand Lineage & Limitation.
+    // Lineage: Cumulative running sum of all cash-settled General Ledger transactions (INCOME - EXPENSE/PAYROLL - ADVANCE)
+    // up to the period end date.
+    // Limitation: This represents GL Cash Balance across all accounts. It does NOT perform automatic physical
+    // drawer reconciliation against individual till counts or branch safes (which reside in the operational Cash Management subledger).
     const allTxsUpToCurrent = actualTxs.filter((t) => {
       if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
       if (actualBizId && t.business_id !== actualBizId && (t as any).businessId !== actualBizId) return false;
@@ -1090,6 +1114,13 @@ export class AnalyticsEngine {
     const cashOnHand = this.compareValues(
       calculateTotalCash(allTxsUpToCurrent),
       calculateTotalCash(allTxsUpToPrevious)
+    );
+
+    // DEF-9B-02: Canonical Net Cash Flow (Variation de Trésorerie)
+    // Derived canonically from CashBasisEngine: Total Settled Inflows - Total Settled Outflows
+    const netCashFlow = this.compareValues(
+      curCashStatement.netCashFlow,
+      prevCashStatement.netCashFlow
     );
 
     // Burn Rate (expenses per day)
@@ -1921,6 +1952,8 @@ export class AnalyticsEngine {
       operationalExpenses,
       totalExpenses,
       profit,
+      netProfit: profit,
+      netCashFlow,
       cashOnHand,
       burnRate,
       payrollCost,

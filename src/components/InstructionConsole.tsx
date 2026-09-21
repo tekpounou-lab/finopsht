@@ -267,7 +267,7 @@ export default function InstructionConsole() {
     ops4Desc: { fr: "Balances doubles", ht: "Balans kont", en: "Dual entry logged" },
     guidance: true,
     payrollBadge: { fr: "RÉGULATION DE LA PAIE", ht: "DWA SOU PEMAN YO", en: "PAYROLL LAWS" },
-    payrollItalic: { fr: "Remarque : Les tranches IRI s'appliquent automatiquement après abattements selon les barèmes nationaux.", ht: "Nòt : Taks IRI a kalkile pou anplwaye yo otomatikman dapre lalwa travay la.", en: "Notice: Income tax brackets (IRI) are applied dynamically in accordance with national laws." },
+    payrollItalic: { fr: "Remarque : La déduction de l'IRI progressif est en attente de la transmission des barèmes officiels par la DGI.", ht: "Nòt : Kalkil IRI an detay an tèt ansanm ak barèm DGI an tennfas.", en: "Notice: Progressive income tax (IRI) calculation is pending official DGI rate brackets." },
     planningBadge: { fr: "RÈGLEMENT DE PLANIFICATION", ht: "PRENSIP ORÈ AK SHIFT YO", en: "SCHEDULING POLICIES" },
     cardDlqTitle: { fr: "Système de file d'attente (DLQ)", ht: "Sistèm keu ak offline (DLQ)", en: "Dead Letter Queue (DLQ)" },
     cardForensicTitle: { fr: "Audit Forensic Immuable", ht: "Odit Forensic imuiab", en: "Immutable Forensic Ledger" },
@@ -350,9 +350,9 @@ export default function InstructionConsole() {
         en: "CNS (Assistance Fund): Uniform 2% deduction from base salary towards general assistance insurance."
       },
       iri: {
-        fr: "IRI (Impôt Revenu) : Barème progressif calculé dynamiquement par le moteur analytique.",
-        ht: "IRI (Taks sou Revni) : Kalkile otomatik selon tab barèm ofisyèl Direksyon Jeneral Taks (DGI).",
-        en: "IRI (Income Tax): Automated brackets calculations on accumulated earnings."
+        fr: "IRI (Impôt Revenu) : Calcul progressif DGI en attente de la transmission des barèmes administratifs.",
+        ht: "IRI (Taks sou Revni) : Kalkil an detay ap tann liv barèm ofisyèl DGI yo.",
+        en: "IRI (Income Tax): Progressive calculation pending official DGI schedule."
       }
     },
     taxSimTitle: {

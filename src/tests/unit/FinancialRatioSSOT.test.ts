@@ -115,7 +115,8 @@ describe("FinancialRatioEngine SSOT Invariant & AnalyticsSnapshot Consumption Te
         id: "snap_usd",
         revenue: { currentValue: 12000 },
         expenses: { currentValue: 8000 },
-        profit: { currentValue: 4000 }
+        profit: { currentValue: 4000 },
+        netCashFlow: { currentValue: 4000 }
       }
     });
 

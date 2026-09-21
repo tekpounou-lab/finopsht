@@ -21,6 +21,8 @@ export interface SimplifiedMetrics {
   totalExpenses: number;
   netProfit: number;
   profitMargin: number;
+  netCashFlow?: number;
+  cashFlowMargin?: number;
   averageHoursWorked: number;
   overtimeHoursTotal: number;
   totalCommissions: number;

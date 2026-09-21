@@ -114,7 +114,15 @@ export interface DepartmentProfitabilityRecord {
   trend: "UP" | "DOWN" | "STABLE";
   riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
-  employeeBreakdown: Array<{ id: string; name: string; cost: number; revenue: number; profit: number }>;
+  employeeBreakdown: Array<{
+    id: string;
+    name: string;
+    cost: number | null;
+    revenue: number;
+    profit: number | null;
+    commissionRate?: number | null;
+    commissionStatus?: "RESOLVED" | "NO_DATA";
+  }>;
   costVsRevenueHistory: Array<{ period: string; cost: number; revenue: number; profit: number }>;
 }
 
