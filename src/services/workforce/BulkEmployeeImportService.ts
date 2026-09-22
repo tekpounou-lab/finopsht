@@ -36,6 +36,10 @@ export interface ParsedEmployeeRow {
   departmentId: string;
   departmentName: string;
 
+  // Identity Resolution
+  employeeId?: string;
+  registrationId?: string;
+
   // Resolution metadata
   isNewBranch: boolean;
   isNewDepartment: boolean;
@@ -218,7 +222,10 @@ export interface BulkImportResolutionPlan {
   };
 }
 
+export type BulkImportStatus = "PENDING" | "RUNNING" | "SUCCESS" | "PARTIAL_FAILURE" | "FAILED";
+
 export interface BulkImportExecutionResult {
+  status: BulkImportStatus;
   success: boolean;
   importedEmployeesCount: number;
   createdBranchesCount: number;
@@ -229,8 +236,30 @@ export interface BulkImportExecutionResult {
   createdInvitations: Invitation[];
   createdBadges: EmployeeBadge[];
   createdContracts: EmployeeContract[];
+  committedBatchesCount?: number;
+  totalBatchesCount?: number;
   logs: string[];
   error?: string;
+}
+
+/**
+ * Generates a stable deterministic ID based on businessId and a unique record identifier.
+ * Priority order: stable employee ID > registration ID > normalized email.
+ * NOTE: When falling back to email-based deterministic identity, email change = identity change.
+ */
+export function generateDeterministicImportId(prefix: string, businessId: string, identifier: string): string {
+  const input = `${businessId}:${identifier.toLowerCase().trim()}`;
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c64e6d;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const hashStr = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  return `${prefix}_${hashStr}`;
 }
 
 export class BulkEmployeeImportService {
@@ -543,10 +572,25 @@ export class BulkEmployeeImportService {
         }
       }
 
+      let resolvedEmployeeId: string | undefined = undefined;
+      let resolvedRegistrationId: string | undefined = undefined;
+
       // 6. Validate Row Integrity
       if (!email || !email.includes("@")) {
         rowErrors.push(`Format d'email invalide: "${rawEmail || 'vide'}"`);
       } else {
+        const rawEmpId = (getRecordValue(record, [
+          "id", "employee_id", "employeeId", "matricule", "code_employe", "personnel_id", "personnelId"
+        ]) || "").toString().trim();
+
+        const rawRegistrationId = (getRecordValue(record, [
+          "badge_id", "badgeId", "registration_id", "registrationId", "numero_badge", "badge"
+        ]) || "").toString().trim();
+
+        const existingDraftEmployee = activeStaff.find(emp => 
+          emp.email && emp.email.toLowerCase().trim() === email && (emp.status === "DRAFT" || emp.status === "PENDING")
+        );
+
         if (seenEmailsInFile.has(email)) {
           rowErrors.push(`Email en doublon dans le fichier: "${email}"`);
         } else {
@@ -554,11 +598,14 @@ export class BulkEmployeeImportService {
         }
 
         const isAlreadyActive = activeStaff.some(emp => 
-          emp.email && emp.email.toLowerCase().trim() === email
+          emp.email && emp.email.toLowerCase().trim() === email && (emp.status === "ACTIVE" || emp.isActive === true || emp.is_active === true)
         );
         if (isAlreadyActive) {
-          rowErrors.push(`Collaborateur existant avec l'email "${email}"`);
+          rowErrors.push(`Collaborateur existant et actif avec l'email "${email}"`);
         }
+
+        resolvedEmployeeId = rawEmpId || existingDraftEmployee?.id || undefined;
+        resolvedRegistrationId = rawRegistrationId || undefined;
       }
 
       if (rowErrors.length > 0) {
@@ -583,6 +630,8 @@ export class BulkEmployeeImportService {
         branchName: resolvedBranchName,
         departmentId: resolvedDeptId,
         departmentName: resolvedDeptName,
+        employeeId: resolvedEmployeeId,
+        registrationId: resolvedRegistrationId,
         isNewBranch,
         isNewDepartment,
         isValid: rowErrors.length === 0,
@@ -622,6 +671,7 @@ export class BulkEmployeeImportService {
     const validRows = plan.parsedRows.filter(r => r.isValid);
     if (validRows.length === 0) {
       return {
+        status: "FAILED",
         success: false,
         importedEmployeesCount: 0,
         createdBranchesCount: 0,
@@ -651,10 +701,14 @@ export class BulkEmployeeImportService {
       logs.push(`Création de ${plan.departmentsToCreate.length} nouveau(x) département(s) : ${plan.departmentsToCreate.map(d => d.name).join(", ")}`);
     }
 
-    // Build entities
+    // Build entities with deterministic identities (Priority: stable ID > registration ID > normalized email)
+    // NOTE: Fallback to normalized email deterministic identity. Email change = identity change.
     for (const row of validRows) {
-      const empId = `emp_${Math.random().toString(36).substring(2, 9)}`;
-      const inviteId = `inv_${Math.random().toString(36).substring(2, 9)}`;
+      const stableId = row.employeeId || (row.registrationId ? `emp_${row.registrationId}` : undefined);
+      const empId = stableId || generateDeterministicImportId("emp", plan.businessId, row.email);
+      const inviteId = generateDeterministicImportId("inv", plan.businessId, row.email);
+      const badgeId = row.registrationId ? `bad_${row.registrationId}` : `bad_${empId}`;
+      const contractId = generateDeterministicImportId("con", plan.businessId, row.email);
 
       const newEmp: Employee = {
         id: empId,
@@ -736,7 +790,7 @@ export class BulkEmployeeImportService {
       };
 
       const newContract: EmployeeContract = {
-        id: `con_${Math.random().toString(36).substring(2, 9)}`,
+        id: contractId,
         employeeId: empId,
         business_id: plan.businessId,
         fileUrl: `https://storage.googleapis.com/finops-contracts/${empId}-contract-${row.contractType}.pdf`,
@@ -755,9 +809,13 @@ export class BulkEmployeeImportService {
       logs.push(`Préparation de ${row.name} (${row.position}) -> Succursale: ${row.branchName}, Département: ${row.departmentName}`);
     }
 
+    let committedBatches = 0;
+    let totalBatches = 0;
+
     try {
-      // 1. Commit all entities atomically via EmployeeRepository
-      await EmployeeRepository.createBulkImportBatch(
+      // 1. Commit all entities sequentially via EmployeeRepository in chunks of max 45 employees
+      // CLIENT PRE-FETCH PROTECTION ONLY: Concurrency collision protection is enforced via deterministic document ID setDoc (idempotent write) combined with client-side active employee pre-fetch validation.
+      const batchResult = await EmployeeRepository.createBulkImportBatch(
         createdEmployees,
         createdInvitations,
         createdBadges,
@@ -765,6 +823,8 @@ export class BulkEmployeeImportService {
         plan.branchesToCreate,
         plan.departmentsToCreate
       );
+      committedBatches = batchResult.committedBatches;
+      totalBatches = batchResult.totalBatches;
 
       // 2. Publish Domain Events
       for (const branch of plan.branchesToCreate) {
@@ -822,9 +882,10 @@ export class BulkEmployeeImportService {
         console.warn("[BulkEmployeeImportService] Cache sweep warning:", cacheErr);
       }
 
-      logs.push(`Intégration réussie : ${createdEmployees.length} collaborateurs, ${plan.branchesToCreate.length} succursales, et ${plan.departmentsToCreate.length} départements enregistrés.`);
+      logs.push(`Intégration réussie : ${createdEmployees.length} collaborateurs, ${plan.branchesToCreate.length} succursales, et ${plan.departmentsToCreate.length} départements enregistrés (${committedBatches} lots validés).`);
 
       return {
+        status: "SUCCESS",
         success: true,
         importedEmployeesCount: createdEmployees.length,
         createdBranchesCount: plan.branchesToCreate.length,
@@ -835,22 +896,31 @@ export class BulkEmployeeImportService {
         createdInvitations,
         createdBadges,
         createdContracts,
+        committedBatchesCount: committedBatches,
+        totalBatchesCount: totalBatches,
         logs
       };
     } catch (err: any) {
       console.error("[BulkEmployeeImportService] Atomic import failure:", err);
+      const isPartial = committedBatches > 0;
+      const status: BulkImportStatus = isPartial ? "PARTIAL_FAILURE" : "FAILED";
+      const importedCount = isPartial ? Math.min(createdEmployees.length, committedBatches * 45) : 0;
+
       return {
+        status,
         success: false,
-        importedEmployeesCount: 0,
-        createdBranchesCount: 0,
-        createdDepartmentsCount: 0,
-        createdBranches: [],
-        createdDepartments: [],
-        createdEmployees: [],
-        createdInvitations: [],
-        createdBadges: [],
-        createdContracts: [],
-        logs: [...logs, `Échec de l'intégration atomique : ${err.message}`],
+        importedEmployeesCount: importedCount,
+        createdBranchesCount: isPartial ? plan.branchesToCreate.length : 0,
+        createdDepartmentsCount: isPartial ? plan.departmentsToCreate.length : 0,
+        createdBranches: isPartial ? plan.branchesToCreate : [],
+        createdDepartments: isPartial ? plan.departmentsToCreate : [],
+        createdEmployees: isPartial ? createdEmployees.slice(0, importedCount) : [],
+        createdInvitations: isPartial ? createdInvitations.slice(0, importedCount) : [],
+        createdBadges: isPartial ? createdBadges.slice(0, importedCount) : [],
+        createdContracts: isPartial ? createdContracts.slice(0, importedCount) : [],
+        committedBatchesCount: committedBatches,
+        totalBatchesCount: totalBatches,
+        logs: [...logs, `Échec de l'intégration (${status}) : ${err.message}`],
         error: err.message
       };
     }

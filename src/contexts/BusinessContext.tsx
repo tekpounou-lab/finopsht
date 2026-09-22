@@ -320,12 +320,14 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
   }, []);
 
   useEffect(() => {
-    if (activeBusinessId && auth.currentUser) {
+    const role = identity?.role ? String(identity.role).toUpperCase() : undefined;
+    const isAuthorizedRole = Boolean(role && ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"].includes(role));
+    if (activeBusinessId && auth.currentUser && isAuthorizedRole) {
       WorkflowEngine.seedForBusiness(activeBusinessId).catch((err) => {
         console.warn("[BusinessContext] Workflow seeding deferred:", err.message);
       });
     }
-  }, [activeBusinessId]);
+  }, [activeBusinessId, identity?.role]);
 
   // Map permissions from roles for authorization context
   useEffect(() => {

@@ -82,15 +82,30 @@ export class ApprovalRepository {
     }
 
     try {
-      const q = query(
+      // 1. Primary query using canonical business_id
+      const qCanonical = query(
         collection(db, this.POLICY_COLLECTION),
-        where("businessId", "==", businessId),
+        where("business_id", "==", businessId),
         where("entityType", "==", entityType)
       );
-      const snap = await withFirestoreRetry(
-        () => getDocs(q),
-        { tag: "ApprovalRepository.findPolicy" }
+      let snap = await withFirestoreRetry(
+        () => getDocs(qCanonical),
+        { tag: "ApprovalRepository.findPolicy.canonical" }
       );
+
+      // 2. Fallback query for legacy records using businessId
+      if (snap.empty) {
+        const qLegacy = query(
+          collection(db, this.POLICY_COLLECTION),
+          where("businessId", "==", businessId),
+          where("entityType", "==", entityType)
+        );
+        snap = await withFirestoreRetry(
+          () => getDocs(qLegacy),
+          { tag: "ApprovalRepository.findPolicy.legacy" }
+        );
+      }
+
       if (snap.empty) return null;
       const data = snap.docs[0].data() as ApprovalPolicy;
       this.cache.set(cacheKey, { data, timestamp: Date.now() });
@@ -106,12 +121,16 @@ export class ApprovalRepository {
       return;
     }
     const path = `${this.INSTANCE_COLLECTION}/${id}`;
+    const payload: any = {
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+    if (updates.businessId && !(updates as any).business_id) {
+      payload.business_id = updates.businessId;
+    }
     try {
       await withFirestoreRetry(
-        () => updateDoc(doc(db, this.INSTANCE_COLLECTION, id), {
-          ...updates,
-          updatedAt: new Date().toISOString()
-        }),
+        () => updateDoc(doc(db, this.INSTANCE_COLLECTION, id), payload),
         { tag: "ApprovalRepository.updateInstance" }
       );
       this.invalidateCache();
@@ -129,11 +148,17 @@ export class ApprovalRepository {
       return;
     }
     const path = `${this.POLICY_COLLECTION}/${policy.id}`;
+    const payload = {
+      ...policy,
+      business_id: policy.business_id || policy.businessId,
+      businessId: policy.businessId || policy.business_id,
+      updatedAt: new Date().toISOString()
+    };
     try {
       const existing = await this.findPolicy(policy.businessId, policy.entityType);
       if (!existing) {
         await withFirestoreRetry(
-          () => setDoc(doc(db, this.POLICY_COLLECTION, policy.id), policy),
+          () => setDoc(doc(db, this.POLICY_COLLECTION, policy.id), payload),
           { tag: "ApprovalRepository.seedPolicy" }
         );
         this.invalidateCache();

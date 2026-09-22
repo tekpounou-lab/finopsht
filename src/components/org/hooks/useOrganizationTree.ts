@@ -70,12 +70,12 @@ export function useOrganizationTree({
   const isOwnerOrManager = hasPermission(currentRole, "canCreateBranch");
 
   const businessBranches = useMemo(
-    () => branches.filter((b) => b.business_id === currentBusiness?.id),
+    () => branches.filter((b) => (b.business_id || (b as any).businessId) === currentBusiness?.id),
     [branches, currentBusiness?.id]
   );
 
   const businessDepts = useMemo(
-    () => departments.filter((d) => d.business_id === currentBusiness?.id),
+    () => departments.filter((d) => (d.business_id || (d as any).businessId) === currentBusiness?.id),
     [departments, currentBusiness?.id]
   );
 
@@ -83,7 +83,7 @@ export function useOrganizationTree({
     () =>
       employees.filter(
         (e) =>
-          e.business_id === currentBusiness?.id &&
+          (e.business_id || (e as any).businessId) === currentBusiness?.id &&
           (e.status === "ACTIVE" ||
             e.status === "INVITED" ||
             e.status === "PENDING_ACCEPTANCE" ||
@@ -105,22 +105,22 @@ export function useOrganizationTree({
     };
 
     const branchNodes: TreeNode[] = businessBranches.map((br) => {
-      // Find linked departments for this branch
+      // Find linked departments for this branch (canonical-first)
       const linkedDeptIds = new Set(
         branchDepartmentLinks
-          .filter((link) => link.branchId === br.id)
-          .map((link) => link.departmentId)
+          .filter((link) => ((link as any).branch_id || link.branchId) === br.id)
+          .map((link) => (link as any).department_id || link.departmentId)
       );
 
       const deptsForBranch = businessDepts.filter(
-        (d) => linkedDeptIds.has(d.id) || d.branchId === br.id
+        (d) => linkedDeptIds.has(d.id) || (d.branch_id || d.branchId) === br.id
       );
 
       const deptNodes: TreeNode[] = deptsForBranch.map((dept) => {
         const staffInDept = activeStaff.filter(
           (emp) =>
-            (emp.departmentId === dept.id || emp.department_id === dept.id) &&
-            (emp.branchId === br.id || emp.branch_id === br.id)
+            ((emp.department_id || emp.departmentId) === dept.id) &&
+            ((emp.branch_id || emp.branchId) === br.id)
         );
 
         const empNodes: TreeNode[] = staffInDept.map((emp) => ({

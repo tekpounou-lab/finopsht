@@ -7,6 +7,16 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
+const { getFirestore } = require("firebase-admin/firestore");
+
+/**
+ * Named Firestore database for FINOPS ERP production environment
+ */
+const FIRESTORE_DATABASE_ID =
+  process.env.FIRESTORE_DATABASE_ID || "ai-studio-finopserp-ef001fee-dd79-4547-8e51-9e59e365e98a";
+
+const db = getFirestore(FIRESTORE_DATABASE_ID);
+
 /**
  * List of authorized explicit origins for FINOPS ERP
  */
@@ -101,7 +111,6 @@ exports.finopsEventOrchestrator = onRequest(
 
       // If eventId is provided, update its status in Firestore
       if (eventId) {
-        const db = admin.firestore();
         const eventRef = db.collection("events").doc(eventId);
         await eventRef.set(
           {
@@ -237,6 +246,7 @@ async function sendNotificationEmail(options) {
 exports.onNotificationCreated = onDocumentCreated(
   {
     document: "notifications/{notificationId}",
+    database: FIRESTORE_DATABASE_ID,
     region: "us-central1"
   },
   async (event) => {
@@ -251,7 +261,6 @@ exports.onNotificationCreated = onDocumentCreated(
 
     logger.info(`[onNotificationCreated] Triggered for notification ${notificationId}, type: ${type || "INFO"}, targetUser: ${userId || "BROADCAST"}`);
 
-    const db = admin.firestore();
     const recipientEmails = [];
 
     if (userId) {

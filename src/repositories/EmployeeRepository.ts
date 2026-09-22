@@ -632,7 +632,7 @@ export class EmployeeRepository {
     contracts: any[],
     branchesToCreate: any[] = [],
     departmentsToCreate: any[] = []
-  ): Promise<void> {
+  ): Promise<{ committedBatches: number; totalBatches: number }> {
     if (employees.length > 0) {
       const sampleBizId = employees[0].business_id || employees[0].businessId;
       if (sampleBizId) {
@@ -710,51 +710,106 @@ export class EmployeeRepository {
       }
     }
 
-    const batch = writeBatch(db);
+    const CHUNK_SIZE = 45;
+    const totalEmployees = employees.length;
+    const hasMetadata = branchesToCreate.length > 0 || departmentsToCreate.length > 0;
+    const totalBatches = Math.ceil(totalEmployees / CHUNK_SIZE) + (hasMetadata ? 1 : 0);
+    let committedBatches = 0;
 
-    // Write new branches and departments in the same atomic batch
-    branchesToCreate.forEach(branch => {
-      batch.set(doc(db, "branches", branch.id), branch);
-    });
+    // Phase 1: Metadata setup batch (branches and departments)
+    if (hasMetadata) {
+      const metaBatch = writeBatch(db);
+      let metaOpCount = 0;
 
-    departmentsToCreate.forEach(dept => {
-      batch.set(doc(db, "departments", dept.id), dept);
-    });
+      branchesToCreate.forEach(branch => {
+        metaBatch.set(doc(db, "branches", branch.id), branch);
+        metaOpCount++;
+      });
 
-    employees.forEach(emp => {
-      const normalizedEmp = { ...emp };
-      if (emp.branchId !== undefined) normalizedEmp.branch_id = emp.branchId;
-      else if (emp.branch_id !== undefined) normalizedEmp.branchId = emp.branch_id;
-      if (emp.departmentId !== undefined) normalizedEmp.department_id = emp.departmentId;
-      else if (emp.department_id !== undefined) normalizedEmp.departmentId = emp.department_id;
-      batch.set(doc(db, "employees", emp.id), normalizedEmp);
-    });
-    invitations.forEach(inv => batch.set(doc(db, "invitations", inv.id), inv));
-    badges.forEach(badge => batch.set(doc(db, "employee_badges", badge.id), badge));
-    contracts.forEach(contract => batch.set(doc(db, "employee_contracts", contract.id), contract));
-    
-    // Forensic Log Entry
-    const logId = "f_bulk_" + Math.random().toString(36).substring(2, 9);
-    batch.set(doc(db, "forensic_logs", logId), {
-      id: logId,
-      timestamp: new Date().toISOString(),
-      userId: "sys_bulk",
-      userName: "Moteur Import FinOps",
-      userRole: "SYSTEM",
-      business_id: employees[0]?.business_id || employees[0]?.businessId,
-      action: "HR_EMPLOYEE_ONBOARD_BULK_ATOMIC",
-      beforeState: "{}",
-      afterState: JSON.stringify({ 
-        importedCount: employees.length,
-        createdBranchesCount: branchesToCreate.length,
-        createdDepartmentsCount: departmentsToCreate.length
-      }),
-      ipAddress: "201.222.45.99",
-      userAgent: "FinOps Enterprise ERP Server",
-      signature: "seal_bulk_" + Math.floor(Math.random() * 999999)
-    });
+      departmentsToCreate.forEach(dept => {
+        metaBatch.set(doc(db, "departments", dept.id), dept);
+        metaOpCount++;
+      });
 
-    await batch.commit();
+      if (metaOpCount > 400) {
+        throw new Error(`Erreur d'import : Trop d'entités organisationnelles (${metaOpCount}) pour un lot unique.`);
+      }
+
+      await metaBatch.commit();
+      committedBatches++;
+    }
+
+    // Phase 2: Sequential Employee Chunks (max 45 employees = max 181 ops per batch <= 200 safety limit)
+    for (let i = 0; i < totalEmployees; i += CHUNK_SIZE) {
+      const empChunk = employees.slice(i, i + CHUNK_SIZE);
+      const invChunk = invitations.slice(i, i + CHUNK_SIZE);
+      const badgeChunk = badges.slice(i, i + CHUNK_SIZE);
+      const contractChunk = contracts.slice(i, i + CHUNK_SIZE);
+
+      const batch = writeBatch(db);
+      let batchOpCount = 0;
+
+      empChunk.forEach(emp => {
+        const normalizedEmp = { ...emp };
+        if (emp.branchId !== undefined) normalizedEmp.branch_id = emp.branchId;
+        else if (emp.branch_id !== undefined) normalizedEmp.branchId = emp.branch_id;
+        if (emp.departmentId !== undefined) normalizedEmp.department_id = emp.departmentId;
+        else if (emp.department_id !== undefined) normalizedEmp.departmentId = emp.department_id;
+        normalizedEmp.business_id = emp.business_id || emp.businessId;
+        normalizedEmp.updated_at = new Date().toISOString();
+        batch.set(doc(db, "employees", emp.id), normalizedEmp);
+        batchOpCount++;
+      });
+
+      invChunk.forEach(inv => {
+        batch.set(doc(db, "invitations", inv.id), inv);
+        batchOpCount++;
+      });
+
+      badgeChunk.forEach(badge => {
+        batch.set(doc(db, "employee_badges", badge.id), badge);
+        batchOpCount++;
+      });
+
+      contractChunk.forEach(contract => {
+        batch.set(doc(db, "employee_contracts", contract.id), contract);
+        batchOpCount++;
+      });
+
+      // Forensic Log Entry per chunk batch
+      const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
+      const totalChunks = Math.ceil(totalEmployees / CHUNK_SIZE);
+      const logId = "f_bulk_" + Date.now() + "_" + chunkIndex + "_" + Math.random().toString(36).substring(2, 7);
+      batch.set(doc(db, "forensic_logs", logId), {
+        id: logId,
+        timestamp: new Date().toISOString(),
+        userId: "sys_bulk",
+        userName: "Moteur Import FinOps",
+        userRole: "SYSTEM",
+        business_id: employees[0]?.business_id || employees[0]?.businessId,
+        action: "HR_EMPLOYEE_ONBOARD_BULK_CHUNK",
+        beforeState: "{}",
+        afterState: JSON.stringify({ 
+          chunkIndex,
+          totalChunks,
+          chunkEmployeeCount: empChunk.length,
+          totalImportedSoFar: i + empChunk.length,
+          totalEmployees
+        }),
+        ipAddress: "201.222.45.99",
+        userAgent: "FinOps Enterprise ERP Server",
+        signature: "seal_bulk_" + Math.floor(Math.random() * 999999)
+      });
+      batchOpCount++;
+
+      // Strict safety invariant check
+      if (batchOpCount > 200) {
+        throw new Error(`Batch safety limit exceeded: ${batchOpCount} operations > 200 limit (safety limit)`);
+      }
+
+      await batch.commit();
+      committedBatches++;
+    }
 
     EventBus.publish(EventBus.createEvent({
       correlationId: "bulk_import",
@@ -765,9 +820,13 @@ export class EmployeeRepository {
       payload: { 
         count: employees.length,
         branchesCount: branchesToCreate.length,
-        departmentsCount: departmentsToCreate.length
+        departmentsCount: departmentsToCreate.length,
+        committedBatches,
+        totalBatches
       }
     }));
+
+    return { committedBatches, totalBatches };
   }
 }
 
