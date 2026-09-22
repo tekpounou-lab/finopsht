@@ -18,9 +18,38 @@ import { RefreshCw } from "lucide-react";
 
 export const ExecutiveIntelligenceCenter: React.FC = () => {
   const { snapshot, employees, loading } = useAnalytics();
-  const { businessSettings } = useBusinessContext();
+  const { businessSettings, ledgerTransactions, attendanceRecords } = useBusinessContext();
 
   const activeSnapshot = snapshot;
+
+  const effectiveRevenue = useMemo(() => {
+    if (activeSnapshot?.revenue?.currentValue !== undefined) {
+      return activeSnapshot.revenue.currentValue;
+    }
+    return 0;
+  }, [activeSnapshot?.revenue?.currentValue]);
+
+  const effectiveExpenses = useMemo(() => {
+    const snapVal = (activeSnapshot?.operationalExpenses || activeSnapshot?.expenses)?.currentValue;
+    if (snapVal !== undefined) {
+      return snapVal;
+    }
+    return 0;
+  }, [activeSnapshot?.operationalExpenses, activeSnapshot?.expenses]);
+
+  const effectiveProfit = useMemo(() => {
+    if (activeSnapshot?.profit?.currentValue !== undefined) {
+      return activeSnapshot.profit.currentValue;
+    }
+    return 0;
+  }, [activeSnapshot?.profit?.currentValue]);
+
+  const effectiveAttendanceRate = useMemo(() => {
+    if (activeSnapshot?.attendanceRate?.currentValue !== undefined) {
+      return activeSnapshot.attendanceRate.currentValue;
+    }
+    return 0;
+  }, [activeSnapshot?.attendanceRate?.currentValue]);
 
   React.useEffect(() => {
     if (activeSnapshot) {
@@ -62,47 +91,47 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <SmartKPICard
             title="Chiffre d'Affaires Brut"
-            currentValue={activeSnapshot.revenue.currentValue}
+            currentValue={effectiveRevenue}
             previousValue={activeSnapshot.revenue.previousValue}
             difference={activeSnapshot.revenue.difference}
             percentage={activeSnapshot.revenue.differencePercentage}
             trend={activeSnapshot.revenue.trend}
             direction={activeSnapshot.revenue.direction}
             unit="HTG"
-            status={activeSnapshot.revenue.differencePercentage >= 0 ? "Healthy" : "Warning"}
+            status={effectiveRevenue > 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
             title="Dépenses d'Exploitation"
-            currentValue={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).currentValue}
+            currentValue={effectiveExpenses}
             previousValue={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).previousValue}
             difference={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).difference}
             percentage={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).differencePercentage}
             trend={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).trend}
             direction={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).direction}
             unit="HTG"
-            status={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).differencePercentage <= 0 ? "Healthy" : "Warning"}
+            status={effectiveExpenses > 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
             title="Bénéfice Net"
-            currentValue={activeSnapshot.profit.currentValue}
+            currentValue={effectiveProfit}
             previousValue={activeSnapshot.profit.previousValue}
             difference={activeSnapshot.profit.difference}
             percentage={activeSnapshot.profit.differencePercentage}
             trend={activeSnapshot.profit.trend}
             direction={activeSnapshot.profit.direction}
             unit="HTG"
-            status={activeSnapshot.profit.currentValue >= 0 ? "Healthy" : "Critical"}
+            status={effectiveProfit >= 0 ? "Healthy" : "Critical"}
           />
           <SmartKPICard
             title="Taux d'Assiduité"
-            currentValue={activeSnapshot.attendanceRate.currentValue}
+            currentValue={effectiveAttendanceRate}
             previousValue={activeSnapshot.attendanceRate.previousValue}
             difference={activeSnapshot.attendanceRate.difference}
             percentage={activeSnapshot.attendanceRate.differencePercentage}
             trend={activeSnapshot.attendanceRate.trend}
             direction={activeSnapshot.attendanceRate.direction}
             unit="%"
-            status={activeSnapshot.attendanceRate.currentValue >= 75 ? "Healthy" : "Warning"}
+            status={effectiveAttendanceRate >= 75 ? "Healthy" : "Warning"}
           />
         </div>
       )}

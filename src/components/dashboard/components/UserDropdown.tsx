@@ -72,7 +72,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
   const roleLabel = formatRoleLabel(String(currentRole));
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative z-50" ref={dropdownRef}>
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
@@ -95,7 +95,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-60 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl py-2 z-50 text-xs animate-in fade-in duration-150">
+        <div className="absolute right-0 mt-2 w-60 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl py-2 z-[100] text-xs animate-in fade-in duration-150">
           {/* User Header */}
           <div className="px-3.5 py-2.5 border-b border-slate-800/80">
             <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider block mb-0.5">

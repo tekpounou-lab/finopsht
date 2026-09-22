@@ -320,11 +320,16 @@ export default function UnifiedAuthPortal({
         } else if (err.code === "auth/invalid-email") {
           title = "Adresse email invalide";
           message = "Veuillez saisir une adresse email valide (ex: utilisateur@icloud.com).";
-        } else if (err.code === "auth/network-request-failed") {
-          title = "Échec de l'inscription";
-          message = "Firebase: Error (auth/network-request-failed).";
+        } else if (err.code === "auth/network-request-failed" || (err.message && err.message.includes("network-request-failed"))) {
+          title = "Problème de connexion réseau";
+          message = "Impossible de contacter le serveur d'authentification. Veuillez vérifier votre connexion Internet et réessayer.";
+        } else if (err.message) {
+          message = err.message
+            .replace(/^Firebase:\s*/i, "")
+            .replace(/Error\s*\(auth\/[^)]+\)\.?/gi, "")
+            .trim() || "Une erreur est survenue lors de l'inscription. Veuillez réessayer.";
         }
-        setAuthError({ title, message });
+        setAuthError({ title, message, isNetworkRetry: err.code === "auth/network-request-failed" || err.message?.includes("network-request-failed") });
       } finally {
         setIsEmailLoading(false);
       }
@@ -589,7 +594,12 @@ export default function UnifiedAuthPortal({
             <div className="flex flex-col gap-2 flex-1">
               <div>
                 <span className="font-bold text-rose-400 uppercase tracking-wider font-mono">{authError.title}</span>
-                <p className="text-rose-300 leading-relaxed mt-0.5">{authError.message}</p>
+                <p className="text-rose-300 leading-relaxed mt-0.5">
+                  {authError.message?.includes("network-request-failed") || authError.message?.includes("auth/network-request-failed")
+                    ? "Impossible de contacter le serveur d'authentification. Veuillez vérifier votre connexion Internet et réessayer."
+                    : authError.message?.replace(/^Firebase:\s*/i, "").replace(/Error\s*\(auth\/[^)]+\)\.?/gi, "").trim() || authError.message
+                  }
+                </p>
               </div>
               {authError.isNetworkRetry && (
                 <button

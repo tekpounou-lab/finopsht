@@ -37,7 +37,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const isSuperAdmin = String(currentRole || "").toUpperCase() === "SUPER_ADMIN";
 
   return (
-    <header className="h-16 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 shrink-0">
+    <header className="h-16 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-50 shrink-0">
       <div className="flex items-center gap-3">
         <button
           type="button"

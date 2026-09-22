@@ -233,8 +233,12 @@ export const InvitationLifecycleService = {
       if (!snap.exists()) throw new Error("Invitation introuvable.");
 
       inviteData = snap.data() as Invitation;
-      if (inviteData.status !== "PENDING") {
-        throw new Error("Cette invitation a déjà été acceptée, expirée ou révoquée.");
+      if (inviteData.status === "ACCEPTED") {
+        console.info(`[InvitationLifecycleService] Invitation ${invitationId} is already ACCEPTED. Proceeding idempotently.`);
+        return;
+      }
+      if (inviteData.status !== "PENDING" && inviteData.status !== "SENT") {
+        throw new Error("Cette invitation a déjà été expirée ou révoquée.");
       }
 
       const employeeId = inviteData.employeeId;

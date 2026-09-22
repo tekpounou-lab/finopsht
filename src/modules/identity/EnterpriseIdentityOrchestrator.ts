@@ -536,8 +536,12 @@ export class EnterpriseIdentityOrchestrator {
         if (!invSnap.exists()) throw new Error("Invitation introuvable.");
         
         const invitation = invSnap.data();
+        if (invitation.status === "ACCEPTED") {
+          console.info(`[Orchestrator][${correlationId}] Invitation ${invitationId} is already ACCEPTED. Proceeding idempotently.`);
+          return;
+        }
         if (invitation.status !== "SENT" && invitation.status !== "PENDING") {
-          throw new Error("Cette invitation a déjà été acceptée ou révoquée.");
+          throw new Error("Cette invitation a déjà été expirée ou révoquée.");
         }
 
         const employeeId = invitation.employee_id || invitation.employeeId || `emp_${user.uid}`;

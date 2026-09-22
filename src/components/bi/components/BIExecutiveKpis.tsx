@@ -48,14 +48,14 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
   cashSnapshot,
   accrualSnapshot,
 }) => {
-  const rev = isSimplifiedMode ? (cashSnapshot?.cashIn?.total ?? totalRevenue) : (accrualSnapshot?.revenueRecognized ?? totalRevenue);
-  const exp = isSimplifiedMode ? (cashSnapshot?.cashOut?.total ?? totalExpenses) : (accrualSnapshot?.expensesAccrued ?? totalExpenses);
+  const rev = totalRevenue;
+  const exp = totalExpenses;
   
   // DEF-9B-02: Canonical Net Cash Flow vs Operating Result.
   // In simplified mode, "Variation de trésorerie" MUST strictly bind to canonical net cash flow (inflows - outflows),
   // NEVER falling back to Net Profit (Revenue - Expenses).
   const cashVariation = cashSnapshot?.netCashFlow ?? biSnapshot?.netCashFlow?.currentValue ?? 0;
-  const operatingResult = accrualSnapshot?.operatingResult ?? accrualSnapshot?.netIncome ?? netProfit;
+  const operatingResult = netProfit;
   const card3Value = isSimplifiedMode ? cashVariation : operatingResult;
   const payroll = isSimplifiedMode ? (cashSnapshot?.cashOut?.payrollPaid ?? (payrollAggregates?.payrollPaid || 0)) : (accrualSnapshot?.payrollAccrued?.total ?? (payrollAggregates?.totalEmploymentCost || 0));
 

@@ -62,6 +62,15 @@ export const LeaveWorkflowManager: React.FC<LeaveWorkflowManagerProps> = ({
   const [justSubmitting, setJustSubmitting] = useState(false);
   const [justSuccessMsg, setJustSuccessMsg] = useState("");
   const [justErrorMsg, setJustErrorMsg] = useState("");
+  const [localLeaves, setLocalLeaves] = useState<LeaveRecord[]>([]);
+
+  // Combine prop leaves and live Firestore localLeaves
+  const effectiveLeaves = React.useMemo(() => {
+    const map = new Map<string, LeaveRecord>();
+    (leaves || []).forEach(l => { if (l && l.id) map.set(l.id, l); });
+    localLeaves.forEach(l => { if (l && l.id) map.set(l.id, l); });
+    return Array.from(map.values());
+  }, [leaves, localLeaves]);
 
   // Fetch or subscribe to Overtime and Absences in real-time
   useEffect(() => {
@@ -115,16 +124,37 @@ export const LeaveWorkflowManager: React.FC<LeaveWorkflowManagerProps> = ({
       }
     );
 
+    // 3. Subscribe to Leave Requests
+    const leaveQuery = query(
+      collection(db, "leave_requests"),
+      where("business_id", "==", employee.business_id),
+      where("employeeId", "==", employee.id)
+    );
+    const unsubscribeLeaves = realtimeManager.subscribe(
+      `leaves_emp:${employee.id}`,
+      leaveQuery,
+      (snapshot) => {
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LeaveRecord);
+        setLocalLeaves(list);
+      },
+      (error) => {
+        if (!isQuotaExceededError(error)) {
+          console.warn("Leaves subscription notice:", error);
+        }
+      }
+    );
+
     return () => {
       unsubscribeOt();
       unsubscribeAbs();
+      unsubscribeLeaves();
     };
   }, [employee?.id, employee?.business_id]);
 
   // Calculate Used Leave days by type for current year
   const currentYear = new Date().getFullYear();
   const getUsedDays = (type: string) => {
-    return leaves
+    return effectiveLeaves
       .filter((l) => {
         const isApproved = l.status === "APPROVED" || l.status === "PAYROLL_SYNCED";
         const isSameType = l.type === type;
@@ -239,7 +269,9 @@ export const LeaveWorkflowManager: React.FC<LeaveWorkflowManagerProps> = ({
     }
   };
 
-  const employeeLeaves = leaves.filter((l) => l.employeeId === employee.id);
+  const employeeLeaves = effectiveLeaves.filter(
+    (l) => l.employeeId === employee.id || (l as any).employee_id === employee.id
+  );
 
   return (
     <div className="flex flex-col gap-5 w-full" id="workspace-leave-section">

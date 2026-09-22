@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -23,6 +23,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
+import { collection, limit } from "firebase/firestore";
+import { db, auth } from "../../../lib/firebase";
+import { tenantQuery, realtimeManager } from "../../../services/firestore/realtimeManager";
 import { Employee, LedgerTransaction, AttendanceRecord, EmployeeContract, PayrollRecord, PayrollInputSnapshot } from "../../../types";
 import { LedgerRepository } from "../../../repositories/LedgerRepository";
 import { CommissionEngine } from "../../../services/CommissionEngine";
@@ -70,10 +73,52 @@ export const MySalesAndExpensesSection: React.FC<MySalesAndExpensesSectionProps>
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState("Frais Déplacement");
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+  const [localLedgerTransactions, setLocalLedgerTransactions] = useState<LedgerTransaction[]>([]);
+
+  // Live SSOT Firestore subscription fallback for employee transactions
+  useEffect(() => {
+    if (!employee || !auth.currentUser) return;
+    const bizId = employee.business_id || (employee as any).businessId;
+    if (!bizId) return;
+
+    const q = tenantQuery(collection(db, "ledger_transactions"), bizId, limit(300));
+    const unsub = realtimeManager.subscribe(
+      `emp_ledger_transactions:${bizId}:${employee.id}`,
+      q,
+      (snap) => {
+        const fetched: LedgerTransaction[] = [];
+        snap.forEach((docSnap: any) => {
+          const d = docSnap.data() as LedgerTransaction;
+          const rEmpId = d.employeeId || (d as any).employee_id;
+          const rCreatedBy = (d as any).createdBy || (d as any).created_by;
+          const rEmail = (d as any).employee_email?.toLowerCase().trim();
+          if (
+            rEmpId === employee.id ||
+            rCreatedBy === employee.id ||
+            rEmpId === (employee as any).employee_id ||
+            (employee.email && rEmail === employee.email.toLowerCase().trim())
+          ) {
+            fetched.push({ id: docSnap.id, ...d });
+          }
+        });
+        setLocalLedgerTransactions(fetched);
+      },
+      (err) => console.warn("[MySalesAndExpensesSection] Firestore subscription notice:", err)
+    );
+    return () => unsub();
+  }, [employee]);
+
+  // Combine prop transactions and live Firestore localLedgerTransactions
+  const combinedTransactions = useMemo(() => {
+    const map = new Map<string, LedgerTransaction>();
+    (transactions || []).forEach(t => { if (t && t.id) map.set(t.id, t); });
+    localLedgerTransactions.forEach(t => { if (t && t.id) map.set(t.id, t); });
+    return Array.from(map.values());
+  }, [transactions, localLedgerTransactions]);
 
   // Resolution of transactions linked to this employee
   const myTransactions = useMemo(() => {
-    return transactions.filter(
+    return combinedTransactions.filter(
       (t) =>
         t.employeeId === employee.id ||
         (t as any).employee_id === employee.id ||
@@ -83,7 +128,7 @@ export const MySalesAndExpensesSection: React.FC<MySalesAndExpensesSectionProps>
         (employee.email && (t as any).created_by && (t as any).created_by.toLowerCase().trim() === employee.email.toLowerCase().trim()) ||
         (employee.email && (t as any).employee_email && (t as any).employee_email.toLowerCase().trim() === employee.email.toLowerCase().trim())
     );
-  }, [transactions, employee]);
+  }, [combinedTransactions, employee]);
 
   // Filter closed payroll records for this employee
   const closedPayrollRecords = useMemo(() => {

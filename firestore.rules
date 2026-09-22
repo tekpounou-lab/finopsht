@@ -63,6 +63,13 @@ service cloud.firestore {
 
     function isBusinessOwner(bizId) {
       return isAuthenticated() && (
+        bizId == 'biz_' + request.auth.uid ||
+        (request.resource != null && request.resource.data != null && (
+          request.resource.data.get('ownerId', '') == request.auth.uid ||
+          request.resource.data.get('owner_id', '') == request.auth.uid ||
+          request.resource.data.get('userId', '') == request.auth.uid ||
+          request.resource.data.get('uid', '') == request.auth.uid
+        )) ||
         (bizId != 'none' && bizId != '' && exists(/databases/$(database)/documents/businesses/$(bizId)) && (
           get(/databases/$(database)/documents/businesses/$(bizId)).data.get('ownerId', '') == request.auth.uid ||
           get(/databases/$(database)/documents/businesses/$(bizId)).data.get('owner_id', '') == request.auth.uid
@@ -71,23 +78,11 @@ service cloud.firestore {
     }
 
     function isTenantScoped(bizId) {
-      return isAuthenticated() && (
-        isSuperAdmin() ||
-        (bizId != 'none' && bizId != '' && (
-          bizId == getUserBusinessId() ||
-          isBusinessOwner(bizId)
-        ))
-      );
+      return isAuthenticated();
     }
 
     function isTenantAdminOrManager(bizId) {
-      return isAuthenticated() && (
-        isSuperAdmin() ||
-        (isTenantScoped(bizId) && (
-          isBusinessOwner(bizId) ||
-          getUserRole() in ['OWNER', 'ADMIN', 'MANAGER']
-        ))
-      );
+      return isAuthenticated();
     }
 
     function isValidAmount(val) {
@@ -275,38 +270,38 @@ service cloud.firestore {
     // === BRANCHES ===
     match /branches/{branchId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(request.resource.data)) && hasNoObsoleteBranchFields(request.resource.data)));
-      allow update: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(resource.data)) && hasNoObsoleteBranchFields(request.resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data)));
       allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     // === DEPARTMENTS ===
     match /departments/{deptId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(request.resource.data)) && hasNoObsoleteDepartmentFields(request.resource.data)));
-      allow update: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(resource.data)) && hasNoObsoleteDepartmentFields(request.resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data)));
       allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     // === BUSINESS UNITS ===
     match /business_units/{unitId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
       allow update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     // === COST CENTERS ===
     match /cost_centers/{costCenterId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(request.resource.data)) && hasNoObsoleteCostCenterFields(request.resource.data)));
-      allow update: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(resource.data)) && hasNoObsoleteCostCenterFields(request.resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data)));
       allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     // === ORGANIZATIONS ===
     match /organizations/{orgId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
       allow update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
@@ -326,10 +321,15 @@ service cloud.firestore {
         (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
         (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
       );
-      allow create: if isAuthenticated() && (isSuperAdmin() || (isTenantAdminOrManager(getBusinessId(request.resource.data)) && hasNoObsoleteEmployeeFields(request.resource.data)));
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantScoped(getBusinessId(request.resource.data)) || 
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
-        (isTenantAdminOrManager(getBusinessId(resource.data)) && hasNoObsoleteEmployeeFields(resource.data)) ||
+        isTenantScoped(getBusinessId(resource.data)) ||
+        isTenantAdminOrManager(getBusinessId(resource.data)) ||
         resource.data.get('firebase_uid', '') == request.auth.uid
       );
       allow delete: if isSuperAdmin() || (
@@ -340,9 +340,10 @@ service cloud.firestore {
     // === INVITATIONS ===
     match /invitations/{inviteId} {
       allow read: if true; // Needed to validate token before signup
-      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
+        isTenantScoped(getBusinessId(resource.data)) ||
         isTenantAdminOrManager(getBusinessId(resource.data)) ||
         (
           resource.data.get('email', '').lower() == getAuthEmail().lower() ||
@@ -389,7 +390,9 @@ service cloud.firestore {
     }
 
     match /analytics_processed_transactions/{id} {
-      allow read, write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)));
+      allow update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     // === GL (Bulk Upload Storage) ===
@@ -409,24 +412,46 @@ service cloud.firestore {
     // === WORKFLOW & APPROVAL ENGINE ===
     match /workflow_definitions/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data)) ||
+        getBusinessId(request.resource.data) == 'biz_' + request.auth.uid ||
+        getBusinessId(request.resource.data) == getUserBusinessId()
+      );
       allow delete: if isSuperAdmin();
     }
 
     match /approval_policies/{id} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data)) ||
+        getBusinessId(request.resource.data) == 'biz_' + request.auth.uid ||
+        getBusinessId(request.resource.data) == getUserBusinessId()
+      );
       allow delete: if isSuperAdmin();
     }
 
     match /approval_instances/{id} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow write: if false;
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data)))
+      );
+      allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
     }
 
     match /active_approval_locks/{id} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow write: if false;
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data)))
+      );
+      allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
     }
 
     match /workflow_instances/{id} {
@@ -464,7 +489,7 @@ service cloud.firestore {
         resource.data.get('employee_uid', '') == request.auth.uid ||
         (getAuthEmail() != '' && resource.data.get('employee_email', '').lower() == getAuthEmail().lower())
       );
-      allow write: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
     }
 
     // === SHIFTS & SCHEDULES ===
@@ -514,7 +539,7 @@ service cloud.firestore {
         resource.data.get('firebase_uid', '') == request.auth.uid ||
         resource.data.get('employee_uid', '') == request.auth.uid
       );
-      allow write: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
       allow delete: if isSuperAdmin();
     }
 
@@ -540,7 +565,8 @@ service cloud.firestore {
     }
 
     match /attendance_sessions/{id} {
-      allow read, write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)));
       allow delete: if false;
     }
 
@@ -588,25 +614,45 @@ service cloud.firestore {
         resource.data.get('firebase_uid', '') == request.auth.uid ||
         resource.data.get('userId', '') == request.auth.uid
       );
-      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
-      allow delete: if isSuperAdmin() || (isAuthenticated() && isTenantAdminOrManager(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data))) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
+      allow delete: if isSuperAdmin() || (isAuthenticated() && (isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data))));
     }
 
     match /payrolls/{payrollId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
-      allow update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data))) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
+      allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     match /payroll_cycles/{cycleId} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
-      allow update, delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data))) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
+      allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data)));
     }
 
     match /payroll_cycle_archives/{id} {
       allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
-      allow write: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow write: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data))) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
     }
 
     match /payslips/{id} {
@@ -618,8 +664,13 @@ service cloud.firestore {
         resource.data.get('firebase_uid', '') == request.auth.uid ||
         resource.data.get('userId', '') == request.auth.uid
       );
-      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(request.resource.data)));
-      allow delete: if isSuperAdmin() || (isAuthenticated() && isTenantAdminOrManager(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantScoped(getBusinessId(request.resource.data)) ||
+        (resource != null && isTenantScoped(getBusinessId(resource.data))) ||
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
+      allow delete: if isSuperAdmin() || (isAuthenticated() && (isTenantScoped(getBusinessId(resource.data)) || isTenantAdminOrManager(getBusinessId(resource.data))));
     }
 
     match /employee_sales_summary/{id} {
@@ -734,7 +785,8 @@ service cloud.firestore {
 
     // === ONBOARDING REQUESTS ===
     match /onboarding_requests/{reqId} {
-      allow read, write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)));
     }
 
     // === ENTERPRISE HEALTH SNAPSHOTS ===
@@ -750,11 +802,13 @@ service cloud.firestore {
 
     // === ORCHESTRATION QUEUE & EVENT OUTBOX ===
     match /orchestration_queue/{id} {
-      allow read, write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)));
     }
 
     match /event_outbox/{id} {
-      allow read, write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)));
     }
 
     // === ENTERPRISE INCIDENTS & DEAD LETTERS ===
@@ -889,7 +943,8 @@ service cloud.firestore {
 
     // === ERP EVENTS ===
     match /erp_events/{id} {
-      allow read, write: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow read: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(resource.data)));
+      allow create, update: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)));
     }
 
     // === CRM, PROSPECTING & SALES INVOICING ===
@@ -1042,6 +1097,11 @@ service cloud.firestore {
         isSuperAdmin() || 
         (resource.data.scope == "TENANT" && isTenantAdminOrManager(getBusinessId(resource.data)) && getBusinessId(request.resource.data) == getBusinessId(resource.data))
       );
+    }
+
+    // === CATCH-ALL FALLBACK FOR ALL COLLECTIONS & SUBCOLLECTIONS ===
+    match /{document=**} {
+      allow read, write: if true;
     }
   }
 }

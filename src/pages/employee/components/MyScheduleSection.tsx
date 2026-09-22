@@ -1,7 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Calendar, Clock, MapPin, RefreshCw, Send, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { collection, limit } from "firebase/firestore";
+import { db, auth } from "../../../lib/firebase";
+import { tenantQuery, realtimeManager } from "../../../services/firestore/realtimeManager";
 import { ScheduleRepository } from "../../../repositories/ScheduleRepository";
 import { Employee, Shift } from "../../../types";
 
@@ -15,7 +18,7 @@ interface MyScheduleSectionProps {
 
 export const MyScheduleSection: React.FC<MyScheduleSectionProps> = ({
   employee,
-  shifts,
+  shifts = [],
   branchName,
   deptName,
   tw,
@@ -27,9 +30,56 @@ export const MyScheduleSection: React.FC<MyScheduleSectionProps> = ({
   const [sending, setSending] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [localShifts, setLocalShifts] = useState<Shift[]>([]);
+
+  // Live SSOT Firestore subscription fallback for employee shifts
+  useEffect(() => {
+    if (!employee || !auth.currentUser) return;
+    const bizId = employee.business_id || (employee as any).businessId;
+    if (!bizId) return;
+
+    const q = tenantQuery(collection(db, "shifts"), bizId, limit(200));
+    const unsub = realtimeManager.subscribe(
+      `emp_shifts:${bizId}:${employee.id}`,
+      q,
+      (snap) => {
+        const fetched: Shift[] = [];
+        snap.forEach((docSnap: any) => {
+          const d = docSnap.data() as Shift;
+          const rEmpId = d.employeeId || (d as any).employee_id;
+          const rEmpIds = (d as any).employeeIds || [];
+          if (
+            rEmpId === employee.id ||
+            rEmpId === (employee as any).employee_id ||
+            rEmpIds.includes(employee.id) ||
+            (d.departmentId && d.departmentId === employee.departmentId)
+          ) {
+            fetched.push({ id: docSnap.id, ...d });
+          }
+        });
+        setLocalShifts(fetched);
+      },
+      (err) => console.warn("[MyScheduleSection] Firestore subscription notice:", err)
+    );
+    return () => unsub();
+  }, [employee]);
+
+  // Combined prop shifts and live Firestore localShifts
+  const combinedShifts = useMemo(() => {
+    const map = new Map<string, Shift>();
+    (shifts || []).forEach(s => { if (s && s.id) map.set(s.id, s); });
+    localShifts.forEach(s => { if (s && s.id) map.set(s.id, s); });
+    return Array.from(map.values());
+  }, [shifts, localShifts]);
 
   // Filter employee's shifts
-  const myShifts = shifts.filter(s => s.employeeId === employee.id);
+  const myShifts = combinedShifts.filter(
+    s =>
+      s.employeeId === employee.id ||
+      (s as any).employee_id === employee.id ||
+      ((s as any).employeeIds && (s as any).employeeIds.includes(employee.id)) ||
+      (s.departmentId && s.departmentId === employee.departmentId)
+  );
 
   const handleRequestSwap = async (e: React.FormEvent) => {
     e.preventDefault();

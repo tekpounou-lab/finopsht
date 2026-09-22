@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   DollarSign, 
   Download, 
@@ -28,6 +28,9 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { collection, limit } from "firebase/firestore";
+import { db, auth } from "../../../lib/firebase";
+import { tenantQuery, realtimeManager } from "../../../services/firestore/realtimeManager";
 import { Employee, PayrollRecord } from "../../../types";
 import { useBusinessContext } from "../../../contexts/BusinessContext";
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
@@ -42,7 +45,7 @@ interface MyPayrollSectionProps {
 
 export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
   employee,
-  payrollRecords,
+  payrollRecords = [],
   deptName,
   branchName,
   tw,
@@ -52,9 +55,50 @@ export const MyPayrollSection: React.FC<MyPayrollSectionProps> = ({
   const [selectedQuarter, setSelectedQuarter] = useState<string>("ALL");
   const [selectedRecord, setSelectedRecord] = useState<PayrollRecord | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [localPayrollRecords, setLocalPayrollRecords] = useState<PayrollRecord[]>([]);
+
+  // Live SSOT Firestore subscription fallback for employee payroll records
+  useEffect(() => {
+    if (!employee || !auth.currentUser) return;
+    const bizId = employee.business_id || (employee as any).businessId;
+    if (!bizId) return;
+
+    const q = tenantQuery(collection(db, "payroll_records"), bizId, limit(300));
+    const unsub = realtimeManager.subscribe(
+      `emp_payroll_records:${bizId}:${employee.id}`,
+      q,
+      (snap) => {
+        const fetched: PayrollRecord[] = [];
+        snap.forEach((docSnap: any) => {
+          const d = docSnap.data() as PayrollRecord;
+          const rEmpId = d.employeeId || (d as any).employee_id;
+          const rEmail = (d as any).employee_email?.toLowerCase().trim();
+          if (
+            rEmpId === employee.id ||
+            rEmpId === (employee as any).employee_id ||
+            rEmpId === (employee as any).firebase_uid ||
+            (employee.email && rEmail === employee.email.toLowerCase().trim())
+          ) {
+            fetched.push({ id: docSnap.id, ...d });
+          }
+        });
+        setLocalPayrollRecords(fetched);
+      },
+      (err) => console.warn("[MyPayrollSection] Firestore subscription notice:", err)
+    );
+    return () => unsub();
+  }, [employee]);
+
+  // Combine prop payrollRecords and live Firestore localPayrollRecords
+  const combinedRecords = useMemo(() => {
+    const map = new Map<string, PayrollRecord>();
+    (payrollRecords || []).forEach(r => { if (r && r.id) map.set(r.id, r); });
+    localPayrollRecords.forEach(r => { if (r && r.id) map.set(r.id, r); });
+    return Array.from(map.values());
+  }, [payrollRecords, localPayrollRecords]);
 
   // Filter employee payroll records
-  const myRecords = payrollRecords.filter(r => 
+  const myRecords = combinedRecords.filter(r => 
     (
       r.employeeId === employee.id || 
       r.employee_id === employee.id || 
