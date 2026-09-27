@@ -558,6 +558,8 @@ export class AnalyticsEngine {
       direction = directionInverted ? "UP" : "DOWN";
     }
 
+    const state = current === 0 ? ("VALID_ZERO" as const) : ("VALID_VALUE" as const);
+
     return {
       currentValue: parseFloat(current.toFixed(1)),
       previousValue: parseFloat(previous.toFixed(1)),
@@ -565,6 +567,7 @@ export class AnalyticsEngine {
       differencePercentage,
       trend,
       direction,
+      state,
     };
   }
 
@@ -934,21 +937,21 @@ export class AnalyticsEngine {
     const quickbooksSalesRevenue = this.compareValues(curQbVal, prevQbVal);
 
     const standardQuinzaineHours =
-      businessSettings?.standardQuinzaineHours ||
-      businessSettings?.standardHours ||
-      businessSettings?.payroll_policies?.standardQuinzaineHours ||
-      businessSettings?.payrollPolicies?.standardQuinzaineHours ||
+      actualSettings?.standardQuinzaineHours ||
+      actualSettings?.standardHours ||
+      actualSettings?.payroll_policies?.standardQuinzaineHours ||
+      actualSettings?.payrollPolicies?.standardQuinzaineHours ||
       96;
 
     // GL Expenses: includes ALL expense and payroll transactions in General Ledger (GL)
-    const curGlExpenses = AnalyticsEngine.computeOperationalExpenses(curTxs, current, businessId, true);
-    const prevGlExpenses = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, businessId, true);
+    const curGlExpenses = AnalyticsEngine.computeOperationalExpenses(curTxs, current, actualBizId, true);
+    const prevGlExpenses = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, actualBizId, true);
 
-    const curNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(curTxs, current, businessId, false);
-    const prevNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, businessId, false);
+    const curNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(curTxs, current, actualBizId, false);
+    const prevNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, actualBizId, false);
 
-    const sumExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, businessId, true);
-    const sumNonPayrollExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, businessId, false);
+    const sumExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, true);
+    const sumNonPayrollExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, false);
 
     // Payroll cost: EXCLUSIVELY from sealed / validated payroll_records with proration (SSOT)
     const curPayrollCost = AnalyticsEngine.computePayrollCost(curPayroll, current, isSocialTaxEnabled, cycleMap);
@@ -1226,11 +1229,11 @@ export class AnalyticsEngine {
 
       console.debug("[KPI:Attendance] Pipeline step breakdown:", {
         filterParameters: {
-          business_id: businessId,
+          business_id: actualBizId,
           startDate: range.startDate,
           endDate: range.endDate,
-          branchesCount: branches?.length || 0,
-          departmentsCount: departments?.length || 0,
+          branchesCount: actualBranches?.length || 0,
+          departmentsCount: actualDepts?.length || 0,
           standardQuinzaineHours,
         },
         activeOperationalEmployeesCount: empCount,
@@ -1299,21 +1302,25 @@ export class AnalyticsEngine {
           return (p.branch_id || (p as any).branchId || emp?.branchId || (emp as any)?.branch_id) === br.id;
         });
 
-        const brSalesFromPayroll = brPayrolls.reduce((sum, pr: any) => {
-          const factor = getRecordProrationFactor(pr, current);
-          if (factor <= 0) return sum;
-          const s = (pr.sales_cents ? pr.sales_cents / 100 : (pr.salesHtg || pr.salesVolume || pr.sales_gl || pr.sales || 0));
-          return sum + (s * factor);
-        }, 0);
-
-        const brNonEmpGlIncome = brTxs.filter((t) => {
-          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
-          if (t.type !== "INCOME") return false;
-          if (brSalesFromPayroll > 0 && (t.employeeId || (t as any).employee_id)) return false;
-          return true;
-        }).reduce((sum, t) => sum + getTxAmount(t), 0);
-
-        const brRev = brSalesFromPayroll + brNonEmpGlIncome;
+        let brRev = 0;
+        if (actualAccountingMode === "CASH") {
+          const cashStatement = CanonicalCashEngine.executePipeline(
+            {
+              payrollRecords: brPayrolls,
+              ledgerTransactions: brTxs,
+            },
+            {
+              businessId: actualBizId,
+              startDate: current.startDate,
+              endDate: current.endDate,
+            }
+          );
+          brRev = cashStatement.totalInflow;
+        } else {
+          brRev = brTxs
+            .filter((t) => isIncomeTx(t))
+            .reduce((sum, t) => sum + getTxAmount(t), 0);
+        }
         const brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, current);
         const brNonPayrollExp = sumNonPayrollExpenses(brTxs);
 
@@ -1781,55 +1788,81 @@ export class AnalyticsEngine {
         return txDate >= b.startDate && txDate <= b.endDate;
       });
 
-      // True Gross Revenue strictly in bucket
-      const gross = matchTransactions
-        .filter((t) => t.type === "INCOME")
-        .reduce((sum, t) => sum + getTxAmount(t), 0);
+      let gross = 0;
+      let net = 0;
 
-      // True Operational Expenses strictly in bucket
-      const opExpenses = matchTransactions
-        .filter((t) => t.type === "EXPENSE" || t.type === "BONUS" || t.type === "COMPENSATION")
-        .reduce((sum, t) => sum + getTxAmount(t), 0);
-
-      // Prorated or exact payroll in bucket
-      let payrollInBucket = 0;
-      const bucketPayrollTxs = matchTransactions.filter((t) => t.type === "PAYROLL");
-
-      if (bucketPayrollTxs.length > 0) {
-        payrollInBucket = bucketPayrollTxs.reduce((sum, t) => sum + getTxAmount(t), 0);
-      } else if (matchPayrolls.length > 0) {
-        payrollInBucket = matchPayrolls.reduce((sum, p) => {
-          const gross = p.grossSalary || ((p as any).gross_salary_cents ? (p as any).gross_salary_cents / 100 : 0) || (p.baseSalary || 0);
-          if (gross <= 0) return sum;
-
-          const cycleId = p.cycleId || p.payroll_cycle_id;
-          const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
-          let pStart = normalizeDateStr(p.period_start || cycle?.startDate || cycle?.start_date || (p as any).generated_at || current.startDate);
-          let pEnd = normalizeDateStr(p.period_end || cycle?.endDate || cycle?.end_date || cycle?.effectiveAccountingDate || (p as any).generated_at || current.endDate);
-
-          if (!pStart || !pEnd) {
-            return sum + gross / Math.max(1, diffDays);
+      if (actualAccountingMode === "CASH") {
+        const cashStatement = CanonicalCashEngine.executePipeline(
+          {
+            payrollRecords: matchPayrolls,
+            ledgerTransactions: matchTransactions,
+          },
+          {
+            businessId: actualBizId,
+            startDate: b.startDate,
+            endDate: b.endDate,
           }
-
-          const dStart = new Date(pStart);
-          const dEnd = new Date(pEnd);
-          const totalCycleDays = Math.max(1, Math.round((dEnd.getTime() - dStart.getTime()) / 86400000) + 1);
-
-          const bStart = new Date(b.startDate);
-          const bEnd = new Date(b.endDate);
-          const oStart = Math.max(dStart.getTime(), bStart.getTime());
-          const oEnd = Math.min(dEnd.getTime(), bEnd.getTime());
-
-          if (oStart <= oEnd) {
-            const overlapDays = Math.round((oEnd - oStart) / 86400000) + 1;
-            return sum + (gross / totalCycleDays) * overlapDays;
+        );
+        gross = cashStatement.totalInflow;
+        net = cashStatement.totalInflow - cashStatement.totalOutflow;
+      } else {
+        const getTxAmountLocal = (t: LedgerTransaction) => {
+          if (t.amount_cents !== undefined && t.amount_cents !== null) {
+            return t.amount_cents / 100;
           }
-          return sum;
-        }, 0);
+          return t.amount || (t as any).amountHtg || 0;
+        };
+
+        const grossValResolved = matchTransactions
+          .filter((t) => t.type === "INCOME")
+          .reduce((sum, t) => sum + getTxAmountLocal(t), 0);
+
+        // True Operational Expenses strictly in bucket
+        const opExpenses = matchTransactions
+          .filter((t) => t.type === "EXPENSE" || t.type === "BONUS" || t.type === "COMPENSATION")
+          .reduce((sum, t) => sum + getTxAmountLocal(t), 0);
+
+        // Prorated or exact payroll in bucket
+        let payrollInBucket = 0;
+        const bucketPayrollTxs = matchTransactions.filter((t) => t.type === "PAYROLL");
+
+        if (bucketPayrollTxs.length > 0) {
+          payrollInBucket = bucketPayrollTxs.reduce((sum, t) => sum + getTxAmountLocal(t), 0);
+        } else if (matchPayrolls.length > 0) {
+          payrollInBucket = matchPayrolls.reduce((sum, p) => {
+            const rawGross = p.grossSalary || ((p as any).gross_salary_cents ? (p as any).gross_salary_cents / 100 : 0) || (p.baseSalary || 0);
+            if (rawGross <= 0) return sum;
+
+            const cycleId = p.cycleId || p.payroll_cycle_id;
+            const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
+            let pStart = normalizeDateStr(p.period_start || cycle?.startDate || cycle?.start_date || (p as any).generated_at || current.startDate);
+            let pEnd = normalizeDateStr(p.period_end || cycle?.endDate || cycle?.end_date || cycle?.effectiveAccountingDate || (p as any).generated_at || current.endDate);
+
+            if (!pStart || !pEnd) {
+              return sum + rawGross / Math.max(1, diffDays);
+            }
+
+            const dStart = new Date(pStart);
+            const dEnd = new Date(pEnd);
+            const totalCycleDays = Math.max(1, Math.round((dEnd.getTime() - dStart.getTime()) / 86400000) + 1);
+
+            const bStart = new Date(b.startDate);
+            const bEnd = new Date(b.endDate);
+            const oStart = Math.max(dStart.getTime(), bStart.getTime());
+            const oEnd = Math.min(dEnd.getTime(), bEnd.getTime());
+
+            if (oStart <= oEnd) {
+              const overlapDays = Math.round((oEnd - oStart) / 86400000) + 1;
+              return sum + (rawGross / totalCycleDays) * overlapDays;
+            }
+            return sum;
+          }, 0);
+        }
+
+        const totalCosts = opExpenses + payrollInBucket;
+        gross = grossValResolved;
+        net = grossValResolved - totalCosts;
       }
-
-      const totalCosts = opExpenses + payrollInBucket;
-      const net = gross - totalCosts;
 
       let staff = new Set([
         ...matchPayrolls.map((p) => p.employeeId || p.employee_id),
@@ -1886,18 +1919,18 @@ export class AnalyticsEngine {
 
     // 11. Compute Workforce Profitability Intelligence Snapshot
     const workforceProfitability = WorkforceProfitabilityEngine.generateWorkforceProfitabilitySnapshot(
-      businessId,
+      actualBizId,
       period,
-      employees,
+      actualEmployees,
       curTxs,
       curAttendance,
       curPayroll,
-      departments,
-      branches,
-      activities,
+      actualDepts,
+      actualBranches,
+      actualActivities,
       current.startDate,
       current.endDate,
-      businessSettings
+      actualSettings
     );
 
     const profitMargin = revenue.currentValue > 0 ? (profit.currentValue / revenue.currentValue) * 100 : 0;
@@ -1944,7 +1977,7 @@ export class AnalyticsEngine {
 
     const snapshotBase = {
       period,
-      customRange,
+      customRange: actualCustomRange,
       generatedAt: new Date().toISOString(),
       revenue,
       quickbooksSalesRevenue,

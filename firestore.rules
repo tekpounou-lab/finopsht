@@ -78,11 +78,18 @@ service cloud.firestore {
     }
 
     function isTenantScoped(bizId) {
-      return isAuthenticated();
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        getUserBusinessId() == bizId ||
+        bizId == 'biz_' + request.auth.uid
+      );
     }
 
     function isTenantAdminOrManager(bizId) {
-      return isAuthenticated();
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        getUserBusinessId() == bizId
+      );
     }
 
     function isValidAmount(val) {
@@ -1101,7 +1108,7 @@ service cloud.firestore {
 
     // === CATCH-ALL FALLBACK FOR ALL COLLECTIONS & SUBCOLLECTIONS ===
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

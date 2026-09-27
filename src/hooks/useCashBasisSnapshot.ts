@@ -2,13 +2,23 @@ import { useState, useEffect } from "react";
 import { CashBasisSnapshot } from "../types/cash-basis";
 import { CashBasisEngine } from "../domains/analytics/services/CashBasisEngine";
 import { useBusinessContext } from "../contexts/BusinessContext";
+import { useAnalyticsFilters } from "../contexts/AnalyticsFilterContext";
 
-export function useCashBasisSnapshot(filters: Record<string, any>) {
+export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
   const { currentBusiness, ledgerTransactions, payrollRecords, employees } = useBusinessContext();
+  const { filters: globalFilters } = useAnalyticsFilters();
   const [snapshot, setSnapshot] = useState<CashBasisSnapshot | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const filterKey = JSON.stringify(filters);
+  const resolvedFilters = {
+    startDate: overrideFilters?.startDate || globalFilters.dateRange.startDate,
+    endDate: overrideFilters?.endDate || globalFilters.dateRange.endDate,
+    branchId: overrideFilters?.branchId || globalFilters.branchId,
+    departmentId: overrideFilters?.departmentId || globalFilters.departmentId,
+    employeeId: overrideFilters?.employeeId || globalFilters.employeeId,
+  };
+
+  const filterKey = JSON.stringify(resolvedFilters);
 
   useEffect(() => {
     let isMounted = true;
@@ -21,7 +31,7 @@ export function useCashBasisSnapshot(filters: Record<string, any>) {
       try {
         const snap = await CashBasisEngine.generateSnapshot(
           currentBusiness.id,
-          filters,
+          resolvedFilters,
           ledgerTransactions,
           payrollRecords,
           employees

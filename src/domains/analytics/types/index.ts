@@ -21,6 +21,17 @@ export type AnalyticsPeriod =
   | "PREVIOUS_YEAR"
   | "CUSTOM";
 
+export type MetricSemanticState =
+  | "LOADING"
+  | "NO_DATA"
+  | "VALID_ZERO"
+  | "VALID_VALUE"
+  | "ERROR"
+  | "VALUE"
+  | "ZERO"
+  | "UNDEFINED"
+  | "INSUFFICIENT_DATA";
+
 export interface KPIComparison {
   currentValue: number;
   previousValue: number;
@@ -28,6 +39,7 @@ export interface KPIComparison {
   differencePercentage: number;
   trend: "UP" | "DOWN" | "STABLE";
   direction: "UP" | "DOWN" | "NEUTRAL";
+  state?: MetricSemanticState;
 }
 
 export interface BranchPerformance {

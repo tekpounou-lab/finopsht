@@ -13,6 +13,11 @@ export class EmployeeEligibilityService {
   public static isOperationalEmployee(employee: Partial<Employee> | null | undefined): boolean {
     if (!employee) return false;
 
+    const status = (employee.status || "").toString().toUpperCase();
+    if (status === "SUSPENDED" || status === "SUSPENDU" || status === "INACTIVE" || status === "INACTIF") {
+      return false;
+    }
+
     const role = (employee.role || "").toString().toUpperCase();
     if (role === "OWNER" || role === "SUPER_ADMIN" || role === "PROPRIETAIRE") {
       return false;

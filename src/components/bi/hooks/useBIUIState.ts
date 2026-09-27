@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Branch, Role } from "../../../types";
+import { useExecutiveFilters } from "../../../domains/analytics/context/ExecutiveFilterContext";
 
 export type RankMetricType = "hours" | "commissions" | "attendance" | "productivity";
 export type ReportType = "payroll" | "attendance" | "profitability" | "employee" | "audit";
@@ -12,25 +13,35 @@ interface UseBIUIStateParams {
 }
 
 export function useBIUIState(params?: UseBIUIStateParams) {
-  const [selectedBranchId, setSelectedBranchId] = useState<string>(
-    params?.currentRole === "MANAGER" && params?.currentBranch ? params.currentBranch.id : "ALL"
-  );
-  const [selectedDeptId, setSelectedDeptId] = useState<string>("ALL");
-  const [selectedTxType, setSelectedTxType] = useState<string>("ALL");
+  const { filters, updateFilter } = useExecutiveFilters();
+
+  // Delegation of filter parameters to the shared global ExecutiveFilterContext
+  const selectedBranchId = filters.branchId;
+  const setSelectedBranchId = (id: string) => updateFilter("branchId", id);
+
+  const selectedDeptId = filters.departmentId;
+  const setSelectedDeptId = (id: string) => updateFilter("departmentId", id);
+
+  const selectedTxType = filters.transactionType;
+  const setSelectedTxType = (type: string) => updateFilter("transactionType", type);
+
+  const startDate = filters.startDate;
+  const setStartDate = (date: string) => updateFilter("startDate", date);
+
+  const endDate = filters.endDate;
+  const setEndDate = (date: string) => updateFilter("endDate", date);
+
+  const isSimplifiedMode = filters.accountingMode === "CASH";
+  const setIsSimplifiedMode = (val: boolean) => updateFilter("accountingMode", val ? "CASH" : "ACCRUAL");
+
+  const selectedEmployeeId = filters.employeeId;
+  const setSelectedEmployeeId = (id: string) => updateFilter("employeeId", id);
+
+  // Keep other visualization/local tab preferences inside local states
   const [selectedAttendanceStatus, setSelectedAttendanceStatus] = useState<string>("ALL");
   const [selectedPaymentModel, setSelectedPaymentModel] = useState<string>("ALL");
   const [rankBy, setRankBy] = useState<RankMetricType>("productivity");
   const [employeeRankMetric, setEmployeeRankMetric] = useState<RankMetricType>("productivity");
-
-  // Date filters
-  const [startDate, setStartDate] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().split("T")[0];
-  });
-  const [endDate, setEndDate] = useState<string>(() => {
-    return new Date().toISOString().split("T")[0];
-  });
 
   // AI Query & Report UI State
   const [aiQuery, setAiQuery] = useState<string>("");
@@ -40,7 +51,6 @@ export function useBIUIState(params?: UseBIUIStateParams) {
   // BI Tabs & Modals State
   const [reportType, setReportType] = useState<ReportType>("profitability");
   const [activeBiTab, setActiveBiTab] = useState<BITabType>("executive");
-  const [isSimplifiedMode, setIsSimplifiedMode] = useState<boolean>(true);
   const [selectedDeptForExpenseModal, setSelectedDeptForExpenseModal] = useState<any | null>(null);
   const [radarActiveMetric, setRadarActiveMetric] = useState<RadarMetricType>("ALL");
 
@@ -79,5 +89,7 @@ export function useBIUIState(params?: UseBIUIStateParams) {
     setSelectedDeptForExpenseModal,
     radarActiveMetric,
     setRadarActiveMetric,
+    selectedEmployeeId,
+    setSelectedEmployeeId,
   };
 }

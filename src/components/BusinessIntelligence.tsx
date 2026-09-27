@@ -93,33 +93,37 @@ export default function BusinessIntelligence({
 
   const { setFilters: setExecutiveFilters } = useExecutiveFilters();
 
-  // Harmonize ExecutiveFilterContext whenever UI filters update
+  // Synchronize local BI UI filters to ExecutiveFilterContext to align all sub-components (SSOT)
   useEffect(() => {
     setExecutiveFilters((prev) => {
+      const nextMode = uiState.isSimplifiedMode ? "CASH" : "ACCRUAL";
       if (
+        prev.startDate === uiState.startDate &&
+        prev.endDate === uiState.endDate &&
         prev.branchId === uiState.selectedBranchId &&
         prev.departmentId === uiState.selectedDeptId &&
         prev.transactionType === uiState.selectedTxType &&
-        prev.startDate === uiState.startDate &&
-        prev.endDate === uiState.endDate
+        prev.accountingMode === nextMode
       ) {
         return prev;
       }
       return {
         ...prev,
+        startDate: uiState.startDate,
+        endDate: uiState.endDate,
         branchId: uiState.selectedBranchId,
         departmentId: uiState.selectedDeptId,
         transactionType: uiState.selectedTxType,
-        startDate: uiState.startDate,
-        endDate: uiState.endDate,
+        accountingMode: nextMode,
       };
     });
   }, [
+    uiState.startDate,
+    uiState.endDate,
     uiState.selectedBranchId,
     uiState.selectedDeptId,
     uiState.selectedTxType,
-    uiState.startDate,
-    uiState.endDate,
+    uiState.isSimplifiedMode,
     setExecutiveFilters,
   ]);
 
@@ -167,7 +171,7 @@ export default function BusinessIntelligence({
     filteredEmployees: dataAgg.filteredEmployees,
     filteredTx: dataAgg.filteredTx,
     filteredAttendance: dataAgg.filteredAttendance,
-    payrollRecords,
+    payrollRecords: dataAgg.filteredPayrolls,
     snapshot: dataAgg.snapshot,
     currentRole,
     onAddForensicLog,

@@ -7,16 +7,22 @@ interface ExecutiveTreasuryProps {
   snapshot: AnalyticsSnapshot | null;
 }
 
+import { useExecutiveFilters } from "../../domains/analytics/context/ExecutiveFilterContext";
+
 const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot }) => {
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_TREASURY", snapshot);
+  const { filters } = useExecutiveFilters();
+
+  const isCashBasis = filters.accountingMode === "CASH";
 
   const cashVal = stabilizedSnapshot?.cashOnHand?.currentValue || 0;
   const dailyBurn = stabilizedSnapshot?.burnRate?.currentValue || 0;
   const monthlyBurn = Math.round(dailyBurn * 30);
   const runwayDays = dailyBurn > 0 ? Math.round(cashVal / dailyBurn) : cashVal > 0 ? 999 : 0;
-  const revVal = stabilizedSnapshot?.revenue?.currentValue || 0;
-  const expVal = stabilizedSnapshot?.expenses?.currentValue || 0;
-  const netPeriodCashFlow = revVal - expVal;
+
+  // Retrieve canonical Net Profit and Net Cash Flow from the SSOT snapshot
+  const netProfit = stabilizedSnapshot?.profit?.currentValue ?? 0;
+  const netCashFlow = stabilizedSnapshot?.netCashFlow?.currentValue ?? 0;
 
   return (
     <div className="bg-slate-900/70 border border-slate-800/80 hover:border-cyan-500/40 transition-colors p-5 rounded-2xl flex flex-col justify-between shadow-lg relative overflow-hidden">
@@ -36,23 +42,46 @@ const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot
           <strong>{runwayDays >= 999 ? "Couverture totale" : `${runwayDays} jours`}</strong>
         </div>
 
-        <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
-          <div className="flex justify-between">
-            <span>Flux net sur la période :</span>
+        <div className="space-y-3 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
+          {/* Section 8: Show Bénéfice Net (Accrual/Economic) */}
+          <div className="flex justify-between items-center py-0.5">
+            <span className="flex flex-col">
+              <span className="font-semibold text-slate-300">Bénéfice Net :</span>
+              <span className="text-[9px] text-slate-500 font-sans">
+                {isCashBasis ? "Caisse (Revenus encaissés − Décaissements)" : "Engagement (Chiffre d'affaires − Charges)"}
+              </span>
+            </span>
             <span
-              className={`font-mono font-semibold ${
-                netPeriodCashFlow >= 0 ? "text-emerald-400" : "text-rose-400"
+              className={`font-mono font-bold ${
+                netProfit >= 0 ? "text-emerald-400" : "text-rose-400"
               }`}
             >
-              {netPeriodCashFlow >= 0 ? "+" : ""}
-              {netPeriodCashFlow.toLocaleString()} HTG
+              {netProfit >= 0 ? "+" : ""}
+              {netProfit.toLocaleString()} HTG
             </span>
           </div>
-          <div className="flex justify-between">
+
+          {/* Section 8: Show Flux Net de Trésorerie (Treasury Cash Flow) */}
+          <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40 pt-1.5">
+            <span className="flex flex-col">
+              <span className="font-semibold text-slate-300">Flux Net de Trésorerie :</span>
+              <span className="text-[9px] text-slate-500 font-sans">Variation réelle de caisse (Inflows − Outflows)</span>
+            </span>
+            <span
+              className={`font-mono font-bold ${
+                netCashFlow >= 0 ? "text-cyan-400" : "text-rose-400"
+              }`}
+            >
+              {netCashFlow >= 0 ? "+" : ""}
+              {netCashFlow.toLocaleString()} HTG
+            </span>
+          </div>
+
+          <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40 pt-1.5">
             <span>Burn Rate mensuel estimé :</span>
             <span className="text-slate-200 font-mono">{monthlyBurn.toLocaleString()} HTG</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center py-0.5">
             <span>Indice de solvabilité :</span>
             <span
               className={`font-mono font-bold text-[10px] uppercase px-1.5 py-0.5 rounded ${

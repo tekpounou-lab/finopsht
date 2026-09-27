@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { selectCashBasisExpertMetrics } from "../../domains/performance/selectors";
 import { AnalyticsEngine } from "../../domains/analytics/services/AnalyticsEngine";
 import { AccrualBasisEngine } from "../../domains/analytics/services/AccrualBasisEngine";
 import { EmployeeOperationalAttributionService } from "../../services/workforce/EmployeeOperationalAttributionService";
+import { TransactionDeduplicationService } from "../../services/analytics/TransactionDeduplicationService";
 import { IRI_IMPLEMENTATION_BLOCKED_BY_POLICY_DATA } from "../../constants/finance";
 import { LedgerTransaction, PayrollRecord, Employee, Department } from "../../types";
 
@@ -173,13 +174,17 @@ describe("Phase 9C.2 — Controlled Canonical Formula Remediation Test Suite", (
   // DEF-9C-06: EmployeeOperationalAttributionService Commission Fallback
   // --------------------------------------------------------------------------
   it("DEF-9C-06: EmployeeOperationalAttributionService should default commission rate fallback to 0% (not 5%)", async () => {
+    vi.spyOn(TransactionDeduplicationService, "isTransactionDuplicate").mockResolvedValue(false);
+    vi.spyOn(TransactionDeduplicationService, "markTransactionProcessed").mockResolvedValue(undefined);
+
+    const testBizId = `biz_test_c6_${Date.now()}`;
     const employees = [
       { id: "emp_no_comm", name: "Jean Sales", is_active: true } as Employee,
     ];
     const transactions = [
       {
-        id: "tx1",
-        business_id: "biz_test_c6",
+        id: `tx_${Date.now()}`,
+        business_id: testBizId,
         amount: 10000,
         employee_id: "emp_no_comm",
         department_id: "dept1",
@@ -191,7 +196,7 @@ describe("Phase 9C.2 — Controlled Canonical Formula Remediation Test Suite", (
     const departments = [{ id: "dept1", name: "Sales" }] as Department[];
 
     const attributions = await EmployeeOperationalAttributionService.rebuildAttributions(
-      "biz_test_c6",
+      testBizId,
       employees,
       transactions,
       departments

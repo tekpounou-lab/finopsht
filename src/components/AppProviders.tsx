@@ -6,7 +6,6 @@ import { IdentityProvider } from "../modules/identity/IdentityContext";
 import { BusinessProvider } from "../contexts/BusinessContext";
 import { FilterProvider } from "../contexts/FilterContext";
 import { AnalyticsProvider } from "../domains/analytics/context/AnalyticsContext";
-import { ExecutiveFilterProvider } from "../domains/analytics/context/ExecutiveFilterContext";
 import { translations, Language, I18nContext } from "../i18n";
 import { InactivityTimer } from "./InactivityTimer";
 import i18next from "i18next";
@@ -50,13 +49,11 @@ export default function AppProviders({ children }: AppProvidersProps) {
             <IdentityProvider>
               <AuthProvider>
                 <BusinessProvider>
-                  <ExecutiveFilterProvider>
-                    <AnalyticsProvider>
-                      <IdentityLifecycleListener />
-                      <InactivityTimer />
-                      {children}
-                    </AnalyticsProvider>
-                  </ExecutiveFilterProvider>
+                  <AnalyticsProvider>
+                    <IdentityLifecycleListener />
+                    <InactivityTimer />
+                    {children}
+                  </AnalyticsProvider>
                 </BusinessProvider>
               </AuthProvider>
             </IdentityProvider>

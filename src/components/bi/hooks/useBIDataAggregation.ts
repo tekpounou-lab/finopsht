@@ -13,6 +13,7 @@ import { useAnalytics } from "../../../domains/analytics/context/AnalyticsContex
 import { AnalyticsEngine } from "../../../domains/analytics/services/AnalyticsEngine";
 import { RankMetricType } from "./useBIUIState";
 import { EnrichedDepartmentMetric, EnrichedBranchMetric, EmployeeScorecard, PayrollAggregates } from "../types";
+import { MetricSemanticState } from "../../../domains/analytics/types";
 import { filterOperationalEmployees } from "../../../services/workforce/EmployeeEligibilityService";
 import { useDeepCompareMemo } from "../../../hooks/useDeepCompareMemo";
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
@@ -68,7 +69,7 @@ export function useBIDataAggregation({
   language,
   isSimplifiedMode = false,
 }: UseBIDataAggregationParams) {
-  const { snapshot } = useAnalytics();
+  const { snapshot, loading, status } = useAnalytics();
   const { selectedCurrency, businessSettings } = useBusinessContext();
   const [usdToHtgRate, setUsdToHtgRate] = useState<number>(135.0);
 
@@ -100,16 +101,7 @@ export function useBIDataAggregation({
     return filterOperationalEmployees(employees || [], currentBusiness?.id);
   }, [employees, currentBusiness?.id]);
 
-  const filteredEmployees = useMemo(() => {
-    return operationalEmployees.filter((emp) => {
-      if (selectedBranchId !== "ALL" && emp.branchId !== selectedBranchId) return false;
-      if (selectedDeptId !== "ALL" && emp.departmentId !== selectedDeptId) return false;
-      if (selectedPaymentModel !== "ALL" && emp.paymentModel !== selectedPaymentModel) return false;
-      return true;
-    });
-  }, [operationalEmployees, selectedBranchId, selectedDeptId, selectedPaymentModel]);
-
-  const filteredTx = useMemo(() => {
+  const scopedTx = useMemo(() => {
     if (!currentBusiness?.id) return [];
     return ledgerTransactions.filter((tx) => {
       const txBizId = tx.business_id || (tx as any).businessId;
@@ -127,13 +119,16 @@ export function useBIDataAggregation({
       if (selectedBranchId !== "ALL" && tx.branchId !== selectedBranchId && (tx as any).branch_id !== selectedBranchId) return false;
       if (selectedDeptId !== "ALL" && tx.departmentId !== selectedDeptId && (tx as any).department_id !== selectedDeptId) return false;
       if (selectedTxType !== "ALL" && tx.type !== selectedTxType) return false;
-      const txDate = resolveAnalyticsTxDate(tx, isSimplifiedMode);
-      if (!matchesDateFilter(txDate, startDate, endDate)) {
-        return false;
-      }
       return true;
     });
-  }, [ledgerTransactions, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedTxType, startDate, endDate, isSimplifiedMode]);
+  }, [ledgerTransactions, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedTxType, isSimplifiedMode]);
+
+  const filteredTx = useMemo(() => {
+    return scopedTx.filter((tx) => {
+      const txDate = resolveAnalyticsTxDate(tx, isSimplifiedMode);
+      return matchesDateFilter(txDate, startDate, endDate);
+    });
+  }, [scopedTx, startDate, endDate, isSimplifiedMode]);
 
   const empBranchMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -258,7 +253,7 @@ export function useBIDataAggregation({
     return 0;
   };
 
-  const filteredAttendance = useMemo(() => {
+  const scopedAttendance = useMemo(() => {
     if (!currentBusiness?.id) return [];
     return attendanceRecords.filter((rec) => {
       const recBizId = rec.business_id || (rec as any).businessId;
@@ -271,48 +266,84 @@ export function useBIDataAggregation({
       if (selectedDeptId !== "ALL" && rDept && rDept !== selectedDeptId) return false;
 
       if (selectedAttendanceStatus !== "ALL" && rec.status !== selectedAttendanceStatus) return false;
-      
-      const dateStr = resolveAnalyticsAttendanceDate(rec);
-      if (!matchesDateFilter(dateStr, startDate, endDate)) {
-        return false;
-      }
       return true;
     });
-  }, [attendanceRecords, currentBusiness?.id, selectedBranchId, selectedDeptId, empDeptMap, empBranchMap, selectedAttendanceStatus, startDate, endDate]);
+  }, [attendanceRecords, currentBusiness?.id, selectedBranchId, selectedDeptId, empDeptMap, empBranchMap, selectedAttendanceStatus]);
 
-  const filteredPayrolls = useMemo(() => {
+  const filteredAttendance = useMemo(() => {
+    return scopedAttendance.filter((rec) => {
+      const dateStr = resolveAnalyticsAttendanceDate(rec);
+      return matchesDateFilter(dateStr, startDate, endDate);
+    });
+  }, [scopedAttendance, startDate, endDate]);
+
+  const scopedPayrolls = useMemo(() => {
     if (!currentBusiness?.id) return [];
     return (payrollRecords || []).filter((rec) => {
-      if (rec.business_id && rec.business_id !== currentBusiness.id) return false;
+      const recBizId = rec.business_id || (rec as any).businessId;
+      if (recBizId && recBizId !== currentBusiness.id) return false;
       if (rec.isExcluded) return false;
 
-      // If Cash-Basis (isSimplifiedMode = true), strictly require actual disbursement / payment date & paid status
       if (isSimplifiedMode) {
         const pStatus = String(rec.status || "").toUpperCase();
         if (pStatus === "DRAFT" || pStatus === "PENDING" || pStatus === "REJECTED" || pStatus === "VOID") return false;
-        const paidDate = resolveAnalyticsPayrollDate(rec, true);
-        if (!matchesDateFilter(paidDate, startDate, endDate)) return false;
-      } else {
-        // Accrual-Basis (Expert Mode - Engagement): period end or accounting date
-        const pEffective = (rec as any).paymentDate || (rec as any).effectiveAccountingDate || rec.period_end || (rec as any).periodEnd || (rec as any).endDate;
-        if (startDate && endDate) {
-          if (!pEffective) return false;
-          const normDate = normalizeDateStr(pEffective);
-          if (!normDate || normDate < startDate || normDate > endDate) {
-            return false;
-          }
-        }
       }
 
-      const emp = (employees || []).find((e) => e.id === (rec.employee_id || rec.employeeId));
-      const rBranch = rec.branch_id || (rec as any).branchId || emp?.branchId || (emp as any)?.branch_id;
-      const rDept = rec.department_id || (rec as any).departmentId || emp?.departmentId || (emp as any)?.department_id;
+      const rEmpId = rec.employeeId || rec.employee_id;
+      const emp = (employees || []).find((e) => String(e.id) === String(rEmpId));
+      const rBranch = rec.branch_id || (rec as any).branchId || emp?.branchId || (emp as any)?.branch_id || (rEmpId ? empBranchMap.get(rEmpId) : undefined);
+      const rDept = rec.department_id || (rec as any).departmentId || emp?.departmentId || (emp as any)?.department_id || (rEmpId ? empDeptMap.get(rEmpId) : undefined);
+
       if (selectedBranchId !== "ALL" && rBranch && rBranch !== selectedBranchId) return false;
       if (selectedDeptId !== "ALL" && rDept && rDept !== selectedDeptId) return false;
 
       return true;
     });
-  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, startDate, endDate, isSimplifiedMode]);
+  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, isSimplifiedMode, empBranchMap, empDeptMap]);
+
+  const filteredPayrolls = useMemo(() => {
+    return scopedPayrolls.filter((rec) => {
+      const pDate = resolveAnalyticsPayrollDate(rec, isSimplifiedMode);
+      return matchesDateFilter(pDate, startDate, endDate);
+    });
+  }, [scopedPayrolls, startDate, endDate, isSimplifiedMode]);
+
+  const filteredEmployees = useMemo(() => {
+    return operationalEmployees.filter((emp) => {
+      // 1. Check suspended or inactive status
+      const status = (emp.status || "").toString().toUpperCase();
+      if (status === "SUSPENDED" || status === "SUSPENDU" || status === "INACTIVE" || status === "INACTIF" || emp.isActive === false || (emp as any).isActive === "false") {
+        return false;
+      }
+
+      if (selectedBranchId !== "ALL" && emp.branchId !== selectedBranchId) return false;
+      if (selectedDeptId !== "ALL" && emp.departmentId !== selectedDeptId) return false;
+      if (selectedPaymentModel !== "ALL" && emp.paymentModel !== selectedPaymentModel) return false;
+
+      // 2. Check activity in the filtered period (if date filters are active)
+      if (startDate && endDate) {
+        const hasAttendance = filteredAttendance.some((rec) => (rec.employeeId || (rec as any).employee_id) === emp.id);
+        const hasPayroll = filteredPayrolls.some((rec) => (rec.employeeId || rec.employee_id) === emp.id);
+        const hasTransaction = filteredTx.some((tx) => (tx.employeeId || (tx as any).employee_id) === emp.id);
+
+        if (!hasAttendance && !hasPayroll && !hasTransaction) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    operationalEmployees,
+    selectedBranchId,
+    selectedDeptId,
+    selectedPaymentModel,
+    startDate,
+    endDate,
+    filteredAttendance,
+    filteredPayrolls,
+    filteredTx,
+  ]);
 
   const formatCurrencyValue = (valInHtg: number) => {
     if (selectedCurrency === "USD") {
@@ -348,9 +379,9 @@ export function useBIDataAggregation({
       period: "CUSTOM",
       customRange: { startDate: startDate || undefined, endDate: endDate || undefined },
       employees: filteredEmployees,
-      transactions: filteredTx,
-      attendanceLogs: filteredAttendance,
-      payrollRecords: filteredPayrolls,
+      transactions: scopedTx,
+      attendanceLogs: scopedAttendance,
+      payrollRecords: scopedPayrolls,
       branches,
       departments,
       businessId: currentBusiness.id,
@@ -366,9 +397,9 @@ export function useBIDataAggregation({
     endDate,
     language,
     filteredEmployees,
-    filteredTx,
-    filteredAttendance,
-    filteredPayrolls,
+    scopedTx,
+    scopedAttendance,
+    scopedPayrolls,
     branches,
     departments,
     isSimplifiedMode,
@@ -471,62 +502,87 @@ export function useBIDataAggregation({
     };
   }, [effectiveSnapshot?.payrollAggregates, filteredPayrolls, isSocialTaxEnabled]);
 
+  const revenueState: MetricSemanticState = effectiveSnapshot?.revenue?.currentValue !== undefined
+    ? (effectiveSnapshot.revenue.currentValue === 0 ? "VALID_ZERO" : "VALID_VALUE")
+    : (loading ? "LOADING" : (status === "error" ? "ERROR" : "NO_DATA"));
+
   const totalRevenue = useMemo(() => {
     if (effectiveSnapshot?.revenue?.currentValue !== undefined) {
       return effectiveSnapshot.revenue.currentValue;
     }
-    return 0;
+    return null;
   }, [effectiveSnapshot?.revenue?.currentValue]);
+
+  const expenseState: MetricSemanticState = effectiveSnapshot?.expenses?.currentValue !== undefined
+    ? (effectiveSnapshot.expenses.currentValue === 0 ? "VALID_ZERO" : "VALID_VALUE")
+    : (loading ? "LOADING" : (status === "error" ? "ERROR" : "NO_DATA"));
 
   const totalExpenses = useMemo(() => {
     if (effectiveSnapshot?.expenses?.currentValue !== undefined) {
       return effectiveSnapshot.expenses.currentValue;
     }
-    return 0;
+    return null;
   }, [effectiveSnapshot?.expenses?.currentValue]);
+
+  const profitState: MetricSemanticState = effectiveSnapshot?.profit?.currentValue !== undefined
+    ? (effectiveSnapshot.profit.currentValue === 0 ? "VALID_ZERO" : "VALID_VALUE")
+    : (loading ? "LOADING" : (status === "error" ? "ERROR" : "NO_DATA"));
 
   const netProfit = useMemo(() => {
     if (effectiveSnapshot?.profit?.currentValue !== undefined) {
       return effectiveSnapshot.profit.currentValue;
     }
-    return 0;
+    return null;
   }, [effectiveSnapshot?.profit?.currentValue]);
     
   const profitMarginPercentage = useMemo(() => {
     if (effectiveSnapshot?.profitMargin !== undefined) {
-      return typeof effectiveSnapshot.profitMargin === "number" ? Math.round(effectiveSnapshot.profitMargin) : 0;
+      return typeof effectiveSnapshot.profitMargin === "number" ? Math.round(effectiveSnapshot.profitMargin) : null;
     }
-    return totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
+    if (totalRevenue !== null && totalRevenue > 0 && netProfit !== null) {
+      return Math.round((netProfit / totalRevenue) * 100);
+    }
+    return null;
   }, [effectiveSnapshot?.profitMargin, totalRevenue, netProfit]);
     
-  const financialStressScore = totalRevenue > 0 ? Math.min(100, Math.max(0, Math.round((totalExpenses / totalRevenue) * 100))) : 100;
+  const financialStressScore = totalRevenue !== null && totalRevenue > 0 && totalExpenses !== null ? Math.min(100, Math.max(0, Math.round((totalExpenses / totalRevenue) * 100))) : 100;
+  
   const totalAdvancesPending = useMemo(() => {
     if (effectiveSnapshot?.advanceExposure?.currentValue !== undefined) {
       return effectiveSnapshot.advanceExposure.currentValue;
     }
-    return 0;
+    return null;
   }, [effectiveSnapshot?.advanceExposure?.currentValue]);
 
   const activeEmployeesCount = useMemo(() => {
     if (effectiveSnapshot?.activeStaff?.currentValue !== undefined) {
       return effectiveSnapshot.activeStaff.currentValue;
     }
-    return 0;
+    return null;
   }, [effectiveSnapshot?.activeStaff?.currentValue]);
 
   const attendanceAggregates = useMemo(() => {
     if (effectiveSnapshot?.attendanceRate?.currentValue !== undefined) {
       console.debug("[useBIDataAggregation] Using effectiveSnapshot attendanceRate SSOT:", effectiveSnapshot.attendanceRate.currentValue);
       return {
-        attendanceRate: effectiveSnapshot.attendanceRate.currentValue ?? 0,
-        latenessRate: effectiveSnapshot.latenessRate?.currentValue ?? 0,
-        absenceRate: effectiveSnapshot.absenceRate?.currentValue ?? 0,
-        avgHours: effectiveSnapshot.avgHoursWorked?.currentValue ?? 0,
+        attendanceRate: effectiveSnapshot.attendanceRate.currentValue,
+        latenessRate: effectiveSnapshot.latenessRate?.currentValue ?? null,
+        absenceRate: effectiveSnapshot.absenceRate?.currentValue ?? null,
+        avgHours: effectiveSnapshot.avgHoursWorked?.currentValue ?? null,
         overrides: 0,
+        state: effectiveSnapshot.attendanceRate.currentValue === 0 ? ("VALID_ZERO" as const) : ("VALID_VALUE" as const),
       };
     }
-    return { attendanceRate: 0, latenessRate: 0, absenceRate: 100, avgHours: 0, overrides: 0 };
-  }, [effectiveSnapshot]);
+    const state: MetricSemanticState = loading ? "LOADING" : (status === "error" ? "ERROR" : "NO_DATA");
+    return {
+      attendanceRate: null,
+      latenessRate: null,
+      absenceRate: null,
+      avgHours: null,
+      overrides: 0,
+      state,
+    };
+  }, [effectiveSnapshot, loading, status]);
 
   // Branch Performance Details
   const branchMetrics: EnrichedBranchMetric[] = useMemo(() => {
@@ -765,13 +821,19 @@ export function useBIDataAggregation({
 
   // Cashflow Timeline
   const cashflowTimeline = useMemo(() => {
+    let runningBalance = 0;
     if (!isFiltered && biSnapshot?.historicalTrends && biSnapshot.historicalTrends.length > 0) {
-      return biSnapshot.historicalTrends.map((t) => ({
-        date: t.label || t.key,
-        Revenus: t.gross,
-        Dépenses: t.gross - t.net,
-        Net: t.net,
-      }));
+      return biSnapshot.historicalTrends.map((t) => {
+        const net = t.net !== undefined ? t.net : (t.gross - ((t as any).expenses || 0));
+        runningBalance += net;
+        return {
+          date: t.label || t.key,
+          Revenus: t.gross,
+          Dépenses: t.gross - net,
+          Net: net,
+          Balance: runningBalance,
+        };
+      });
     }
 
     const dateMap: Record<string, { date: string; Revenus: number; Dépenses: number; Net: number }> = {};
@@ -799,13 +861,18 @@ export function useBIDataAggregation({
 
     const items = Object.values(dateMap)
       .sort((a, b) => a.date.localeCompare(b.date))
-      .map((item) => ({
-        ...item,
-        Net: item.Revenus - item.Dépenses,
-      }));
+      .map((item) => {
+        const net = item.Revenus - item.Dépenses;
+        runningBalance += net;
+        return {
+          ...item,
+          Net: net,
+          Balance: runningBalance,
+        };
+      });
 
     return items;
-  }, [biSnapshot?.historicalTrends, filteredTx]);
+  }, [biSnapshot?.historicalTrends, filteredTx, isFiltered]);
 
   // Expense Categories
   const expenseCategoryChartData = useMemo(() => {
@@ -1062,7 +1129,13 @@ export function useBIDataAggregation({
     totalAdvancesIssued: totalAdvancesPending,
     avgHoursClocked: attendanceAggregates.avgHours,
     unplannedAbsenteeismRate: attendanceAggregates.absenceRate,
-    burnRatePercentage: totalRevenue > 0 ? Math.round((totalExpenses / totalRevenue) * 100) : 0,
+    burnRatePercentage: totalRevenue !== null && totalRevenue > 0 && totalExpenses !== null ? Math.round((totalExpenses / totalRevenue) * 100) : 0,
+    metricStates: {
+      revenue: revenueState,
+      expenses: expenseState,
+      profit: profitState,
+      attendance: attendanceAggregates.state,
+    },
     cnsTaxesAmount: payrollAggregates.cnsContributions,
     cnssTaxesAmount: payrollAggregates.cnssContributions,
     branchMetrics,

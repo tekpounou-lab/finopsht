@@ -456,34 +456,28 @@ export function resolveAnalyticsAttendanceDate(att: any): string {
 
 /**
  * Resolves the canonical accounting/settlement date for a payroll record.
- * - Cash Basis: Strictly checks payment / disbursement date
- * - Accrual Basis: Checks period end / period boundary or accounting date
+ * The automatic date taken into account is strictly the period closure date.
+ * For example: if a payroll covers 07/01/2026 - 07/15/2026, the seal date is 07/15/2026.
  */
 export function resolveAnalyticsPayrollDate(payroll: any, isCashBasis: boolean = false): string {
   if (!payroll) return '';
 
-  let rawDate: any = null;
-  if (isCashBasis) {
-    rawDate =
-      payroll.paymentDate ||
-      payroll.paidAt ||
-      payroll.disbursementDate ||
-      payroll.effectiveAccountingDate;
-  } else {
-    rawDate =
-      payroll.period_end ||
-      payroll.periodEnd ||
-      payroll.periodEndDate ||
-      payroll.endDate ||
-      payroll.effectiveAccountingDate ||
-      payroll.paymentDate ||
-      payroll.period_start ||
-      payroll.periodStart ||
-      payroll.startDate ||
-      payroll.generated_at ||
-      payroll.createdAt ||
-      payroll.created_at;
-  }
+  // The automatic date that must be taken into account is the period closure date
+  const rawDate =
+    payroll.period_end ||
+    payroll.periodEnd ||
+    payroll.periodEndDate ||
+    payroll.endDate ||
+    payroll.paymentDate ||
+    payroll.paidAt ||
+    payroll.disbursementDate ||
+    payroll.effectiveAccountingDate ||
+    payroll.period_start ||
+    payroll.periodStart ||
+    payroll.startDate ||
+    payroll.generated_at ||
+    payroll.createdAt ||
+    payroll.created_at;
 
   return toDateOnly(rawDate);
 }

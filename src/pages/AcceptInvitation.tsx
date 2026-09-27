@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Mail, CheckCircle, LogOut, XCircle } from 'lucide-react';
 import { useIdentity } from '../modules/identity/IdentityContext';
 import { useI18n } from '../i18n';
-import { auth } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -11,9 +12,37 @@ export default function AcceptInvitation() {
   const { identity, acceptInvitation, rejectInvitation } = useIdentity();
   const { language } = useI18n();
   const [loading, setLoading] = useState(false);
+  const [businessName, setBusinessName] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const invitation = identity?.invitation;
+  const targetBusinessId = invitation?.business_id;
+
+  useEffect(() => {
+    if (!targetBusinessId) return;
+
+    let active = true;
+    const fetchBusinessName = async () => {
+      try {
+        const docRef = doc(db, "businesses", targetBusinessId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && active) {
+          const data = docSnap.data();
+          if (data?.name) {
+            setBusinessName(data.name);
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching business name for accept invitation:", err);
+      }
+    };
+
+    fetchBusinessName();
+
+    return () => {
+      active = false;
+    };
+  }, [targetBusinessId]);
 
   const handleAccept = async () => {
     if (!invitation) return;
@@ -80,7 +109,7 @@ export default function AcceptInvitation() {
               {language === "fr" ? "Entreprise" : language === "ht" ? "Konpayi" : "Business"}
             </span>
             <span className="text-xs text-slate-300 font-mono">
-              {identity?.business?.name || invitation.business_name || invitation.business_id}
+              {businessName || identity?.business?.name || invitation.business_name || invitation.business_id}
             </span>
           </div>
         </div>

@@ -35,9 +35,15 @@ export interface ExecutiveFilterContextState {
   applyPendingFilter: () => void;
 }
 
+const getTrailingStartDate = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return toDateOnly(d);
+};
+
 const defaultFilters: ExecutiveFilters = {
-  startDate: toDateOnly(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
-  endDate: toDateOnly(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)),
+  startDate: getTrailingStartDate(),
+  endDate: toDateOnly(new Date()),
   branchId: "ALL",
   departmentId: "ALL",
   employeeId: "ALL",

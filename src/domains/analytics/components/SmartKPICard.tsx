@@ -3,10 +3,13 @@ import { motion } from "motion/react";
 import { TrendingUp, TrendingDown, Target, HelpCircle, Activity, ChevronRight, Gauge } from "lucide-react";
 import { AreaChart, Area } from "recharts";
 import { SafeChartContainer } from "../../../components/ui/SafeChartContainer";
+import { useAnalyticsFilters } from "../../../contexts/AnalyticsFilterContext";
+
+import { MetricSemanticState } from "../types";
 
 export interface SmartKPICardProps {
   title: string;
-  currentValue: number;
+  currentValue: number | null;
   previousValue: number;
   difference: number;
   percentage: number;
@@ -19,6 +22,7 @@ export interface SmartKPICardProps {
   status: "Healthy" | "Warning" | "Critical";
   sparklineData?: { value: number }[];
   onClick?: () => void;
+  state?: MetricSemanticState;
 }
 
 export const SmartKPICard: React.FC<SmartKPICardProps> = ({
@@ -36,12 +40,14 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
   status,
   sparklineData = [],
   onClick,
+  state,
 }) => {
+  const { filters } = useAnalyticsFilters();
   const isPositive = difference > 0.01;
   const isNegative = difference < -0.01;
 
   // Compute achievement %
-  const achievementPct = targetValue && targetValue > 0 
+  const achievementPct = targetValue && targetValue > 0 && currentValue !== null && currentValue !== undefined
     ? Math.round((currentValue / targetValue) * 100) 
     : undefined;
 
@@ -74,6 +80,7 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
       whileHover={{ y: -3, scale: 1.01, boxShadow: "0 12px 24px -8px rgba(0, 0, 0, 0.5)" }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
       onClick={onClick}
+      data-branch-id={filters.branchId}
       className={`relative bg-slate-900/60 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between min-h-[14rem] transition-all overflow-hidden ${onClick ? "cursor-pointer select-none active:scale-[0.99]" : ""} border-l-4 ${statusStyle.accent}`}
     >
       {/* Background glow */}
@@ -95,10 +102,18 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
       {/* Core Value Block */}
       <div className="my-1.5">
         <div className="flex items-baseline gap-1.5 overflow-hidden">
-          <span className="text-2xl font-black font-mono text-slate-100 tracking-tight truncate">
-            {currentValue.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-slate-500 font-bold uppercase">{unit}</span>
+          {currentValue !== null && currentValue !== undefined ? (
+            <>
+              <span className="text-2xl font-black font-mono text-slate-100 tracking-tight truncate">
+                {currentValue.toLocaleString()}
+              </span>
+              <span className="text-[10px] text-slate-500 font-bold uppercase">{unit}</span>
+            </>
+          ) : (
+            <span className="text-2xl font-black font-mono text-slate-500 tracking-tight truncate">
+              {state === "LOADING" ? "..." : "—"}
+            </span>
+          )}
         </div>
 
         {/* Change stats */}

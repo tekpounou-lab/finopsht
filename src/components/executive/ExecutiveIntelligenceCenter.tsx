@@ -26,7 +26,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
     if (activeSnapshot?.revenue?.currentValue !== undefined) {
       return activeSnapshot.revenue.currentValue;
     }
-    return 0;
+    return null;
   }, [activeSnapshot?.revenue?.currentValue]);
 
   const effectiveExpenses = useMemo(() => {
@@ -34,21 +34,21 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
     if (snapVal !== undefined) {
       return snapVal;
     }
-    return 0;
+    return null;
   }, [activeSnapshot?.operationalExpenses, activeSnapshot?.expenses]);
 
   const effectiveProfit = useMemo(() => {
     if (activeSnapshot?.profit?.currentValue !== undefined) {
       return activeSnapshot.profit.currentValue;
     }
-    return 0;
+    return null;
   }, [activeSnapshot?.profit?.currentValue]);
 
   const effectiveAttendanceRate = useMemo(() => {
     if (activeSnapshot?.attendanceRate?.currentValue !== undefined) {
       return activeSnapshot.attendanceRate.currentValue;
     }
-    return 0;
+    return null;
   }, [activeSnapshot?.attendanceRate?.currentValue]);
 
   React.useEffect(() => {
@@ -98,7 +98,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
             trend={activeSnapshot.revenue.trend}
             direction={activeSnapshot.revenue.direction}
             unit="HTG"
-            status={effectiveRevenue > 0 ? "Healthy" : "Warning"}
+            status={effectiveRevenue !== null && effectiveRevenue > 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
             title="Dépenses d'Exploitation"
@@ -109,7 +109,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
             trend={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).trend}
             direction={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).direction}
             unit="HTG"
-            status={effectiveExpenses > 0 ? "Healthy" : "Warning"}
+            status={effectiveExpenses !== null && effectiveExpenses > 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
             title="Bénéfice Net"
@@ -120,7 +120,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
             trend={activeSnapshot.profit.trend}
             direction={activeSnapshot.profit.direction}
             unit="HTG"
-            status={effectiveProfit >= 0 ? "Healthy" : "Critical"}
+            status={effectiveProfit !== null && effectiveProfit >= 0 ? "Healthy" : "Critical"}
           />
           <SmartKPICard
             title="Taux d'Assiduité"
@@ -131,7 +131,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
             trend={activeSnapshot.attendanceRate.trend}
             direction={activeSnapshot.attendanceRate.direction}
             unit="%"
-            status={effectiveAttendanceRate >= 75 ? "Healthy" : "Warning"}
+            status={effectiveAttendanceRate !== null && effectiveAttendanceRate >= 75 ? "Healthy" : "Warning"}
           />
         </div>
       )}

@@ -1,6 +1,15 @@
 import { Business, Branch, Employee, LedgerTransaction, AttendanceRecord, PayrollRecord } from "../../types";
 
-export type MetricSemanticState = "VALUE" | "ZERO" | "NO_DATA" | "UNDEFINED" | "INSUFFICIENT_DATA";
+export type MetricSemanticState =
+  | "LOADING"
+  | "NO_DATA"
+  | "VALID_ZERO"
+  | "VALID_VALUE"
+  | "ERROR"
+  | "VALUE"
+  | "ZERO"
+  | "UNDEFINED"
+  | "INSUFFICIENT_DATA";
 
 export interface HeuristicReport {
   summary: string;

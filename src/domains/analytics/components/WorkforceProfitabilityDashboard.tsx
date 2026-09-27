@@ -87,6 +87,19 @@ export const WorkforceProfitabilityDashboard: React.FC<WorkforceProfitabilityDas
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
+  // Synchronize local dropdowns with global executive filters
+  React.useEffect(() => {
+    if (filters.branchId) {
+      setSelectedBranchFilter(filters.branchId);
+    }
+  }, [filters.branchId]);
+
+  React.useEffect(() => {
+    if (filters.departmentId) {
+      setSelectedDeptFilter(filters.departmentId);
+    }
+  }, [filters.departmentId]);
+
   // Excel Table Multi-Column Sort & Filter States
   type SortField =
     | "employeeName"

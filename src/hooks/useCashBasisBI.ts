@@ -11,10 +11,11 @@ import { useBusinessContext } from '../contexts/BusinessContext';
 import { CashBasisEngine } from '../domains/cash/engine/CashBasisEngine';
 import { buildCashBasisViewModel } from '../domains/cash/viewmodel/cashViewModel.builder';
 import type { CashBasisViewModel } from '../domains/cash/viewmodel/cashViewModel.types';
+import { useAnalyticsFilters } from '../contexts/AnalyticsFilterContext';
 
 export interface UseCashBasisBIFilters {
-  startDate: string;
-  endDate: string;
+  startDate?: string;
+  endDate?: string;
   currency?: string;
   branchId?: string;
   departmentId?: string;
@@ -28,7 +29,7 @@ export interface UseCashBasisBIResult {
   refetch: () => void;
 }
 
-export function useCashBasisBI(filters: UseCashBasisBIFilters): UseCashBasisBIResult {
+export function useCashBasisBI(overrideFilters?: UseCashBasisBIFilters): UseCashBasisBIResult {
   const {
     business,
     ledgerTransactions = [],
@@ -39,14 +40,19 @@ export function useCashBasisBI(filters: UseCashBasisBIFilters): UseCashBasisBIRe
     invoices = [],
   } = useBusinessContext() as any;
 
+  const { filters: globalFilters } = useAnalyticsFilters();
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState<number>(0);
 
   const businessId = business?.id || 'default_biz';
-  const currency = filters.currency || 'HTG';
-  const startDate = filters.startDate || new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().split('T')[0];
-  const endDate = filters.endDate || new Date().toISOString().split('T')[0];
+  const currency = overrideFilters?.currency || 'HTG';
+  const startDate = overrideFilters?.startDate || globalFilters.dateRange.startDate;
+  const endDate = overrideFilters?.endDate || globalFilters.dateRange.endDate;
+  const branchId = overrideFilters?.branchId || globalFilters.branchId;
+  const departmentId = overrideFilters?.departmentId || globalFilters.departmentId;
+  const cashAccountId = overrideFilters?.cashAccountId;
 
   const viewModel = useMemo(() => {
     try {
@@ -55,14 +61,14 @@ export function useCashBasisBI(filters: UseCashBasisBIFilters): UseCashBasisBIRe
 
       // Filter raw records by branch/dept if specified
       const filteredLedger = ledgerTransactions.filter((tx: any) => {
-        if (filters.branchId && filters.branchId !== 'ALL' && tx.branchId && tx.branchId !== filters.branchId) return false;
-        if (filters.departmentId && filters.departmentId !== 'ALL' && tx.departmentId && tx.departmentId !== filters.departmentId) return false;
+        if (branchId && branchId !== 'ALL' && tx.branchId && tx.branchId !== branchId) return false;
+        if (departmentId && departmentId !== 'ALL' && tx.departmentId && tx.departmentId !== departmentId) return false;
         return true;
       });
 
       const filteredPayroll = payrollRecords.filter((p: any) => {
-        if (filters.branchId && filters.branchId !== 'ALL' && p.branchId && p.branchId !== filters.branchId) return false;
-        if (filters.departmentId && filters.departmentId !== 'ALL' && p.departmentId && p.departmentId !== filters.departmentId) return false;
+        if (branchId && branchId !== 'ALL' && p.branchId && p.branchId !== branchId) return false;
+        if (departmentId && departmentId !== 'ALL' && p.departmentId && p.departmentId !== departmentId) return false;
         return true;
       });
 
@@ -79,7 +85,7 @@ export function useCashBasisBI(filters: UseCashBasisBIFilters): UseCashBasisBIRe
           startDate,
           endDate,
           currency,
-          cashAccountId: filters.cashAccountId,
+          cashAccountId: cashAccountId,
         }
       );
 
@@ -108,9 +114,9 @@ export function useCashBasisBI(filters: UseCashBasisBIFilters): UseCashBasisBIRe
     startDate,
     endDate,
     currency,
-    filters.branchId,
-    filters.departmentId,
-    filters.cashAccountId,
+    branchId,
+    departmentId,
+    cashAccountId,
     ledgerTransactions,
     payrollRecords,
     payrollCycles,

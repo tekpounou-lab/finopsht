@@ -471,19 +471,20 @@ export function selectCashBasisExpertMetrics(
   const netCashFlow = Math.round(cashStatement.netCashFlow);
   const cashFlowMargin = totalRevenue > 0 ? Math.round((netCashFlow / totalRevenue) * 100) : 0;
 
-  const snap = AnalyticsEngine.generateSnapshot(
-    "CUSTOM",
-    { startDate: filters.startDate, endDate: filters.endDate },
+  const snap = AnalyticsEngine.generateSnapshot({
+    period: "CUSTOM",
+    customRange: { startDate: filters.startDate, endDate: filters.endDate },
     employees,
     transactions,
-    attendanceRecords,
+    attendanceLogs: attendanceRecords,
     payrollRecords,
-    allBranches,
-    allDepts,
-    [],
+    branches: allBranches,
+    departments: allDepts,
+    contracts: [],
     businessId,
-    "fr"
-  );
+    language: "fr",
+    accountingMode: "CASH",
+  });
 
   const netProfit = Math.round(snap.profit.currentValue);
   const profitMargin = Math.round(snap.profitMargin);

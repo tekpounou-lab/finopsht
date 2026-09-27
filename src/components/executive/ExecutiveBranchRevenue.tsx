@@ -13,20 +13,32 @@ const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = (
   const totalRev = stabilizedSnapshot?.revenue?.currentValue || 0;
 
   const branchData = React.useMemo(() => {
-    if (stabilizedSnapshot?.branchPerformance && stabilizedSnapshot.branchPerformance.length > 0) {
-      return stabilizedSnapshot.branchPerformance.map((bp) => ({
-        name: bp.branchName || "Bureau Central",
-        revenue: bp.revenue || totalRev,
-        percentage: totalRev > 0 ? Math.round(((bp.revenue || totalRev) / totalRev) * 100) : 100,
-      }));
+    const list = stabilizedSnapshot?.branchPerformance || [];
+    if (list.length === 0 && totalRev === 0) {
+      return [];
     }
-    return [
-      {
-        name: "Bureau Central",
-        revenue: totalRev,
-        percentage: 100,
-      },
-    ];
+
+    // Map existing branch performance and handle missing/null branchName as 'Non Alloué'
+    const mapped = list.map((bp) => ({
+      name: bp.branchName || "Non Alloué",
+      revenue: bp.revenue || 0,
+      percentage: totalRev > 0 ? Math.round(((bp.revenue || 0) / totalRev) * 100) : 0,
+    }));
+
+    // Calculate sum of all explicit branch revenues
+    const sumBranchRevenue = list.reduce((sum, bp) => sum + (bp.revenue || 0), 0);
+    const unallocatedRevenue = totalRev - sumBranchRevenue;
+
+    // If there is unallocated revenue (overall revenue exceeding the sum of branch revenues), represent it explicitly
+    if (unallocatedRevenue > 0.01) {
+      mapped.push({
+        name: "Non Alloué",
+        revenue: unallocatedRevenue,
+        percentage: totalRev > 0 ? Math.round((unallocatedRevenue / totalRev) * 100) : 0,
+      });
+    }
+
+    return mapped.sort((a, b) => b.revenue - a.revenue);
   }, [stabilizedSnapshot, totalRev]);
 
   return (
@@ -47,27 +59,38 @@ const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = (
           Distribution du chiffre d'affaires par succursale opérationnelle pour le filtre en cours.
         </p>
 
-        <div className="space-y-3">
-          {branchData.map((b, idx) => (
-            <div key={idx} className="space-y-1.5">
-              <div className="flex justify-between items-center text-xs">
-                <span className="font-bold text-slate-200">{b.name}</span>
-                <div className="font-mono text-right">
-                  <span className="text-emerald-400 font-bold">
-                    +{b.revenue.toLocaleString()} HTG
-                  </span>
-                  <span className="text-slate-500 text-[10px] ml-2">({b.percentage}%)</span>
+        {branchData.length === 0 ? (
+          <div className="py-8 px-4 text-center rounded-xl bg-slate-950/40 border border-slate-800/50 my-2">
+            <p className="text-xs text-slate-400 font-mono">
+              Aucun revenu enregistré par succursale sur cette plage temporelle.
+            </p>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Les transactions de vente et d'activité sectorielles s'afficheront ici dynamiquement.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {branchData.map((b, idx) => (
+              <div key={idx} className="space-y-1.5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-200">{b.name}</span>
+                  <div className="font-mono text-right">
+                    <span className="text-emerald-400 font-bold">
+                      +{b.revenue.toLocaleString()} HTG
+                    </span>
+                    <span className="text-slate-500 text-[10px] ml-2">( {b.percentage}% )</span>
+                  </div>
+                </div>
+                <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-500"
+                    style={{ width: `${Math.min(100, b.percentage)}%` }}
+                  />
                 </div>
               </div>
-              <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-500"
-                  style={{ width: `${Math.min(100, b.percentage)}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

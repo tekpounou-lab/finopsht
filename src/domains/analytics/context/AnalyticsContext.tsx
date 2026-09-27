@@ -22,7 +22,9 @@ import { AnalyticsRepository } from "../repositories/AnalyticsRepository";
 import { AnalyticsEngine as SemanticAnalyticsEngine } from "../../../modules/analytics/core/AnalyticsEngine";
 import { RuntimeEngine } from "../../../modules/runtime/RuntimeEngine";
 import { useExecutiveFilters } from "./ExecutiveFilterContext";
-import { toDateOnly } from "../../../utils/dateNormalization";
+import { useAnalyticsFilters } from "../../../contexts/AnalyticsFilterContext";
+import { toDateOnly, resolveAnalyticsPayrollDate } from "../../../utils/dateNormalization";
+import { isOperationalEmployee } from "../../../services/workforce/EmployeeEligibilityService";
 
 export interface AnalyticsContextState {
   period: AnalyticsPeriod;
@@ -57,7 +59,25 @@ export interface AnalyticsContextState {
 const AnalyticsContext = createContext<AnalyticsContextState | null>(null);
 
 export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { filters } = useExecutiveFilters();
+  const { filters: executiveFilters } = useExecutiveFilters();
+  const { filters: analyticsFilters } = useAnalyticsFilters();
+
+  const filters = useMemo(() => {
+    return {
+      startDate: analyticsFilters.dateRange.startDate || executiveFilters.startDate,
+      endDate: analyticsFilters.dateRange.endDate || executiveFilters.endDate,
+      branchId: analyticsFilters.branchId || executiveFilters.branchId,
+      departmentId: analyticsFilters.departmentId || executiveFilters.departmentId,
+      employeeId: analyticsFilters.employeeId || executiveFilters.employeeId,
+      contractType: executiveFilters.contractType,
+      transactionType: executiveFilters.transactionType,
+      status: executiveFilters.status,
+      currency: executiveFilters.currency,
+      businessUnit: executiveFilters.businessUnit,
+      accountingMode: executiveFilters.accountingMode,
+    };
+  }, [executiveFilters, analyticsFilters]);
+
   const { dbUser } = useAuth();
   const {
     business,
@@ -198,18 +218,6 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return map;
   }, [effectiveCycles]);
 
-  // Filtered collections reflecting ExecutiveFilters for SSOT alignment
-  const filteredEmployees = useMemo(() => {
-    return effectiveEmployees.filter((e) => {
-      const eBranch = e.branchId || (e as any).branch_id;
-      const eDept = e.departmentId || (e as any).department_id;
-      if (filters.branchId !== "ALL" && eBranch !== filters.branchId) return false;
-      if (filters.departmentId !== "ALL" && eDept !== filters.departmentId) return false;
-      if (filters.employeeId !== "ALL" && e.id !== filters.employeeId) return false;
-      return true;
-    });
-  }, [effectiveEmployees, filters.branchId, filters.departmentId, filters.employeeId]);
-
   // Employee department and branch lookup maps for Personnel SSOT resolution
   const empDeptMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -278,17 +286,18 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const scopedPayrolls = useMemo(() => {
     return effectivePayrolls.filter((rec) => {
-      const rBranchId = rec.branch_id || (rec as any).branchId;
-      const rDeptId = rec.department_id || (rec as any).departmentId;
       const rEmpId = rec.employeeId || rec.employee_id;
-      if (filters.branchId !== "ALL" && rBranchId !== filters.branchId) return false;
-      if (filters.departmentId !== "ALL" && rDeptId !== filters.departmentId) return false;
-      if (filters.employeeId !== "ALL" && rEmpId !== filters.employeeId) return false;
-      if (filters.status !== "ALL" && rec.status !== filters.status) return false;
+      const rBranchId = rec.branch_id || (rec as any).branchId || (rEmpId ? empBranchMap.get(rEmpId) : undefined);
+      const rDeptId = rec.department_id || (rec as any).departmentId || (rEmpId ? empDeptMap.get(rEmpId) : undefined);
+
+      if (filters.branchId !== "ALL" && rBranchId && rBranchId !== filters.branchId) return false;
+      if (filters.departmentId !== "ALL" && rDeptId && rDeptId !== filters.departmentId) return false;
+      if (filters.employeeId !== "ALL" && rEmpId && rEmpId !== filters.employeeId) return false;
+      if (filters.status !== "ALL" && rec.status && rec.status !== filters.status) return false;
 
       return true;
     });
-  }, [effectivePayrolls, filters.branchId, filters.departmentId, filters.employeeId, filters.status]);
+  }, [effectivePayrolls, filters.branchId, filters.departmentId, filters.employeeId, filters.status, empBranchMap, empDeptMap]);
 
   const filteredTransactions = useMemo(() => {
     return scopedTransactions.filter((tx) => {
@@ -323,35 +332,56 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const filteredPayrolls = useMemo(() => {
     return scopedPayrolls.filter((rec) => {
-      const cycleId = rec.cycleId || rec.payroll_cycle_id;
-      const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
-
-      let pStart = rec.period_start || (rec as any).startDate || (rec as any).periodStart || cycle?.startDate || (cycle as any)?.start_date;
-      let pEnd = rec.period_end || (rec as any).endDate || (rec as any).periodEnd || cycle?.endDate || (cycle as any)?.end_date || (cycle as any)?.effectiveAccountingDate || pStart;
-
-      if (!pStart && !pEnd && cycleId) {
-        const dateMatch = cycleId.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
-        if (dateMatch) {
-          pStart = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
-          pEnd = pStart;
-        }
-      }
-
-      if (!pStart && !pEnd) {
-        pStart = (rec as any).generated_at || (rec as any).paymentDate || (rec as any).createdAt || rec.created_at;
-        pEnd = pStart;
-      }
-
+      const pDate = resolveAnalyticsPayrollDate(rec, filters.accountingMode === "CASH");
       if (filters.startDate && filters.endDate) {
-        if (!pStart && !pEnd) return false;
-        const recStart = normalizeDateStr(pStart || pEnd);
-        const recEnd = normalizeDateStr(pEnd || pStart);
-        if (!recStart || !recEnd || recEnd < filters.startDate || recStart > filters.endDate) return false;
+        if (!pDate || pDate < filters.startDate || pDate > filters.endDate) return false;
+      }
+      return true;
+    });
+  }, [scopedPayrolls, filters.startDate, filters.endDate, filters.accountingMode]);
+
+  // Filtered collections reflecting ExecutiveFilters for SSOT alignment
+  const filteredEmployees = useMemo(() => {
+    return effectiveEmployees.filter((e) => {
+      // 1. Exclude suspended, inactive or non-operational employees
+      const status = (e.status || "").toString().toUpperCase();
+      if (status === "SUSPENDED" || status === "SUSPENDU" || status === "INACTIVE" || status === "INACTIF" || e.isActive === false || (e as any).isActive === "false") {
+        return false;
+      }
+      if (!isOperationalEmployee(e)) {
+        return false;
+      }
+
+      const eBranch = e.branchId || (e as any).branch_id;
+      const eDept = e.departmentId || (e as any).department_id;
+      if (filters.branchId !== "ALL" && eBranch !== filters.branchId) return false;
+      if (filters.departmentId !== "ALL" && eDept !== filters.departmentId) return false;
+      if (filters.employeeId !== "ALL" && e.id !== filters.employeeId) return false;
+
+      // 2. Filter by activity in the selected period (if date filters are active)
+      if (filters.startDate && filters.endDate) {
+        const hasAttendance = filteredAttendance.some((rec) => (rec.employeeId || (rec as any).employee_id) === e.id);
+        const hasPayroll = filteredPayrolls.some((rec) => (rec.employeeId || rec.employee_id) === e.id);
+        const hasTransaction = filteredTransactions.some((tx) => (tx.employeeId || (tx as any).employee_id) === e.id);
+
+        if (!hasAttendance && !hasPayroll && !hasTransaction) {
+          return false;
+        }
       }
 
       return true;
     });
-  }, [scopedPayrolls, filters.startDate, filters.endDate, cycleMap]);
+  }, [
+    effectiveEmployees,
+    filters.branchId,
+    filters.departmentId,
+    filters.employeeId,
+    filters.startDate,
+    filters.endDate,
+    filteredAttendance,
+    filteredPayrolls,
+    filteredTransactions,
+  ]);
 
   const [snapshot, setSnapshot] = useState<AnalyticsSnapshot | null>(null);
 
