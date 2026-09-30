@@ -14,6 +14,45 @@ export interface TaxRates {
   ofatmaEmployee: number;
   ofatmaEmployer: number;
   enabled: boolean;
+  resolutionStates?: {
+    onaEmployee: "VALID_VALUE" | "VALID_ZERO" | "STATUTORY_DEFAULT";
+    onaEmployer: "VALID_VALUE" | "VALID_ZERO" | "STATUTORY_DEFAULT";
+    ofatmaEmployee: "VALID_VALUE" | "VALID_ZERO" | "STATUTORY_DEFAULT";
+    ofatmaEmployer: "VALID_VALUE" | "VALID_ZERO" | "STATUTORY_DEFAULT";
+  };
+}
+
+export interface ContributionRuleItem {
+  id: string;
+  name: string;
+  category: "TAX" | "PENSION" | "HEALTH" | "INSURANCE" | "RETIREMENT" | "GOVERNMENT" | "LOCAL" | "OTHER" | string;
+  employeeRate?: number;
+  employerRate?: number;
+  employeeFixedAmount?: number;
+  employerFixedAmount?: number;
+  calculationBase?: "GROSS_PAY" | "BASE_SALARY" | "ELIGIBLE_EARNINGS" | string;
+  enabled?: boolean;
+  status?: "ACTIVE" | "INACTIVE" | string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  policyVersion?: number;
+  description?: string;
+  employeeAmount?: number;
+  employerAmount?: number;
+}
+
+export interface DualSideContributionResult {
+  isTaxesEnabled: boolean;
+  grossPay: number;
+  onaEmployee: number;
+  onaEmployer: number;
+  ofatmaEmployee: number;
+  ofatmaEmployer: number;
+  additionalContributions: ContributionRuleItem[];
+  totalEmployeeDeductions: number;
+  totalEmployerContributions: number;
+  netPayBeforeAdvances: number;
+  totalEmployerPayrollCost: number;
 }
 
 export interface SocialTaxResult {
@@ -223,24 +262,22 @@ export class TaxPolicyEngine {
 
   /**
    * Resolve tax rates for employee and employer.
-   * Zeroes out all rates if social taxes are disabled.
+   * Preserves configured percentages while reporting whether taxes are enabled.
    */
   static getTaxRates(source?: any): TaxRates {
     const enabled = this.isSocialTaxEnabled(source);
-    if (!enabled) {
-      return {
-        enabled: false,
-        onaEmployee: 0,
-        onaEmployer: 0,
-        ofatmaEmployee: 0,
-        ofatmaEmployer: 0,
-      };
-    }
 
-    const parseRate = (val: any, fallback: number): number => {
+    const parseRate = (val: any, fallback: number): { rate: number; state: "VALID_VALUE" | "VALID_ZERO" | "STATUTORY_DEFAULT" } => {
+      if (val === undefined || val === null || val === "" || (typeof val === "number" && isNaN(val))) {
+        return { rate: fallback, state: "STATUTORY_DEFAULT" };
+      }
       const n = Number(val);
-      if (isNaN(n) || n < 0) return fallback;
-      return n > 1 ? n / 100 : n;
+      if (isNaN(n) || n < 0) return { rate: fallback, state: "STATUTORY_DEFAULT" };
+      const parsed = n > 1 ? n / 100 : n;
+      if (parsed === 0) {
+        return { rate: 0, state: "VALID_ZERO" };
+      }
+      return { rate: parsed, state: "VALID_VALUE" };
     };
 
     const policies = source?.payroll_policies || source?.payrollPolicies || source?.settings?.payroll_policies || source?.payroll || source;
@@ -263,11 +300,17 @@ export class TaxPolicyEngine {
     );
 
     return {
-      enabled: true,
-      onaEmployee: onaEmp,
-      onaEmployer: onaEmpr,
-      ofatmaEmployee: ofatmaEmp,
-      ofatmaEmployer: ofatmaEmpr,
+      enabled,
+      onaEmployee: enabled ? onaEmp.rate : 0,
+      onaEmployer: enabled ? onaEmpr.rate : 0,
+      ofatmaEmployee: enabled ? ofatmaEmp.rate : 0,
+      ofatmaEmployer: enabled ? ofatmaEmpr.rate : 0,
+      resolutionStates: {
+        onaEmployee: onaEmp.state,
+        onaEmployer: onaEmpr.state,
+        ofatmaEmployee: ofatmaEmp.state,
+        ofatmaEmployer: ofatmaEmpr.state,
+      },
     };
   }
 
@@ -302,6 +345,123 @@ export class TaxPolicyEngine {
       ofatmaEmployer,
       totalEmployeeTaxes: Math.round((onaEmployee + ofatmaEmployee) * 100) / 100,
       totalEmployerTaxes: Math.round((onaEmployer + ofatmaEmployer) * 100) / 100,
+    };
+  }
+
+  /**
+   * Phase 13 SSOT: Calculate dual-sided payroll contributions & insurances.
+   * Employee contributions are payroll deductions that reduce net pay.
+   * Employer contributions are payroll costs that DO NOT reduce employee net pay.
+   */
+  static calculateDualSideContributions(
+    grossHtg: number,
+    source?: any,
+    baseSalaryHtg?: number
+  ): DualSideContributionResult {
+    const isEnabled = this.isSocialTaxEnabled(source);
+    if (!isEnabled || grossHtg <= 0) {
+      return {
+        isTaxesEnabled: false,
+        grossPay: grossHtg,
+        onaEmployee: 0,
+        onaEmployer: 0,
+        ofatmaEmployee: 0,
+        ofatmaEmployer: 0,
+        additionalContributions: [],
+        totalEmployeeDeductions: 0,
+        totalEmployerContributions: 0,
+        netPayBeforeAdvances: grossHtg,
+        totalEmployerPayrollCost: grossHtg,
+      };
+    }
+
+    const rates = this.getTaxRates(source);
+    const onaEmployee = Math.round(grossHtg * rates.onaEmployee * 100) / 100;
+    const onaEmployer = Math.round(grossHtg * rates.onaEmployer * 100) / 100;
+    const ofatmaEmployee = Math.round(grossHtg * rates.ofatmaEmployee * 100) / 100;
+    const ofatmaEmployer = Math.round(grossHtg * rates.ofatmaEmployer * 100) / 100;
+
+    let totalEmployeeDeductions = onaEmployee + ofatmaEmployee;
+    let totalEmployerContributions = onaEmployer + ofatmaEmployer;
+
+    // Extract custom additional taxes / insurance rules
+    const rawTaxes =
+      source?.payroll?.taxes?.additionalTaxes ||
+      source?.taxes?.additionalTaxes ||
+      source?.tax_config?.additionalTaxes ||
+      source?.payroll_policies?.additionalTaxes ||
+      source?.additionalTaxes ||
+      [];
+
+    const processedItems: ContributionRuleItem[] = [];
+
+    if (Array.isArray(rawTaxes)) {
+      for (const rule of rawTaxes) {
+        // Skip statutory rules if they are handled directly above (tax_cnss, tax_cns, tax_ofatma)
+        if (rule.id === "tax_cnss" || rule.id === "tax_cns" || rule.id === "tax_ofatma") {
+          continue;
+        }
+
+        const isRuleActive = rule.enabled !== false && rule.status !== "INACTIVE";
+        if (!isRuleActive) continue;
+
+        const base = rule.calculationBase === "BASE_SALARY" && typeof baseSalaryHtg === "number" && baseSalaryHtg > 0
+          ? baseSalaryHtg
+          : grossHtg;
+
+        let empAmount = 0;
+        if (typeof rule.employeeRate === "number" && rule.employeeRate > 0) {
+          empAmount += Math.round(base * (rule.employeeRate / 100) * 100) / 100;
+        }
+        if (typeof rule.employeeFixedAmount === "number" && rule.employeeFixedAmount > 0) {
+          empAmount += rule.employeeFixedAmount;
+        }
+
+        let emprAmount = 0;
+        if (typeof rule.employerRate === "number" && rule.employerRate > 0) {
+          emprAmount += Math.round(base * (rule.employerRate / 100) * 100) / 100;
+        }
+        if (typeof rule.employerFixedAmount === "number" && rule.employerFixedAmount > 0) {
+          emprAmount += rule.employerFixedAmount;
+        }
+
+        totalEmployeeDeductions += empAmount;
+        totalEmployerContributions += emprAmount;
+
+        processedItems.push({
+          id: rule.id || `contrib_${Math.random().toString(36).substring(2, 7)}`,
+          name: rule.name || "Cotisation",
+          category: rule.category || "OTHER",
+          employeeRate: rule.employeeRate || 0,
+          employerRate: rule.employerRate || 0,
+          employeeFixedAmount: rule.employeeFixedAmount || 0,
+          employerFixedAmount: rule.employerFixedAmount || 0,
+          calculationBase: rule.calculationBase || "GROSS_PAY",
+          enabled: true,
+          employeeAmount: empAmount,
+          employerAmount: emprAmount,
+        });
+      }
+    }
+
+    totalEmployeeDeductions = Math.round(totalEmployeeDeductions * 100) / 100;
+    totalEmployerContributions = Math.round(totalEmployerContributions * 100) / 100;
+
+    const netPayBeforeAdvances = Math.max(0, Math.round((grossHtg - totalEmployeeDeductions) * 100) / 100);
+    const totalEmployerPayrollCost = Math.round((grossHtg + totalEmployerContributions) * 100) / 100;
+
+    return {
+      isTaxesEnabled: true,
+      grossPay: grossHtg,
+      onaEmployee,
+      onaEmployer,
+      ofatmaEmployee,
+      ofatmaEmployer,
+      additionalContributions: processedItems,
+      totalEmployeeDeductions,
+      totalEmployerContributions,
+      netPayBeforeAdvances,
+      totalEmployerPayrollCost,
     };
   }
 

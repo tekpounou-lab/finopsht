@@ -462,8 +462,10 @@ export function resolveAnalyticsAttendanceDate(att: any): string {
 export function resolveAnalyticsPayrollDate(payroll: any, isCashBasis: boolean = false): string {
   if (!payroll) return '';
 
-  // The automatic date that must be taken into account is the period closure date
   const rawDate =
+    (isCashBasis
+      ? (payroll.paymentDate || payroll.paidAt || payroll.disbursementDate || payroll.effectiveAccountingDate)
+      : null) ||
     payroll.period_end ||
     payroll.periodEnd ||
     payroll.periodEndDate ||

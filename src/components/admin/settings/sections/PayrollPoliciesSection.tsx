@@ -33,6 +33,7 @@ export default function PayrollPoliciesSection() {
 
   const { register, handleSubmit, watch, reset } = useForm({
     defaultValues: {
+      ...(businessSettings?.payroll || {}),
       frequency: businessSettings?.payroll?.frequency || businessSettings?.payroll_policies?.frequency || "BIWEEKLY",
       currency: businessSettings?.payroll?.currency || businessSettings?.payroll_policies?.currency || "HTG",
       standard_hours: businessSettings?.payroll?.standard_hours ?? businessSettings?.payroll_policies?.standardHoursPerCycle ?? businessSettings?.payroll_policies?.standardQuinzaineHours ?? 96,
@@ -51,7 +52,6 @@ export default function PayrollPoliciesSection() {
       survival_floor_htg: resolvedFloorAmount,
       default_commission_rate: (businessSettings?.payroll?.default_commission_rate ?? ((businessSettings?.payroll_policies?.defaultCommissionRate || 0) * 100)),
       require_attendance_for_payroll: resolvedIsAttendanceRequired,
-      ...(businessSettings?.payroll || {})
     }
   });
 
@@ -64,6 +64,7 @@ export default function PayrollPoliciesSection() {
       const isAtt = TaxPolicyEngine.isAttendanceRequiredForPayroll(businessSettings);
 
       reset({
+        ...(businessSettings.payroll || {}),
         frequency: businessSettings.payroll?.frequency || businessSettings.payroll_policies?.frequency || "BIWEEKLY",
         currency: businessSettings.payroll?.currency || businessSettings.payroll_policies?.currency || "HTG",
         standard_hours: businessSettings.payroll?.standard_hours ?? businessSettings.payroll_policies?.standardHoursPerCycle ?? businessSettings.payroll_policies?.standardQuinzaineHours ?? 96,
@@ -82,7 +83,6 @@ export default function PayrollPoliciesSection() {
         survival_floor_htg: floor,
         default_commission_rate: (businessSettings.payroll?.default_commission_rate ?? ((businessSettings.payroll_policies?.defaultCommissionRate || 0) * 100)),
         require_attendance_for_payroll: isAtt,
-        ...(businessSettings.payroll || {})
       });
     }
   }, [businessSettings, reset]);
@@ -103,6 +103,17 @@ export default function PayrollPoliciesSection() {
       const latePenaltyCents = Number(data.late_penalty_cents) || 0;
       const absencePenaltyCents = Number(data.absence_penalty_cents) || 0;
 
+      const parseRateInput = (val: any, fallbackPercent: number): number => {
+        if (val === "" || val === null || val === undefined) return fallbackPercent / 100;
+        const num = Number(val);
+        return isNaN(num) ? fallbackPercent / 100 : num / 100;
+      };
+
+      const onaEmpRate = parseRateInput(data.tax_cnss_employee, 6);
+      const onaEmprRate = parseRateInput(data.tax_cnss_employer, 6);
+      const ofatmaEmpRate = parseRateInput(data.tax_cns_employee, 2);
+      const ofatmaEmprRate = parseRateInput(data.tax_cns_employer, 3);
+
       const updatedPayroll = {
         ...businessSettings?.payroll,
         ...data,
@@ -119,6 +130,10 @@ export default function PayrollPoliciesSection() {
         absence_penalty_cents: absencePenaltyCents,
         require_attendance_for_payroll: requireAttendance,
         requireAttendanceForPayroll: requireAttendance,
+        tax_cnss_employee: onaEmpRate * 100,
+        tax_cnss_employer: onaEmprRate * 100,
+        tax_cns_employee: ofatmaEmpRate * 100,
+        tax_cns_employer: ofatmaEmprRate * 100,
       };
 
       const updatedPayrollPolicies = {
@@ -132,10 +147,10 @@ export default function PayrollPoliciesSection() {
         workingDaysBasis: workingDaysBasis,
         enableTaxes: enableTaxes,
         enable_social_taxes: enableTaxes,
-        onaEmployeeRate: (Number(data.tax_cnss_employee) || 6) / 100,
-        onaEmployerRate: (Number(data.tax_cnss_employer) || 6) / 100,
-        ofatmaEmployeeRate: (Number(data.tax_cns_employee) || 2) / 100,
-        ofatmaEmployerRate: (Number(data.tax_cns_employer) || 3) / 100,
+        onaEmployeeRate: onaEmpRate,
+        onaEmployerRate: onaEmprRate,
+        ofatmaEmployeeRate: ofatmaEmpRate,
+        ofatmaEmployerRate: ofatmaEmprRate,
         enableSurvivalFloor: enableSurvivalFloor,
         enable_survival_floor: enableSurvivalFloor,
         survivalFloor: survivalFloor,
@@ -151,6 +166,15 @@ export default function PayrollPoliciesSection() {
       try {
         await updateSettings({
           ...businessSettings,
+          enable_social_taxes: enableTaxes,
+          enableSocialTaxes: enableTaxes,
+          enableTaxes: enableTaxes,
+          enable_survival_floor: enableSurvivalFloor,
+          enableSurvivalFloor: enableSurvivalFloor,
+          survival_floor_htg: survivalFloor,
+          survivalFloor: survivalFloor,
+          require_attendance_for_payroll: requireAttendance,
+          requireAttendanceForPayroll: requireAttendance,
           payroll: updatedPayroll,
           payroll_policies: updatedPayrollPolicies,
           tax_config: {
@@ -158,6 +182,11 @@ export default function PayrollPoliciesSection() {
             enableTaxes: enableTaxes,
             enabled: enableTaxes,
             enable_social_taxes: enableTaxes,
+            cnssRateEmployee: onaEmpRate,
+            cnssRateEmployer: onaEmprRate,
+            cnsRateEmployee: ofatmaEmpRate,
+            cnsRateEmployer: ofatmaEmprRate,
+            survivalFloorHTG: survivalFloor,
           }
         });
       } catch (adminErr) {
@@ -175,10 +204,11 @@ export default function PayrollPoliciesSection() {
           attendanceToleranceHours: attendanceTolerance,
           workingDaysBasis: workingDaysBasis,
           enableTaxes: enableTaxes,
-          onaEmployeeRate: (Number(data.tax_cnss_employee) || 6) / 100,
-          onaEmployerRate: (Number(data.tax_cnss_employer) || 6) / 100,
-          ofatmaEmployeeRate: (Number(data.tax_cns_employee) || 2) / 100,
-          ofatmaEmployerRate: (Number(data.tax_cns_employer) || 3) / 100,
+          enableSocialTaxes: enableTaxes,
+          onaEmployeeRate: onaEmpRate,
+          onaEmployerRate: onaEmprRate,
+          ofatmaEmployeeRate: ofatmaEmpRate,
+          ofatmaEmployerRate: ofatmaEmprRate,
           enableSurvivalFloor: enableSurvivalFloor,
           survivalFloor: survivalFloor,
           survivalFloorHTG: survivalFloor,
@@ -188,6 +218,19 @@ export default function PayrollPoliciesSection() {
           absencePenaltyCents: absencePenaltyCents,
           defaultCommissionRate: (Number(data.default_commission_rate) || 0) / 100,
           requireAttendanceForPayroll: requireAttendance,
+        },
+        "usr_admin"
+      );
+
+      await BusinessAdministrationRepository.updateTaxConfiguration(
+        businessId,
+        {
+          enableTaxes: enableTaxes,
+          cnssRateEmployee: onaEmpRate,
+          cnssRateEmployer: onaEmprRate,
+          cnsRateEmployee: ofatmaEmpRate,
+          cnsRateEmployer: ofatmaEmprRate,
+          survivalFloorHTG: survivalFloor,
         },
         "usr_admin"
       );

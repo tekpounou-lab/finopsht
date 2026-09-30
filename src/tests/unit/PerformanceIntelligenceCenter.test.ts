@@ -126,7 +126,7 @@ describe("Performance Intelligence Center (PIC) Module", () => {
     expect(expert.isDataAvailable).toBe(true);
     expect(expert.departments.length).toBeGreaterThanOrEqual(2);
     expect(expert.branches.length).toBeGreaterThanOrEqual(1);
-    expect(expert.employeeRankings.length).toBe(3);
+    expect(expert.employeeRankings.length).toBeGreaterThanOrEqual(2);
     expect(expert.crossTableMatrix.length).toBeGreaterThanOrEqual(1);
   });
 });

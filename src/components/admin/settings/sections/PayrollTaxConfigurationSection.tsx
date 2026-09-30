@@ -21,13 +21,23 @@ import { BusinessAdministrationRepository } from "../../../../repositories/Busin
 import { collection, query, where, getDocs, orderBy, limit } from "firebase/firestore";
 import { db } from "../../../../lib/firebase";
 
+import { TaxPolicyEngine } from "../../../../services/payroll/TaxPolicyEngine";
+import { STATUTORY_TAX_RATES } from "../../../../constants/finance";
+
 export interface CustomTaxRule {
   id: string;
   name: string;
-  category: "PENSION" | "HEALTH" | "LOCAL" | "GOVERNMENT" | "OTHER";
+  category: "TAX" | "PENSION" | "HEALTH" | "INSURANCE" | "RETIREMENT" | "GOVERNMENT" | "LOCAL" | "OTHER" | string;
   employeeRate: number; // percentage, e.g. 2.5
   employerRate: number; // percentage, e.g. 2.0
+  employeeFixedAmount?: number;
+  employerFixedAmount?: number;
+  calculationBase?: "GROSS_PAY" | "BASE_SALARY" | "ELIGIBLE_EARNINGS" | string;
+  status?: "ACTIVE" | "INACTIVE" | string;
   enabled: boolean;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  policyVersion?: number;
   description?: string;
 }
 
@@ -60,11 +70,11 @@ export default function PayrollTaxConfigurationSection() {
   });
 
   const [employeeRate, setEmployeeRate] = useState<number>(() => {
-    return existingTaxes.employeeRate ?? existingPayroll.tax_cnss_employee ?? 5.0;
+    return existingTaxes.employeeRate ?? existingPayroll.tax_cnss_employee ?? (STATUTORY_TAX_RATES.ONA.EMPLOYEE_RATE * 100);
   });
 
   const [employerRate, setEmployerRate] = useState<number>(() => {
-    return existingTaxes.employerRate ?? existingPayroll.tax_cnss_employer ?? 5.0;
+    return existingTaxes.employerRate ?? existingPayroll.tax_cnss_employer ?? (STATUTORY_TAX_RATES.ONA.EMPLOYER_RATE * 100);
   });
 
   const [additionalTaxes, setAdditionalTaxes] = useState<CustomTaxRule[]>(() => {
@@ -167,22 +177,44 @@ export default function PayrollTaxConfigurationSection() {
     fetchAuditHistory();
   }, [currentBusiness?.id]);
 
-  // Calculations for Simulator
+  // Calculations for Simulator via TaxPolicyEngine SSOT
+  const simulationConfig = {
+    enable_social_taxes: enabled,
+    enableTaxes: enabled,
+    payroll: {
+      enable_social_taxes: enabled,
+      taxes: {
+        enabled,
+        employeeRate,
+        employerRate,
+        additionalTaxes,
+      }
+    },
+    additionalTaxes,
+  };
+
+  const simulationResult = TaxPolicyEngine.calculateDualSideContributions(
+    simulationGross,
+    simulationConfig,
+    simulationGross
+  );
+
   const activeEmpTaxPercentage = enabled
     ? additionalTaxes
-        .filter(t => t.enabled)
-        .reduce((sum, t) => sum + t.employeeRate, 0)
+        .filter(t => t.enabled && t.status !== "INACTIVE")
+        .reduce((sum, t) => sum + (t.employeeRate || 0), 0)
     : 0;
 
   const activeEmployerTaxPercentage = enabled
     ? additionalTaxes
-        .filter(t => t.enabled)
-        .reduce((sum, t) => sum + t.employerRate, 0)
+        .filter(t => t.enabled && t.status !== "INACTIVE")
+        .reduce((sum, t) => sum + (t.employerRate || 0), 0)
     : 0;
 
-  const simulatedEmpDeductions = Math.round((simulationGross * activeEmpTaxPercentage) / 100);
-  const simulatedEmployerContributions = Math.round((simulationGross * activeEmployerTaxPercentage) / 100);
-  const simulatedNetPay = simulationGross - simulatedEmpDeductions;
+  const simulatedEmpDeductions = simulationResult.totalEmployeeDeductions;
+  const simulatedEmployerContributions = simulationResult.totalEmployerContributions;
+  const simulatedNetPay = simulationResult.netPayBeforeAdvances;
+  const simulatedEmployerPayrollCost = simulationResult.totalEmployerPayrollCost;
 
   // Add Custom Tax Handler
   const handleAddCustomTax = () => {
@@ -231,8 +263,8 @@ export default function PayrollTaxConfigurationSection() {
 
       const beforeState = JSON.stringify({
         enabled: existingTaxes.enabled ?? existingPayroll.enable_social_taxes ?? false,
-        employeeRate: existingTaxes.employeeRate ?? existingPayroll.tax_cnss_employee ?? 5.0,
-        employerRate: existingTaxes.employerRate ?? existingPayroll.tax_cnss_employer ?? 5.0,
+        employeeRate: existingTaxes.employeeRate ?? existingPayroll.tax_cnss_employee ?? (STATUTORY_TAX_RATES.ONA.EMPLOYEE_RATE * 100),
+        employerRate: existingTaxes.employerRate ?? existingPayroll.tax_cnss_employer ?? (STATUTORY_TAX_RATES.ONA.EMPLOYER_RATE * 100),
         additionalTaxes: existingTaxes.additionalTaxes || []
       });
 
@@ -245,17 +277,46 @@ export default function PayrollTaxConfigurationSection() {
 
       await updateSettings({
         ...businessSettings,
-        payroll: updatedPayroll
+        payroll: updatedPayroll,
+        payroll_policies: {
+          ...(businessSettings?.payroll_policies || {}),
+          enableTaxes: enabled,
+          enable_social_taxes: enabled,
+          onaEmployeeRate: (employeeRate || 0) / 100,
+          onaEmployerRate: (employerRate || 0) / 100,
+          ofatmaEmployeeRate: activeEmpTaxPercentage > 0 ? (activeEmpTaxPercentage / 100) : 0,
+          ofatmaEmployerRate: activeEmployerTaxPercentage > 0 ? (activeEmployerTaxPercentage / 100) : 0,
+        },
+        tax_config: {
+          ...(businessSettings?.tax_config || {}),
+          enableTaxes: enabled,
+          enabled: enabled,
+          enable_social_taxes: enabled,
+        }
       });
 
-      // Update BusinessAdministrationRepository tax config to invalidate cache and emit events
+      // Update BusinessAdministrationRepository tax config and payroll policies to invalidate cache and emit events
       await BusinessAdministrationRepository.updateTaxConfiguration(
         currentBusiness.id,
         {
+          enableTaxes: enabled,
           cnssRateEmployee: (employeeRate || 0) / 100,
           cnssRateEmployer: (employerRate || 0) / 100,
           cnsRateEmployee: activeEmpTaxPercentage > 0 ? (activeEmpTaxPercentage / 100) : 0,
           cnsRateEmployer: activeEmployerTaxPercentage > 0 ? (activeEmployerTaxPercentage / 100) : 0,
+        },
+        dbUser?.uid || user?.uid || "admin"
+      );
+
+      await BusinessAdministrationRepository.savePayrollPolicy(
+        currentBusiness.id,
+        {
+          enableTaxes: enabled,
+          enableSocialTaxes: enabled,
+          onaEmployeeRate: (employeeRate || 0) / 100,
+          onaEmployerRate: (employerRate || 0) / 100,
+          ofatmaEmployeeRate: activeEmpTaxPercentage > 0 ? (activeEmpTaxPercentage / 100) : 0,
+          ofatmaEmployerRate: activeEmployerTaxPercentage > 0 ? (activeEmployerTaxPercentage / 100) : 0,
         },
         dbUser?.uid || user?.uid || "admin"
       );
@@ -681,11 +742,13 @@ export default function PayrollTaxConfigurationSection() {
                   onChange={(e) => setNewTaxCategory(e.target.value as any)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-100 outline-none focus:border-cyan-500"
                 >
-                  <option value="PENSION">Cotisation Retraite / Pension</option>
-                  <option value="HEALTH">Assurance Santé / Maladie</option>
-                  <option value="GOVERNMENT">Taxe / Impôt d'État</option>
-                  <option value="LOCAL">Taxe Municipale / Locale</option>
-                  <option value="OTHER">Autre Retenue Spéciale</option>
+                  <option value="INSURANCE">Assurance Santé / Vie (INSURANCE)</option>
+                  <option value="RETIREMENT">Retraite Complémentaire (RETIREMENT)</option>
+                  <option value="PENSION">Cotisation Retraite / Pension (PENSION)</option>
+                  <option value="HEALTH">Assurance Santé / Maladie (HEALTH)</option>
+                  <option value="GOVERNMENT">Taxe / Impôt d'État (GOVERNMENT)</option>
+                  <option value="LOCAL">Taxe Municipale / Locale (LOCAL)</option>
+                  <option value="OTHER">Autre Retenue Spéciale (OTHER)</option>
                 </select>
               </div>
 

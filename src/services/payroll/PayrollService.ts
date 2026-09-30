@@ -448,26 +448,32 @@ export const PayrollService = {
       let grossPay = quinzaineBase + overtimePay + commissions + totalBonuses - totalPenalties;
       grossPay = Math.max(0, Math.round(grossPay * 100) / 100);
 
-      // 9. Taxes (ONA/OFATMA): Applied dynamically according to activation in policies
-      let cnssDeduction = 0;
-      let cnsDeduction = 0;
-
-      const onaRate = policies.onaEmployeeRate ?? rates.cnssRateEmployee ?? 0.06;
-      const ofatmaRate = policies.ofatmaEmployeeRate ?? rates.cnsRateEmployee ?? 0.02;
-
+      // 9. Taxes & Dual-Side Contributions (ONA/OFATMA + Insurances/Contributions)
       const applyTaxes = isTaxesEnabled && !(emp as any).taxExempt && (paymentModel !== "COMMISSION" || Boolean(policies.applyTaxesToCommission));
-      if (applyTaxes) {
-        cnssDeduction = Math.round(grossPay * onaRate * 100) / 100;
-        cnsDeduction = Math.round(grossPay * ofatmaRate * 100) / 100;
-      } else {
-        cnssDeduction = 0;
-        cnsDeduction = 0;
-      }
+      const dualResult = applyTaxes
+        ? TaxPolicyEngine.calculateDualSideContributions(grossPay, { ...taxConfig, ...policies }, quinzaineBase)
+        : {
+            isTaxesEnabled: false,
+            grossPay,
+            onaEmployee: 0,
+            onaEmployer: 0,
+            ofatmaEmployee: 0,
+            ofatmaEmployer: 0,
+            additionalContributions: [],
+            totalEmployeeDeductions: 0,
+            totalEmployerContributions: 0,
+            netPayBeforeAdvances: grossPay,
+            totalEmployerPayrollCost: grossPay,
+          };
 
-      const totalTax = Math.round((cnssDeduction + cnsDeduction) * 100) / 100;
+      const cnssDeduction = dualResult.onaEmployee;
+      const cnsDeduction = dualResult.ofatmaEmployee;
+      const totalEmployeeDeductions = dualResult.totalEmployeeDeductions;
+      const totalEmployerContributions = dualResult.totalEmployerContributions;
+      const employerPayrollCost = dualResult.totalEmployerPayrollCost;
 
-      // 10. Net Pay Calculation (after statutory taxes, survival floor baseline, advances recovery, and manual deductions)
-      let netPay = grossPay - totalTax;
+      // 10. Net Pay Calculation (after statutory taxes & contributions, survival floor baseline, advances recovery, and manual deductions)
+      let netPay = grossPay - totalEmployeeDeductions;
       let survivalFloorApplied = false;
 
       const survivalFloor = TaxPolicyEngine.getSurvivalFloorAmount(policies);
@@ -483,7 +489,8 @@ export const PayrollService = {
 
       console.debug(
         `[Payroll Forensics] Step 4 - Summary for ${emp.id}: ` +
-        `gross=${grossPay} HTG, taxes=${totalTax} HTG (ONA=${cnssDeduction}, OFATMA=${cnsDeduction}), ` +
+        `gross=${grossPay} HTG, employeeDeductions=${totalEmployeeDeductions} HTG (ONA=${cnssDeduction}, OFATMA=${cnsDeduction}), ` +
+        `employerContributions=${totalEmployerContributions} HTG, employerCost=${employerPayrollCost} HTG, ` +
         `advances=${totalAdvancesDeducted} HTG, bonuses=${totalBonuses} HTG, ` +
         `net=${netPay} HTG (survivalFloorApplied=${survivalFloorApplied})`
       );
@@ -528,6 +535,10 @@ export const PayrollService = {
         cns_employee_cents: Math.round(cnsDeduction * 100),
         cnssDeduction,
         cnsDeduction,
+        employeeContributionsTotal: totalEmployeeDeductions,
+        employerContributionsTotal: totalEmployerContributions,
+        employerPayrollCostTotal: employerPayrollCost,
+        additionalContributions: dualResult.additionalContributions,
         enableTaxes: isTaxesEnabled,
         debts_deduction_cents: Math.round(totalAdvancesDeducted * 100),
         advancesTreated: totalAdvancesDeducted,

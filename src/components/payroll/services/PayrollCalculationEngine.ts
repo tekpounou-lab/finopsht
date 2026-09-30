@@ -18,7 +18,10 @@ export interface TaxDeductions {
   employerCNSS: number; // 6% ONA Employer
   employeeCNS: number;  // 2% OFATMA
   employerCNS: number;  // 3% OFATMA Employer
-  totalDeductions: number;
+  employeeContributionsTotal: number;
+  employerContributionsTotal: number;
+  totalDeductions: number; // Total employee deductions
+  totalEmployerCost: number; // Total employer cost (grossPay + employer contributions)
 }
 
 export interface PayrollLineItem {
@@ -121,11 +124,16 @@ export function resolveTaxRatesForDate(
     // Must be on or after the starting date
     if (targetDate < from) return false;
 
-    // If effectiveTo is defined, must be on or before it
+    // If effectiveTo is defined, must be on or before it (inclusive of the entire end day)
     if (record.effectiveTo) {
       const to = new Date(record.effectiveTo);
-      if (!isNaN(to.getTime()) && targetDate > to) {
-        return false;
+      if (!isNaN(to.getTime())) {
+        if (record.effectiveTo.length <= 10) {
+          to.setHours(23, 59, 59, 999);
+        }
+        if (targetDate > to) {
+          return false;
+        }
       }
     }
 
@@ -153,33 +161,24 @@ export function resolveTaxRatesForDate(
 }
 
 /**
- * Calculates tax deductions (CNSS / ONA & CNS / OFATMA) for a given gross pay.
+ * Calculates tax deductions (CNSS / ONA, CNS / OFATMA, & dual-side contributions) for a given gross pay.
  */
 export function calculateTaxDeductions(
   grossPayHTG: number,
-  config?: {
-    cnssRateEmployee: number;
-    cnssRateEmployer: number;
-    cnsRateEmployee: number;
-    cnsRateEmployer: number;
-  }
+  config?: any,
+  baseSalaryHTG?: number
 ): TaxDeductions {
-  const cnssEmp = config?.cnssRateEmployee ?? ONA_EMPLOYEE_RATE;
-  const cnssEmpr = config?.cnssRateEmployer ?? ONA_EMPLOYER_RATE;
-  const cnsEmp = config?.cnsRateEmployee ?? OFATMA_EMPLOYEE_RATE;
-  const cnsEmpr = config?.cnsRateEmployer ?? OFATMA_EMPLOYER_RATE;
-
-  const employeeCNSS = Math.round(grossPayHTG * cnssEmp);
-  const employerCNSS = Math.round(grossPayHTG * cnssEmpr);
-  const employeeCNS = Math.round(grossPayHTG * cnsEmp);
-  const employerCNS = Math.round(grossPayHTG * cnsEmpr);
+  const dualResult = TaxPolicyEngine.calculateDualSideContributions(grossPayHTG, config, baseSalaryHTG);
 
   return {
-    employeeCNSS,
-    employerCNSS,
-    employeeCNS,
-    employerCNS,
-    totalDeductions: employeeCNSS + employeeCNS
+    employeeCNSS: dualResult.onaEmployee,
+    employerCNSS: dualResult.onaEmployer,
+    employeeCNS: dualResult.ofatmaEmployee,
+    employerCNS: dualResult.ofatmaEmployer,
+    employeeContributionsTotal: dualResult.totalEmployeeDeductions,
+    employerContributionsTotal: dualResult.totalEmployerContributions,
+    totalDeductions: dualResult.totalEmployeeDeductions,
+    totalEmployerCost: dualResult.totalEmployerPayrollCost,
   };
 }
 
@@ -215,7 +214,7 @@ export function calculateEmployeePayrollItem(
   );
 
   const grossPay = item.baseSalaryHTG + overtimePayout + item.bonusesHTG + item.commissionsHTG;
-  const taxDeductions = calculateTaxDeductions(grossPay, rates);
+  const taxDeductions = calculateTaxDeductions(grossPay, taxConfig || rates, item.baseSalaryHTG);
 
   let netPay = grossPay - taxDeductions.totalDeductions - item.advancesHTG;
   let survivalFloorApplied = false;
@@ -324,11 +323,20 @@ export function calculatePayrollFromSnapshot(
   const targetDate = calculationDate || snapshot.generatedAt || new Date().toISOString();
   const rates = resolveTaxRatesForDate(taxConfig || null, targetDate);
 
-  // Government Taxes applied AFTER Gross Pay
+  // Government Taxes & Contributions applied AFTER Gross Pay
   const isTaxActive = enableTaxes && TaxPolicyEngine.isSocialTaxEnabled(taxConfig);
   const taxDeductions = isTaxActive
-    ? calculateTaxDeductions(grossPay, rates)
-    : { employeeCNSS: 0, employerCNSS: 0, employeeCNS: 0, employerCNS: 0, totalDeductions: 0 };
+    ? calculateTaxDeductions(grossPay, taxConfig || rates, baseSalary)
+    : {
+        employeeCNSS: 0,
+        employerCNSS: 0,
+        employeeCNS: 0,
+        employerCNS: 0,
+        employeeContributionsTotal: 0,
+        employerContributionsTotal: 0,
+        totalDeductions: 0,
+        totalEmployerCost: grossPay,
+      };
 
   let netPay = grossPay - taxDeductions.totalDeductions - advances;
   let survivalFloorApplied = false;

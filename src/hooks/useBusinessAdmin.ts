@@ -7,7 +7,7 @@ import { Business, Branch, Department } from "../types";
 import { isQuotaExceededError } from "../utils/resilientFirestore";
 
 export function useBusinessAdmin() {
-  const { currentBusiness } = useBusinessContext();
+  const { currentBusiness, business } = useBusinessContext();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,7 +17,7 @@ export function useBusinessAdmin() {
     }
   }, []);
 
-  const businessId = currentBusiness?.id;
+  const businessId = currentBusiness?.id || business?.id || "BIZ_MAIN";
 
   const wrapAction = useCallback(async (action: () => Promise<void>) => {
     setLoading(true);
