@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, updateDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, collection, addDoc, serverTimestamp, writeBatch } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { EventBus } from "../modules/runtime/EventBus";
 import { STATUTORY_TAX_RATES, SURVIVAL_FLOOR_HTG, BASE_CURRENCY } from "../constants/finance";
@@ -160,15 +160,16 @@ export const BusinessAdministrationRepository = {
     policies: Partial<PayrollPoliciesConfig>,
     actorId: string
   ): Promise<void> {
+    if (!businessId || !businessId.trim()) {
+      throw new Error("TENANT_UNRESOLVED: Missing businessId for policy persistence.");
+    }
     const path = `businesses/${businessId}/settings/payroll_policies`;
     try {
-      await setDoc(
-        doc(db, "businesses", businessId, "settings", "payroll_policies"),
-        { ...policies, updatedAt: serverTimestamp() },
-        { merge: true }
-      );
+      const batch = writeBatch(db);
+      const polRef = doc(db, "businesses", businessId, "settings", "payroll_policies");
+      batch.set(polRef, { ...policies, updatedAt: serverTimestamp() }, { merge: true });
 
-      // Keep tax_config in sync
+      // Keep tax_config in sync atomically in the same batch
       const taxUpdates: Partial<BusinessTaxConfiguration> = {};
       if (typeof policies.enableTaxes === "boolean") taxUpdates.enableTaxes = policies.enableTaxes;
       if (typeof policies.onaEmployeeRate === "number") taxUpdates.cnssRateEmployee = policies.onaEmployeeRate;
@@ -179,12 +180,11 @@ export const BusinessAdministrationRepository = {
       if (policies.currency) taxUpdates.currency = policies.currency;
 
       if (Object.keys(taxUpdates).length > 0) {
-        await setDoc(
-          doc(db, "businesses", businessId, "settings", "tax_config"),
-          { ...taxUpdates, updatedAt: serverTimestamp() },
-          { merge: true }
-        );
+        const taxRef = doc(db, "businesses", businessId, "settings", "tax_config");
+        batch.set(taxRef, { ...taxUpdates, updatedAt: serverTimestamp() }, { merge: true });
       }
+
+      await batch.commit();
 
       await StaticDataCacheService.invalidateKey(`payroll_policies:${businessId}`);
       await StaticDataCacheService.invalidateKey(`tax_config:${businessId}`);
@@ -341,6 +341,9 @@ export const BusinessAdministrationRepository = {
     config: Partial<BusinessTaxConfiguration>,
     actorId: string
   ): Promise<void> {
+    if (!businessId || !businessId.trim()) {
+      throw new Error("TENANT_UNRESOLVED: Missing businessId for policy persistence.");
+    }
     const path = `businesses/${businessId}/settings/tax_config`;
     try {
       await setDoc(

@@ -1,5 +1,18 @@
 # FINOPS ERP — Architectural Changelog
 
+## [4.2.0] - 2026-10-05
+### Enacted & Validated (Phase 15.2 — Payroll Liability Settlement Remediation & DEF-15.1-01 Fix)
+- **Remediation of Defect DEF-15.1-01**:
+  - Eliminated erroneous blanket classification of `TRANSFER` and `EXCHANGE` transactions as payroll expenses in `AnalyticsEngine.isPayrollRelatedTransaction()`.
+  - Implemented canonical chart-of-accounts evaluation distinguishing Class 2 Liabilities (`2100_ONA_TAXES_PAYABLE`, `2110_OFATMA_TAXES_PAYABLE`, `2100_PAYROLL_CLEARING`, `2000_ACCOUNTS_PAYABLE`, `2200_TAXES_PAYABLE`), Class 5 Expenses (`5100_PAYROLL_EXPENSE`, `5110_EMPLOYER_TAX_EXPENSE`, `5000_PAYROLL_EXPENSE`), and Class 10 Treasury Assets (`1010_BANK`, `1000_CASH`).
+  - Enforced that balance sheet liability settlements produce exactly 0 HTG additional P&L expense, while preserving true cash outflow recognition in the canonical cash pipeline (`CanonicalCashEngine`).
+  - Added guards to `computeOperationalExpenses` ensuring liability settlements and treasury movements cannot contaminate operational expenses even if labeled with type `EXPENSE`.
+- **Verification & Test Suites**:
+  - Created `src/tests/unit/Phase152PayrollLiabilityRemediation.test.ts` (21/21 tests passing).
+  - Updated `src/tests/unit/Phase151CashReconciliationGate.test.ts` to assert resolved 0 HTG accrual expense on statutory remittances (13/13 tests passing).
+  - Added ADR-010 to `docs/decision-log.md`.
+  - Validated clean TypeScript compilation (`tsc --noEmit`) and clean production build.
+
 ## [4.1.0] - 2026-09-16
 ### Enacted & Validated (Forensic BI Date-Integrity Remediation & SSOT Alignment)
 - **Forensic Root Cause Remediation**:

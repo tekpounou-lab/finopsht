@@ -32,6 +32,8 @@ describe("PHASE 13.2.2 — Overlapping Policy & Persisted Ledger Reconciliation 
       gross_salary_cents: 10000000, // 100,000 HTG
       cnss_employee_cents: 600000,  // 6,000 HTG ONA
       cns_employee_cents: 200000,   // 2,000 HTG OFATMA
+      cnss_employer_cents: 600000,  // 6,000 HTG Employer ONA
+      cns_employer_cents: 300000,   // 3,000 HTG Employer OFATMA
       employer_contributions_cents: 900000, // 9,000 HTG
       debts_deduction_cents: 0,
       net_salary_cents: 9200000,    // 92,000 HTG Net
@@ -152,8 +154,8 @@ describe("PHASE 13.2.2 — Overlapping Policy & Persisted Ledger Reconciliation 
       // Double-entry balancing
       expect(journalEntry.isBalanced).toBe(true);
       expect(journalEntry.isLocked).toBe(true);
-      expect(journalEntry.totalDebitCents).toBe(10000000); // 100,000 HTG
-      expect(journalEntry.totalCreditCents).toBe(10000000); // 100,000 HTG
+      expect(journalEntry.totalDebitCents).toBe(10900000); // 109,000 HTG
+      expect(journalEntry.totalCreditCents).toBe(10900000); // 109,000 HTG
 
       // Individual transactions legs check
       expect(transactions.length).toBeGreaterThanOrEqual(3); // Net payout + ONA + OFATMA legs
@@ -190,6 +192,8 @@ describe("PHASE 13.2.2 — Overlapping Policy & Persisted Ledger Reconciliation 
           gross_salary_cents: 10000000, // 100,000 HTG
           cnss_employee_cents: 800000,  // 8,000 HTG ONA
           cns_employee_cents: 300000,   // 3,000 HTG OFATMA
+          cnss_employer_cents: 800000,  // 8,000 HTG Employer ONA
+          cns_employer_cents: 300000,   // 3,000 HTG Employer OFATMA
           employer_contributions_cents: 1100000, // 11,000 HTG
           debts_deduction_cents: 0,
           net_salary_cents: 8900000,    // 89,000 HTG Net
@@ -209,8 +213,8 @@ describe("PHASE 13.2.2 — Overlapping Policy & Persisted Ledger Reconciliation 
       );
 
       expect(journalEntry.isBalanced).toBe(true);
-      expect(journalEntry.totalDebitCents).toBe(10000000);
-      expect(journalEntry.totalCreditCents).toBe(10000000);
+      expect(journalEntry.totalDebitCents).toBe(11100000); // 111,000 HTG
+      expect(journalEntry.totalCreditCents).toBe(11100000); // 111,000 HTG
 
       const netLeg = transactions.find((t) => t.id.includes("_net"));
       expect(netLeg?.amount).toBe(89000);

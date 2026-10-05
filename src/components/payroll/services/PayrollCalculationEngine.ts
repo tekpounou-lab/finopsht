@@ -116,8 +116,8 @@ export function resolveTaxRatesForDate(
     };
   }
 
-  // Search through history to find matching effective period
-  const match = config.history.find(record => {
+  // Search through history to find matching effective period with explicit deterministic precedence
+  const matches = config.history.filter(record => {
     const from = new Date(record.effectiveFrom);
     if (isNaN(from.getTime())) return false;
     
@@ -140,7 +140,22 @@ export function resolveTaxRatesForDate(
     return true;
   });
 
-  if (match) {
+  // Sort candidates by explicit deterministic precedence rule:
+  // Latest effectiveFrom date first, then highest policyVersion/id
+  if (matches.length > 0) {
+    matches.sort((a, b) => {
+      const fromA = new Date(a.effectiveFrom).getTime();
+      const fromB = new Date(b.effectiveFrom).getTime();
+      if (fromB !== fromA) return fromB - fromA;
+
+      const verA = Number((a as any).policyVersion) || 0;
+      const verB = Number((b as any).policyVersion) || 0;
+      if (verB !== verA) return verB - verA;
+
+      return ((b as any).id || "").localeCompare((a as any).id || "");
+    });
+
+    const match = matches[0];
     return {
       cnssRateEmployee: match.cnssRateEmployee,
       cnssRateEmployer: match.cnssRateEmployer,
@@ -214,7 +229,7 @@ export function calculateEmployeePayrollItem(
   );
 
   const grossPay = item.baseSalaryHTG + overtimePayout + item.bonusesHTG + item.commissionsHTG;
-  const taxDeductions = calculateTaxDeductions(grossPay, taxConfig || rates, item.baseSalaryHTG);
+  const taxDeductions = calculateTaxDeductions(grossPay, { ...(taxConfig || {}), ...rates }, item.baseSalaryHTG);
 
   let netPay = grossPay - taxDeductions.totalDeductions - item.advancesHTG;
   let survivalFloorApplied = false;

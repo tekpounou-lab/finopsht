@@ -313,6 +313,9 @@ export const createPayrollJournalEntry = (
   let totalOfatmaCents = 0;
   let totalAdvancesCents = 0;
   let totalNetCents = 0;
+  let totalOnaEmployerCents = 0;
+  let totalOfatmaEmployerCents = 0;
+  let totalEmployerContribCents = 0;
 
   records.forEach((r) => {
     const grossC = r.gross_salary_cents ?? Math.round((r.grossSalary || 0) * 100);
@@ -321,11 +324,21 @@ export const createPayrollJournalEntry = (
     const advC = r.debts_deduction_cents ?? Math.round((r.advancesTreated || 0) * 100);
     const netC = r.net_salary_cents ?? Math.round((r.netPaid || 0) * 100);
 
+    const onaEmprC = r.cnss_employer_cents ?? Math.round(((r as any).onaEmployer || 0) * 100);
+    const ofatmaEmprC = (r as any).cns_employer_cents ?? Math.round(((r as any).ofatmaEmployer || 0) * 100);
+    const empContribC = (r as any).employer_contributions_cents !== undefined && (r as any).employer_contributions_cents !== null
+      ? (r as any).employer_contributions_cents
+      : (onaEmprC + ofatmaEmprC);
+
     totalGrossCents += grossC;
     totalOnaCents += onaC;
     totalOfatmaCents += ofatmaC;
     totalAdvancesCents += advC;
     totalNetCents += netC;
+
+    totalOnaEmployerCents += onaEmprC;
+    totalOfatmaEmployerCents += ofatmaEmprC;
+    totalEmployerContribCents += empContribC;
   });
 
   const transactions: LedgerTransaction[] = [];
@@ -368,7 +381,7 @@ export const createPayrollJournalEntry = (
     });
   }
 
-  // Leg 2: ONA Payable (Debit 5100_PAYROLL_EXPENSE, Credit 2100_ONA_TAXES_PAYABLE)
+  // Leg 2: ONA Employee Deductions (Debit 5100_PAYROLL_EXPENSE, Credit 2100_ONA_TAXES_PAYABLE)
   if (totalOnaCents > 0) {
     const onaHtg = totalOnaCents / 100;
     transactions.push({
@@ -379,7 +392,7 @@ export const createPayrollJournalEntry = (
       amount: onaHtg,
       amount_cents: totalOnaCents,
       date: txDate,
-      description: `Paie ${cycleLabel} - Retenues Sociales ONA (6%) à Décaisser`,
+      description: `Paie ${cycleLabel} - Retenues Sociales ONA Salariés à Décaisser`,
       category: "TAX",
       signerId: actorId,
       currency: "HTG",
@@ -405,7 +418,7 @@ export const createPayrollJournalEntry = (
     });
   }
 
-  // Leg 3: OFATMA Payable (Debit 5100_PAYROLL_EXPENSE, Credit 2110_OFATMA_TAXES_PAYABLE)
+  // Leg 3: OFATMA Employee Deductions (Debit 5100_PAYROLL_EXPENSE, Credit 2110_OFATMA_TAXES_PAYABLE)
   if (totalOfatmaCents > 0) {
     const ofatmaHtg = totalOfatmaCents / 100;
     transactions.push({
@@ -416,7 +429,7 @@ export const createPayrollJournalEntry = (
       amount: ofatmaHtg,
       amount_cents: totalOfatmaCents,
       date: txDate,
-      description: `Paie ${cycleLabel} - Retenues Risques OFATMA (2%) à Décaisser`,
+      description: `Paie ${cycleLabel} - Retenues Risques OFATMA Salariés à Décaisser`,
       category: "TAX",
       signerId: actorId,
       currency: "HTG",
@@ -479,39 +492,125 @@ export const createPayrollJournalEntry = (
     });
   }
 
-  const totalCreditSumCents = totalNetCents + totalOnaCents + totalOfatmaCents + totalAdvancesCents;
-  const adjustedGrossCents = Math.max(totalGrossCents, totalCreditSumCents);
+  // Leg 5: Employer ONA Contributions (Debit 5110_EMPLOYER_TAX_EXPENSE, Credit 2100_ONA_TAXES_PAYABLE)
+  if (totalOnaEmployerCents > 0) {
+    const onaEmprHtg = totalOnaEmployerCents / 100;
+    transactions.push({
+      id: `${txIdBase}_ona_employer`,
+      business_id: businessId,
+      branchId: "MAIN",
+      type: "PAYROLL",
+      amount: onaEmprHtg,
+      amount_cents: totalOnaEmployerCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Charges Sociales Patronales ONA à Décaisser`,
+      category: "TAX",
+      signerId: actorId,
+      currency: "HTG",
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5110_EMPLOYER_TAX_EXPENSE",
+      credit_account: "2100_ONA_TAXES_PAYABLE",
+      debit: onaEmprHtg,
+      credit: onaEmprHtg,
+      debit_cents: totalOnaEmployerCents,
+      credit_cents: totalOnaEmployerCents,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "EMPLOYER_ONA_TAX",
+        accountDebit: "5110 - Employer Tax Expense",
+        accountCredit: "2100 - ONA Payable"
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  // Leg 6: Employer OFATMA Contributions (Debit 5110_EMPLOYER_TAX_EXPENSE, Credit 2110_OFATMA_TAXES_PAYABLE)
+  if (totalOfatmaEmployerCents > 0) {
+    const ofatmaEmprHtg = totalOfatmaEmployerCents / 100;
+    transactions.push({
+      id: `${txIdBase}_ofatma_employer`,
+      business_id: businessId,
+      branchId: "MAIN",
+      type: "PAYROLL",
+      amount: ofatmaEmprHtg,
+      amount_cents: totalOfatmaEmployerCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Charges Risques Patronales OFATMA à Décaisser`,
+      category: "TAX",
+      signerId: actorId,
+      currency: "HTG",
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5110_EMPLOYER_TAX_EXPENSE",
+      credit_account: "2110_OFATMA_TAXES_PAYABLE",
+      debit: ofatmaEmprHtg,
+      credit: ofatmaEmprHtg,
+      debit_cents: totalOfatmaEmployerCents,
+      credit_cents: totalOfatmaEmployerCents,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "EMPLOYER_OFATMA_TAX",
+        accountDebit: "5110 - Employer Tax Expense",
+        accountCredit: "2110 - OFATMA Payable"
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  const totalDebitSumCents = totalGrossCents + totalEmployerContribCents;
+  const totalCreditSumCents = totalNetCents + totalOnaCents + totalOfatmaCents + totalAdvancesCents + totalOnaEmployerCents + totalOfatmaEmployerCents;
 
   const journalLines: any[] = [
     {
       accountId: "5100_PAYROLL_EXPENSE",
       accountCode: "5100",
       accountName: "5100 - Payroll Expense",
-      debitCents: adjustedGrossCents,
+      debitCents: totalGrossCents,
       creditCents: 0,
       description: `Masse Salariale Brute - ${cycleLabel}`
     },
-    ...(totalOnaCents > 0
+    ...(totalEmployerContribCents > 0
+      ? [
+          {
+            accountId: "5110_EMPLOYER_TAX_EXPENSE",
+            accountCode: "5110",
+            accountName: "5110 - Employer Tax Expense",
+            debitCents: totalEmployerContribCents,
+            creditCents: 0,
+            description: `Charges Sociales Patronales - ${cycleLabel}`
+          }
+        ]
+      : []),
+    ...((totalOnaCents + totalOnaEmployerCents) > 0
       ? [
           {
             accountId: "2100_ONA_TAXES_PAYABLE",
             accountCode: "2100",
             accountName: "2100 - ONA Payable",
             debitCents: 0,
-            creditCents: totalOnaCents,
-            description: `Cotisations ONA Salariés (6%) - ${cycleLabel}`
+            creditCents: totalOnaCents + totalOnaEmployerCents,
+            description: `Cotisations ONA (Salariés + Patronales) - ${cycleLabel}`
           }
         ]
       : []),
-    ...(totalOfatmaCents > 0
+    ...((totalOfatmaCents + totalOfatmaEmployerCents) > 0
       ? [
           {
             accountId: "2110_OFATMA_TAXES_PAYABLE",
             accountCode: "2110",
             accountName: "2110 - OFATMA Payable",
             debitCents: 0,
-            creditCents: totalOfatmaCents,
-            description: `Cotisations OFATMA Salariés (2%) - ${cycleLabel}`
+            creditCents: totalOfatmaCents + totalOfatmaEmployerCents,
+            description: `Cotisations OFATMA (Salariés + Patronales) - ${cycleLabel}`
           }
         ]
       : []),
@@ -551,9 +650,9 @@ export const createPayrollJournalEntry = (
     description: `Écriture Comptable de Clôture Paie (SEALED) - ${cycleLabel}`,
     currency: "HTG",
     lines: journalLines,
-    totalDebitCents: adjustedGrossCents,
+    totalDebitCents: totalDebitSumCents,
     totalCreditCents: totalCreditSumCents,
-    isBalanced: adjustedGrossCents === totalCreditSumCents,
+    isBalanced: totalDebitSumCents === totalCreditSumCents,
     isLocked: true,
     createdBy: actorId,
     createdAt: now

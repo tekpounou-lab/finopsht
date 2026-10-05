@@ -88,3 +88,17 @@
   5. Formally closed Phase 5 and enacted the "Certified Core Extension" governance model for Phase 6.
 - **Consequences**: Guaranteed protection of certified accounting logic and financial invariants during all future Phase 6 product iterations.
 
+---
+
+## ADR-010: Strict Separation of Payroll Expense Recognition from Balance Sheet Liability Settlements (DEF-15.1-01)
+- **Date**: 2026-10-05
+- **Status**: Accepted
+- **Context**: In Phase 15.1, forensic auditing revealed defect `DEF-15.1-01`: `AnalyticsEngine.isPayrollRelatedTransaction()` treated all transactions with `type === "TRANSFER"` or `type === "EXCHANGE"` as payroll-related transactions. As a consequence, subsequent statutory liability settlements (e.g. `DEBIT 2100_ONA_TAXES_PAYABLE / CREDIT 1010_BANK` or `DEBIT 2110_OFATMA_TAXES_PAYABLE / CREDIT 1010_BANK`) were incorrectly aggregated into `curGlPayrollExp`, creating a second fictitious P&L expense in later periods.
+- **Decision**: Implemented canonical accounting class evaluation:
+  1. Classified transactions based on economic effect using Chart of Accounts semantics (Class 2 Liabilities vs. Class 5 Expenses vs. Class 10 Treasury Assets).
+  2. Defined `isLiabilityAccount` to identify Class 2 balance sheet liability accounts (`2100_ONA_TAXES_PAYABLE`, `2110_OFATMA_TAXES_PAYABLE`, `2100_PAYROLL_CLEARING`, `2000_ACCOUNTS_PAYABLE`, `2200_TAXES_PAYABLE`).
+  3. Defined `isPayrollExpenseTransaction` to enforce that debits to Class 2 liability accounts are recognized as liability settlements (reducing balance sheet liabilities) and produce exactly 0 HTG additional P&L expense.
+  4. Preserved legitimate payroll expense recognition for debits to Class 5 accounts (`5100_PAYROLL_EXPENSE`, `5110_EMPLOYER_TAX_EXPENSE`, `5000_PAYROLL_EXPENSE`).
+  5. Preserved the treasury cash pipeline in `CanonicalCashEngine`, ensuring actual cash outflows (e.g. 17,000 HTG for statutory remittances) continue to be recognized accurately under cash-basis accounting.
+- **Consequences**: Complete elimination of double-counting in subsequent periods. Profit vs. Net Cash Flow semantic separation is formally preserved. Accrual snapshots reflect true economic expenses without contamination from treasury or balance sheet settlement events.
+

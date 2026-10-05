@@ -53,15 +53,19 @@ describe("Phase 9B: Canonical Formula Remediation Test Suite", () => {
       },
     ] as unknown as LedgerTransaction[];
 
-    const snapshot = await AnalyticsEngine.generateSnapshot({
-      period: "MONTH",
-      customRange: { startDate: "2026-09-01", endDate: "2026-09-30" },
+    const snapshot = AnalyticsEngine.generateSnapshot(
+      "CUSTOM",
+      { startDate: "2026-09-01", endDate: "2026-09-30" },
+      [],
       transactions,
-      employees: [],
-      attendanceLogs: [],
-      payrollRecords: [],
-      businessId: "biz_test_9b",
-    });
+      [],
+      [],
+      [],
+      [],
+      [],
+      "biz_test_9b",
+      "fr"
+    );
 
     // Revenue = 10,000; Total Expenses = 7,000; Net Profit = 3,000
     expect(snapshot.revenue.currentValue).toBe(10000);
@@ -136,15 +140,19 @@ describe("Phase 9B: Canonical Formula Remediation Test Suite", () => {
     ] as unknown as LedgerTransaction[];
 
     // Period: 30 days (Sept 1 to Sept 30)
-    const snapshot = await AnalyticsEngine.generateSnapshot({
-      period: "MONTH",
-      customRange: { startDate: "2026-09-01", endDate: "2026-09-30" },
+    const snapshot = AnalyticsEngine.generateSnapshot(
+      "CUSTOM",
+      { startDate: "2026-09-01", endDate: "2026-09-30" },
+      [],
       transactions,
-      employees: [],
-      attendanceLogs: [],
-      payrollRecords: [],
-      businessId: "biz_9b_forecast",
-    });
+      [],
+      [],
+      [],
+      [],
+      [],
+      "biz_9b_forecast",
+      "fr"
+    );
 
     // Profit = 30,000; Days = 30; Daily Burn = 30,000 / 30 = 1,000 HTG/day
     // 7-Day Forecast = Profit (30,000) - (1,000 * 7) = 23,000 HTG

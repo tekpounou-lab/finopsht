@@ -22,6 +22,8 @@ import { filterOperationalEmployees, isOperationalEmployee } from "../../../serv
 import { WorkforceProfitabilityEngine } from "./WorkforceProfitabilityEngine";
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 import { CashBasisEngine as CanonicalCashEngine } from "../../cash/engine/CashBasisEngine";
+import { CHART_OF_ACCOUNTS } from "../../../constants/finance";
+import { TreasuryClassification } from "../../cash/classification/TreasuryClassification";
 import {
   AnalyticsPeriod,
   AnalyticsSnapshot,
@@ -40,14 +42,230 @@ export interface DateRange {
 }
 
 /**
- * Determines whether a transaction is payroll-related (to prevent double-counting in operational expenses).
+ * Canonical helper to determine if an account code represents a balance sheet liability (Class 2).
  */
-export function isPayrollRelatedTransaction(tx: LedgerTransaction | any): boolean {
+export function isLiabilityAccount(accountCode?: string): boolean {
+  if (!accountCode) return false;
+  const normalized = accountCode.trim().toUpperCase();
+  if (normalized.startsWith("2")) return true;
+  const canonicalLiabilities = Object.values(CHART_OF_ACCOUNTS.LIABILITIES) as string[];
+  if (canonicalLiabilities.some((ac) => normalized === ac.toUpperCase() || normalized.startsWith(ac.toUpperCase()))) {
+    return true;
+  }
+  if (
+    normalized.includes("PAYABLE") ||
+    normalized.includes("TAXES_PAYABLE") ||
+    normalized.includes("COTISATION") ||
+    normalized.includes("DETTE") ||
+    normalized.includes("PASSIF")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Canonical helper to determine if an account code represents a treasury asset account (Class 10).
+ */
+export function isTreasuryAccount(accountCode?: string): boolean {
+  if (!accountCode) return false;
+  const normalized = accountCode.trim().toUpperCase();
+  if (normalized.startsWith("10") || normalized === "1000_CASH" || normalized === "1010_BANK") {
+    return true;
+  }
+  try {
+    return TreasuryClassification.classify({ accountCode: normalized }).isTreasury;
+  } catch {
+    return (
+      normalized.includes("CASH") ||
+      normalized.includes("BANK") ||
+      normalized.includes("BANQUE") ||
+      normalized.includes("CAISSE") ||
+      normalized.includes("SAFE") ||
+      normalized.includes("COFFRE") ||
+      normalized.includes("TILL")
+    );
+  }
+}
+
+/**
+ * Canonical helper to determine if an account code represents an expense account (Class 5).
+ */
+export function isExpenseAccount(accountCode?: string): boolean {
+  if (!accountCode) return false;
+  const normalized = accountCode.trim().toUpperCase();
+  if (normalized.startsWith("5") || normalized.startsWith("6")) return true;
+  const canonicalExpenses = Object.values(CHART_OF_ACCOUNTS.EXPENSES) as string[];
+  if (canonicalExpenses.some((ac) => normalized === ac.toUpperCase() || normalized.startsWith(ac.toUpperCase()))) {
+    return true;
+  }
+  if (normalized === "5110_EMPLOYER_TAX_EXPENSE") return true;
+  if (
+    normalized.includes("EXPENSE") ||
+    normalized.includes("CHARGE") ||
+    normalized.includes("DEPENSE") ||
+    normalized.includes("DÉPENSE")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Canonical helper to determine if an account code represents a payroll expense account (Class 5 payroll).
+ */
+export function isPayrollExpenseAccount(accountCode?: string): boolean {
+  if (!accountCode) return false;
+  const normalized = accountCode.trim().toUpperCase();
+  if (
+    normalized === "5100_PAYROLL_EXPENSE" ||
+    normalized === "5110_EMPLOYER_TAX_EXPENSE" ||
+    normalized === "5000_PAYROLL_EXPENSE" ||
+    normalized === "5050_COMMISSIONS_EXPENSE" ||
+    normalized === CHART_OF_ACCOUNTS.EXPENSES.PAYROLL ||
+    normalized === CHART_OF_ACCOUNTS.EXPENSES.PAYROLL_TOTAL_MASS ||
+    normalized === CHART_OF_ACCOUNTS.EXPENSES.COMMISSIONS
+  ) {
+    return true;
+  }
+  if (
+    normalized.startsWith("5") &&
+    (normalized.includes("PAYROLL") ||
+      normalized.includes("SALAIRE") ||
+      normalized.includes("PAIE") ||
+      normalized.includes("EMPLOYER_TAX") ||
+      normalized.includes("TAX_EXPENSE"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Determines whether a transaction is a balance sheet liability settlement.
+ * (e.g. DEBIT 2100_ONA_TAXES_PAYABLE / CREDIT 1010_BANK).
+ * These transactions reduce liability and cash, but do NOT create P&L expense.
+ */
+export function isLiabilitySettlementTransaction(tx: LedgerTransaction | any): boolean {
   if (!tx) return false;
+  const debitAcc = (tx.debit_account || tx.debitAccount || "").toString().trim().toUpperCase();
+  if (debitAcc && isLiabilityAccount(debitAcc)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Determines whether a transaction is an internal treasury movement.
+ * (e.g. DEBIT 1010_BANK / CREDIT 1000_CASH, or EXCHANGE between bank accounts).
+ */
+export function isTreasuryTransferTransaction(tx: LedgerTransaction | any): boolean {
+  if (!tx) return false;
+  const debitAcc = (tx.debit_account || tx.debitAccount || "").toString().trim().toUpperCase();
+  const creditAcc = (tx.credit_account || tx.creditAccount || "").toString().trim().toUpperCase();
+  if (debitAcc && isTreasuryAccount(debitAcc) && creditAcc && isTreasuryAccount(creditAcc)) {
+    return true;
+  }
   const typeUpper = (tx.type || "").toUpperCase();
-  if (typeUpper === "PAYROLL") return true;
-  if (typeUpper === "ADVANCE") return true;
-  if (typeUpper === "TRANSFER" || typeUpper === "EXCHANGE") return true;
+  if ((typeUpper === "TRANSFER" || typeUpper === "EXCHANGE") && !isExpenseAccount(debitAcc) && !isLiabilityAccount(debitAcc)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Determines whether a transaction represents genuine GL payroll expense recognition.
+ * Strictly separates economic expense recognition from liability settlements and treasury transfers (DEF-15.1-01).
+ */
+export function isPayrollExpenseTransaction(tx: LedgerTransaction | any): boolean {
+  if (!tx) return false;
+  const statusUpper = (tx.status || "").toUpperCase();
+  if (statusUpper === "REVERSED" || statusUpper === "VOID" || statusUpper === "CANCELLED" || tx.is_reversed) {
+    return false;
+  }
+
+  const debitAcc = (tx.debit_account || tx.debitAccount || "").toString().trim().toUpperCase();
+
+  // 1. A transaction debiting a liability account (Class 2) settles a liability, NEVER recognizes expense!
+  if (debitAcc && isLiabilityAccount(debitAcc)) {
+    return false;
+  }
+
+  // 2. A transaction debiting a treasury account (Class 10) is a treasury movement, NEVER recognizes expense!
+  if (debitAcc && isTreasuryAccount(debitAcc)) {
+    return false;
+  }
+
+  // 3. A transaction debiting employee advances (Class 13) is an advance receivable asset, not an expense!
+  if (
+    debitAcc &&
+    (debitAcc.startsWith("13") ||
+      debitAcc === "1300_EMPLOYEE_ADVANCES" ||
+      debitAcc === CHART_OF_ACCOUNTS.ASSETS.ADVANCES)
+  ) {
+    return false;
+  }
+
+  // 4. If an explicit debit account is provided:
+  if (debitAcc) {
+    if (isPayrollExpenseAccount(debitAcc)) {
+      return true;
+    }
+    // If it debits an expense account (Class 5) and has payroll metadata / keywords / type
+    if (isExpenseAccount(debitAcc)) {
+      const typeUpper = (tx.type || "").toUpperCase();
+      if (typeUpper === "PAYROLL" || typeUpper === "BONUS" || typeUpper === "COMPENSATION") {
+        return true;
+      }
+      if (
+        tx.metadata?.payrollCycleId ||
+        tx.metadata?.payroll_cycle_id ||
+        (tx as any).payrollCycleId ||
+        (tx as any).payroll_cycle_id
+      ) {
+        return true;
+      }
+      const cat = (tx.category || "").toLowerCase();
+      const desc = (tx.description || "").toLowerCase();
+      const memo = (tx.memo || "").toLowerCase();
+      const payrollKeywords = [
+        "paie",
+        "payroll",
+        "salaire",
+        "salaires",
+        "virement salaires",
+        "remuneration",
+        "rémunération",
+        "appointement",
+        "net pay",
+        "gross pay",
+        "masse salariale",
+      ];
+      if (payrollKeywords.some((kw) => cat.includes(kw) || desc.includes(kw) || memo.includes(kw))) {
+        return true;
+      }
+    }
+    // Debit account is present, but not a payroll expense account
+    return false;
+  }
+
+  // 5. If debit_account is NOT specified (legacy or unmapped transactions):
+  const typeUpper = (tx.type || "").toUpperCase();
+
+  // Pure transfers or exchanges without debit account are NOT payroll expenses
+  if (typeUpper === "TRANSFER" || typeUpper === "EXCHANGE") {
+    return false;
+  }
+
+  // Advances are asset loans, not P&L payroll expenses
+  if (typeUpper === "ADVANCE") {
+    return false;
+  }
+
+  // PAYROLL type defaults to 5000_PAYROLL_EXPENSE via double entry rules
+  if (typeUpper === "PAYROLL") {
+    return true;
+  }
 
   if (
     tx.metadata?.payrollCycleId ||
@@ -55,7 +273,10 @@ export function isPayrollRelatedTransaction(tx: LedgerTransaction | any): boolea
     (tx as any).payrollCycleId ||
     (tx as any).payroll_cycle_id
   ) {
-    return true;
+    if (typeUpper === "EXPENSE" || typeUpper === "BONUS" || typeUpper === "COMPENSATION" || !typeUpper) {
+      return true;
+    }
+    return false;
   }
 
   const cat = (tx.category || "").toLowerCase();
@@ -76,13 +297,22 @@ export function isPayrollRelatedTransaction(tx: LedgerTransaction | any): boolea
     "masse salariale",
   ];
 
-  for (const kw of payrollKeywords) {
-    if (cat.includes(kw) || desc.includes(kw) || memo.includes(kw)) {
+  if (payrollKeywords.some((kw) => cat.includes(kw) || desc.includes(kw) || memo.includes(kw))) {
+    if (typeUpper === "EXPENSE" || typeUpper === "BONUS" || typeUpper === "COMPENSATION" || !typeUpper) {
       return true;
     }
   }
 
   return false;
+}
+
+/**
+ * Determines whether a transaction represents payroll expense recognition
+ * (used to prevent double-counting in operational expenses and to calculate GL payroll expenses).
+ * Strictly excludes liability settlements (e.g. ONA/OFATMA remittance) and treasury transfers.
+ */
+export function isPayrollRelatedTransaction(tx: LedgerTransaction | any): boolean {
+  return isPayrollExpenseTransaction(tx);
 }
 
 /**
@@ -394,6 +624,13 @@ export class AnalyticsEngine {
   }
 
   static isPayrollRelatedTransaction = isPayrollRelatedTransaction;
+  static isPayrollExpenseTransaction = isPayrollExpenseTransaction;
+  static isLiabilitySettlementTransaction = isLiabilitySettlementTransaction;
+  static isTreasuryTransferTransaction = isTreasuryTransferTransaction;
+  static isLiabilityAccount = isLiabilityAccount;
+  static isTreasuryAccount = isTreasuryAccount;
+  static isExpenseAccount = isExpenseAccount;
+  static isPayrollExpenseAccount = isPayrollExpenseAccount;
 
   /**
    * Computes operational expenses from General Ledger transactions.
@@ -433,6 +670,12 @@ export class AnalyticsEngine {
 
       const typeUpper = (t.type || "").toUpperCase();
       if (typeUpper === "INCOME" || typeUpper === "TRANSFER" || typeUpper === "EXCHANGE" || typeUpper === "ADVANCE" || typeUpper === "REVENUE" || typeUpper === "SALES" || typeUpper === "VENTE" || typeUpper === "VENTES") {
+        return false;
+      }
+
+      // Exclude balance sheet liability settlements (Class 2 debits) and treasury transfers (Class 10 debits)
+      const debitAcc = (t.debit_account || (t as any).debitAccount || "").toString().trim().toUpperCase();
+      if (debitAcc && (isLiabilityAccount(debitAcc) || isTreasuryAccount(debitAcc))) {
         return false;
       }
 

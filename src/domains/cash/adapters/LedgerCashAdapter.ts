@@ -112,6 +112,8 @@ export interface LedgerAdaptOptions {
   splitTransfers?: boolean;
   /** Injected active payment methods for dynamic resolution and rules classification */
   paymentMethods?: PaymentMethod[];
+  /** Optional businessId scope */
+  businessId?: string;
 }
 
 export class LedgerCashAdapter {

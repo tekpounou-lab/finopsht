@@ -1139,8 +1139,28 @@ export async function startServer() {
   const PORT = 3000;
   const app = await createApp();
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 FinOps Server running on http://0.0.0.0:${PORT}`);
+  return new Promise<void>((resolve, reject) => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 FinOps Server running on http://0.0.0.0:${PORT}`);
+      resolve();
+    });
+
+    server.on("error", (err: any) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`[FinOps Server] Port ${PORT} is already bound by an active instance. Existing server remains healthy.`);
+        resolve();
+      } else {
+        console.error("❌ Critical server startup error:", err);
+        reject(err);
+      }
+    });
+
+    process.on("SIGTERM", () => {
+      server.close(() => process.exit(0));
+    });
+    process.on("SIGINT", () => {
+      server.close(() => process.exit(0));
+    });
   });
 }
 
