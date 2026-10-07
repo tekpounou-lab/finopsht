@@ -12,17 +12,56 @@ export interface LicenseCheckResult {
 }
 
 export const SUPER_ADMIN_SYSTEM_MODULES = [
+  "platform",
+  "tenants",
+  "plans",
+  "licences",
+  "security",
   "health",
   "system_health",
   "reliability",
   "resilience_dlq",
   "dlq",
   "recovery",
-  "disaster_recovery"
+  "disaster_recovery",
+  "forensic"
 ];
+
+export const PLATFORM_CAPABILITIES = new Set([
+  "delete_business", 
+  "manage_system_config", 
+  "force_unseal_payroll", 
+  "manage_global_tax", 
+  "superadmin_access",
+  "approve_business",
+  "reject_business",
+  "toggle_tenant_status",
+  "manage_licensing",
+  "upgrade_plan",
+  "manage_plans",
+  "manage_subscriptions",
+  "view_all_businesses",
+  "manage_global_payment_methods",
+  "system_health",
+  "reliability_dlq",
+  "disaster_recovery",
+  "forensic_audit",
+  "global_audit",
+  "platform.access",
+  "tenants.view",
+  "tenants.manage",
+  "plans.manage",
+  "licenses.manage",
+  "security.platform_view"
+]);
 
 export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, boolean>> = {
   SUPER_ADMIN: {
+    platform: true,
+    tenants: true,
+    plans: true,
+    licences: true,
+    security: true,
     bi: true,
     personnel: true,
     performance: true,
@@ -54,6 +93,11 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     settings: true
   },
   OWNER: {
+    platform: false,
+    tenants: false,
+    plans: false,
+    licences: false,
+    security: false,
     bi: true,
     personnel: true,
     performance: true,
@@ -72,7 +116,7 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     invoice_template: true,
     invoiceTemplate: true,
     documents: true,
-    forensic: true,
+    forensic: false,
     health: false,
     system_health: false,
     reliability: false,
@@ -85,6 +129,11 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     settings: true
   },
   ADMIN: {
+    platform: false,
+    tenants: false,
+    plans: false,
+    licences: false,
+    security: false,
     bi: true,
     personnel: true,
     performance: true,
@@ -103,7 +152,7 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     invoice_template: true,
     invoiceTemplate: true,
     documents: true,
-    forensic: true,
+    forensic: false,
     health: false,
     system_health: false,
     reliability: false,
@@ -278,16 +327,8 @@ class PermissionServiceClass {
       return false;
     }
 
-    // SuperAdmin critical capabilities are ONLY accessible to SUPER_ADMIN role
-    const isSuperAdminCapability = [
-      "delete_business", 
-      "manage_system_config", 
-      "force_unseal_payroll", 
-      "manage_global_tax", 
-      "superadmin_access"
-    ].includes(actionLower);
-
-    if (isSuperAdminCapability) {
+    // Platform capabilities are strictly reserved for SUPER_ADMIN role ONLY
+    if (PLATFORM_CAPABILITIES.has(actionLower)) {
       const isSuper = this.activeRole === "SUPER_ADMIN";
       this.capabilityCache[actionLower] = isSuper;
       return isSuper;
@@ -304,13 +345,14 @@ class PermissionServiceClass {
       return true;
     }
 
-    // Business OWNER possesses full sovereign control over all modules and operations within their own business
+    // Business OWNER possesses full sovereign control over legitimate ERP business operations
+    // strictly within their own enterprise (Never platform, cross-tenant, or global infrastructure capabilities)
     if (this.activeRole === "OWNER") {
       this.capabilityCache[actionLower] = true;
       return true;
     }
 
-    // Wildcard permissions bypass
+    // Wildcard permissions bypass (tenant operational scope only; never platform capabilities)
     if (this.permissions.includes("all") || this.permissions.includes("*")) {
       this.capabilityCache[actionLower] = true;
       return true;
@@ -494,8 +536,18 @@ class PermissionServiceClass {
   public hasModule(moduleName: string): boolean {
     const modLower = moduleName.toLowerCase();
     
-    // Check if module is turned on in feature matrix
-    if (this.activeRole === "SUPER_ADMIN" || this.activeRole === "OWNER") {
+    // System & Platform modules are reserved exclusively for SUPER_ADMIN
+    if (SUPER_ADMIN_SYSTEM_MODULES.includes(modLower)) {
+      return this.activeRole === "SUPER_ADMIN";
+    }
+
+    // Super Admin bypass for all tenant modules
+    if (this.activeRole === "SUPER_ADMIN") {
+      return true;
+    }
+
+    // Business OWNER sovereign access to legitimate tenant modules
+    if (this.activeRole === "OWNER") {
       return true;
     }
 
@@ -603,7 +655,7 @@ class PermissionServiceClass {
       invoice_template: ["SUPER_ADMIN", "OWNER", "ADMIN"],
       invoiceTemplate: ["SUPER_ADMIN", "OWNER", "ADMIN"],
       documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      forensic: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+      forensic: ["SUPER_ADMIN"],
       health: ["SUPER_ADMIN"],
       system_health: ["SUPER_ADMIN"],
       reliability: ["SUPER_ADMIN"],

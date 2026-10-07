@@ -2,13 +2,17 @@ import { Role, Employee } from "../types";
 import { ROLE_PERMISSIONS, RolePermissions } from "./role.permissions";
 
 export interface ActorIdentity {
-  id: string; // Employee ID
+  id: string; // Employee ID or User ID
   role: Role;
+  businessId?: string; // Associated business tenant
+  business_id?: string;
   branchId?: string;
   departmentId?: string;
 }
 
 export interface ProtectedResource {
+  businessId?: string; // Associated business tenant
+  business_id?: string;
   employeeId?: string; // Owner of the resource
   branchId?: string;   // Associated branch
   departmentId?: string; // Associated department
@@ -30,12 +34,31 @@ export const AccessResolver = {
   /**
    * Enforces contextual tenancy matching:
    * - SUPER_ADMIN has sovereign global bypass across all businesses and resources.
-   * - OWNER has full sovereign bypass on all resources within their business.
-   * - MANAGER has access if branchId matches actor's branchId.
+   * - OWNER has full sovereign control strictly within their verified business tenant (cross-tenant denied).
+   * - MANAGER has access if branchId matches actor's branchId within their tenant.
+   * - SUPERVISOR has departmental/branch access within their tenant.
    * - EMPLOYEE can only access resources belonging directly to them (employeeId matches actor.id).
    */
   canAccessResource(actor: ActorIdentity, resource: ProtectedResource): boolean {
-    if (actor.role === "SUPER_ADMIN" || actor.role === "OWNER") {
+    // 1. Super Admin possesses universal platform bypass
+    if (actor.role === "SUPER_ADMIN") {
+      return true;
+    }
+
+    // 2. Strict Tenant Isolation Barrier for all tenant-scoped roles (including OWNER)
+    const actorBiz = actor.businessId || actor.business_id;
+    const resourceBiz = resource.businessId || resource.business_id;
+    
+    // Cross-tenant access is strictly prohibited for non-SUPER_ADMIN
+    if (resourceBiz && (!actorBiz || actorBiz !== resourceBiz)) {
+      return false;
+    }
+    if (actorBiz && resourceBiz && actorBiz !== resourceBiz) {
+      return false;
+    }
+
+    // 3. OWNER has full sovereign control strictly within their verified enterprise
+    if (actor.role === "OWNER") {
       return true;
     }
 
@@ -66,15 +89,35 @@ export const AccessResolver = {
   /**
    * Evaluate whether an actor can write/mutate an employee document.
    * Hierarchical rule:
-   * - OWNER can mutate any employee.
+   * - SUPER_ADMIN can mutate any profile platform-wide.
+   * - OWNER can mutate any employee within their verified tenant (never other tenants, never SUPER_ADMIN).
    * - MANAGER can only mutate employees who:
-   *   1. Are in the same branch.
-   *   2. Do not hold OWNER role.
+   *   1. Are in the same branch within the tenant.
+   *   2. Do not hold SUPER_ADMIN or OWNER role.
    *   3. Do not hold MANAGER role (managers cannot mutate other managers).
    * - SUPERVISOR & EMPLOYEE cannot mutate any employee documents.
    */
   canMutateEmployee(actor: ActorIdentity, target: Employee | ActorIdentity): boolean {
-    if (actor.role === "SUPER_ADMIN" || actor.role === "OWNER") {
+    if (actor.role === "SUPER_ADMIN") {
+      return true;
+    }
+
+    // Strict Tenant Isolation: Never mutate employees across tenant boundaries
+    const actorBiz = actor.businessId || actor.business_id;
+    const targetBiz = (target as any).businessId || (target as any).business_id;
+    if (targetBiz && (!actorBiz || actorBiz !== targetBiz)) {
+      return false;
+    }
+    if (actorBiz && targetBiz && actorBiz !== targetBiz) {
+      return false;
+    }
+
+    // Non-superadmins can never mutate a SUPER_ADMIN
+    if (target.role === "SUPER_ADMIN") {
+      return false;
+    }
+
+    if (actor.role === "OWNER") {
       return true;
     }
 
@@ -84,7 +127,7 @@ export const AccessResolver = {
       if (actor.branchId !== target.branchId) return false;
 
       // Cannot mutate SuperAdmins, Owners or other Managers
-      if (target.role === "SUPER_ADMIN" || target.role === "OWNER" || target.role === "MANAGER") {
+      if ((target.role as string) === "SUPER_ADMIN" || target.role === "OWNER" || target.role === "MANAGER") {
         return false;
       }
 
@@ -98,7 +141,21 @@ export const AccessResolver = {
    * Evaluate if an actor can prepare or edit payrolls for a target employee.
    */
   canManagePayrollFor(actor: ActorIdentity, target: Employee | ActorIdentity): boolean {
-    if (actor.role === "SUPER_ADMIN" || actor.role === "OWNER") {
+    if (actor.role === "SUPER_ADMIN") {
+      return true;
+    }
+
+    // Strict Tenant Isolation Barrier
+    const actorBiz = actor.businessId || actor.business_id;
+    const targetBiz = (target as any).businessId || (target as any).business_id;
+    if (targetBiz && (!actorBiz || actorBiz !== targetBiz)) {
+      return false;
+    }
+    if (actorBiz && targetBiz && actorBiz !== targetBiz) {
+      return false;
+    }
+
+    if (actor.role === "OWNER") {
       return true;
     }
 

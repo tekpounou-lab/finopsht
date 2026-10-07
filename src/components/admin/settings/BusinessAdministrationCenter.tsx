@@ -33,6 +33,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { useBusinessContext } from "../../../contexts/BusinessContext";
 import { useAuth } from "../../../hooks/useAuth";
 import { useI18n } from "../../../i18n";
+import { Role } from "../../../types";
+import { AccessDenied } from "../../../navigation/RouteGuards";
 
 // Sub-components
 import BusinessProfileSection from "./sections/BusinessProfileSection";
@@ -155,16 +157,60 @@ export const SETTINGS_CATEGORIES: CategoryGroup[] = [
   }
 ];
 
-export default function BusinessAdministrationCenter() {
+export interface BusinessAdministrationCenterProps {
+  currentRole?: Role;
+  businessId?: string;
+}
+
+export const SECTION_ALLOWED_ROLES: Record<SettingsSection, Role[]> = {
+  OVERVIEW: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+  USER_PROFILE: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"],
+  PROFILE: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  BRANDING: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  ORGANIZATION: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+  VISUALIZER: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+  ROLES: ["SUPER_ADMIN", "OWNER"],
+  APPROVAL_POLICIES: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  PAYROLL_POLICIES: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  PAYROLL_TAXES: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  ATTENDANCE_POLICIES: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+  FEATURES: ["SUPER_ADMIN", "OWNER"],
+  SUBSCRIPTION: ["SUPER_ADMIN", "OWNER"],
+  NOTIFICATIONS: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  SECURITY: ["SUPER_ADMIN", "OWNER"],
+  AUDIT: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  INTEGRATIONS: ["SUPER_ADMIN", "OWNER"],
+  DATA: ["SUPER_ADMIN", "OWNER"],
+  HEALTH: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+  AI: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+};
+
+export default function BusinessAdministrationCenter({ currentRole, businessId }: BusinessAdministrationCenterProps = {}) {
   const { t } = useI18n();
+  const { dbUser, role: authRole } = useAuth();
+  const effectiveRole: Role = currentRole || (authRole as Role) || "OWNER";
   const [activeSection, setActiveSection] = useState<SettingsSection>("OVERVIEW");
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   
   const { currentBusiness } = useBusinessContext();
-  const { dbUser } = useAuth();
   const navRef = useRef<HTMLDivElement>(null);
+
+  // Helper to check if a section is authorized for the current role
+  const isSectionAuthorized = (section: SettingsSection): boolean => {
+    const allowed = SECTION_ALLOWED_ROLES[section];
+    if (!allowed) return true;
+    return allowed.includes(effectiveRole);
+  };
+
+  // Filter categories and items according to current role permissions
+  const authorizedCategories = React.useMemo(() => {
+    return SETTINGS_CATEGORIES.map(cat => ({
+      ...cat,
+      items: cat.items.filter(item => isSectionAuthorized(item.id))
+    })).filter(cat => cat.items.length > 0);
+  }, [effectiveRole]);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -190,12 +236,12 @@ export default function BusinessAdministrationCenter() {
   }, []);
 
   // Helper to find current section item details
-  const currentItem = SETTINGS_CATEGORIES.flatMap(cat => cat.items).find(item => item.id === activeSection) || SETTINGS_CATEGORIES[0].items[0];
-  const currentCategory = SETTINGS_CATEGORIES.find(cat => cat.items.some(item => item.id === activeSection)) || SETTINGS_CATEGORIES[0];
+  const currentItem = authorizedCategories.flatMap(cat => cat.items).find(item => item.id === activeSection) || authorizedCategories[0]?.items[0] || SETTINGS_CATEGORIES[0].items[0];
+  const currentCategory = authorizedCategories.find(cat => cat.items.some(item => item.id === activeSection)) || authorizedCategories[0] || SETTINGS_CATEGORIES[0];
 
   // Search filter across all items
   const searchResults = searchQuery.trim() 
-    ? SETTINGS_CATEGORIES.flatMap(cat => cat.items.map(item => ({ ...item, categoryLabel: cat.label })))
+    ? authorizedCategories.flatMap(cat => cat.items.map(item => ({ ...item, categoryLabel: cat.label })))
         .filter(item => 
           item.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
           item.description.toLowerCase().includes(searchQuery.toLowerCase())
@@ -203,6 +249,9 @@ export default function BusinessAdministrationCenter() {
     : [];
 
   const handleSelectSection = (sectionId: SettingsSection) => {
+    if (!isSectionAuthorized(sectionId)) {
+      return;
+    }
     setActiveSection(sectionId);
     setExpandedCategory(null);
     setIsMobileMenuOpen(false);
@@ -214,6 +263,17 @@ export default function BusinessAdministrationCenter() {
   };
 
   const renderSection = () => {
+    if (!isSectionAuthorized(activeSection)) {
+      return (
+        <div className="p-8">
+          <AccessDenied
+            requiredRole="OWNER"
+            message="Cette section de l'administration est protégée et requiert des privilèges supérieurs."
+          />
+        </div>
+      );
+    }
+
     switch (activeSection) {
       case "OVERVIEW": return <SettingsHomeDashboard onNavigate={handleSelectSection} />;
       case "USER_PROFILE": return <UserProfileSection />;
@@ -325,7 +385,7 @@ export default function BusinessAdministrationCenter() {
       {/* 2. Hierarchical Grouped Dropdown Navigation Bar (Desktop) */}
       <nav ref={navRef} className="border-b border-slate-900 bg-slate-950/95 backdrop-blur-md px-4 sm:px-8 py-2.5 z-20 relative shrink-0">
         <div className="hidden lg:flex flex-wrap items-center gap-2">
-          {SETTINGS_CATEGORIES.map(category => {
+          {authorizedCategories.map(category => {
             const isCategoryActive = category.items.some(i => i.id === activeSection);
             const isExpanded = expandedCategory === category.id;
             const CategoryIcon = category.icon;
@@ -418,7 +478,7 @@ export default function BusinessAdministrationCenter() {
             </div>
 
             <div className="space-y-3 max-h-[60vh] overflow-y-auto custom-scrollbar">
-              {SETTINGS_CATEGORIES.map(category => (
+              {authorizedCategories.map(category => (
                 <div key={category.id} className="space-y-1">
                   <div className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-2">
                     <category.icon className="w-3.5 h-3.5 text-cyan-400" />

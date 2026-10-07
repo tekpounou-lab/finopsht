@@ -16,6 +16,7 @@ import { useNotifications } from "../hooks/useNotifications";
 import { normalizeTab } from "./dashboard/hooks/useNavigation";
 import { Role, Business } from "../types";
 import EnterpriseErrorBoundary from "./ui/ErrorBoundary";
+import { AccessDenied } from "../navigation/RouteGuards";
 import { EditProfileModal } from "./profile/EditProfileModal";
 import { EmployeeRepository } from "../repositories/EmployeeRepository";
 import { PayrollRepository } from "../repositories/PayrollRepository";
@@ -184,15 +185,27 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               }
             >
             {(normalizedActiveTab === "platform" || normalizedActiveTab === "tenants" || normalizedActiveTab === "superadmin") && (
-              <SuperAdminPlatform initialTab={initialSubTab === "PENDING" ? "pending" : "tenants"} />
+              currentRole === "SUPER_ADMIN" ? (
+                <SuperAdminPlatform initialTab={initialSubTab === "PENDING" ? "pending" : "tenants"} />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="Ce module est strictement réservé à la supervision plateforme Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "plans" && (
-              <SuperAdminPlatform initialTab="plans" />
+              currentRole === "SUPER_ADMIN" ? (
+                <SuperAdminPlatform initialTab="plans" />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="La gestion des plans et licences globales est strictement réservée au Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "security" && (
-              <SuperAdminPlatform initialTab="security" />
+              currentRole === "SUPER_ADMIN" ? (
+                <SuperAdminPlatform initialTab="security" />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="Le centre de sécurité plateforme est strictement réservé au Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "dashboard" && (
@@ -443,7 +456,11 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             )}
 
             {normalizedActiveTab === "forensic" && (
-              <ConnectedForensicLogs />
+              currentRole === "SUPER_ADMIN" ? (
+                <ConnectedForensicLogs />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="Le registre d'audit forensique immuable est strictement réservé au Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "notifications" && (
@@ -465,34 +482,46 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             )}
 
             {normalizedActiveTab === "reliability" && (
-              <EventStreamPage
-                events={events}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
-                isOffline={false}
-                onReplayEvent={() => {}}
-                onClearDlq={() => {}}
-              />
+              currentRole === "SUPER_ADMIN" ? (
+                <EventStreamPage
+                  events={events}
+                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  isOffline={false}
+                  onReplayEvent={() => {}}
+                  onClearDlq={() => {}}
+                />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="Le module de fiabilité et DLQ plateforme est strictement réservé au Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "health" && (
-              <SystemHealthConsole
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
-                employees={employees}
-                departments={liveDepartments}
-                branches={liveBranches}
-                ledgerTransactions={ledgerTransactions}
-                employeeContracts={[]}
-                employeeBadges={[]}
-                invitations={[]}
-                onAddForensicLog={() => {}}
-              />
+              currentRole === "SUPER_ADMIN" ? (
+                <SystemHealthConsole
+                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  employees={employees}
+                  departments={liveDepartments}
+                  branches={liveBranches}
+                  ledgerTransactions={ledgerTransactions}
+                  employeeContracts={[]}
+                  employeeBadges={[]}
+                  invitations={[]}
+                  onAddForensicLog={() => {}}
+                />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="La console de santé globale du système est strictement réservée au Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "recovery" && (
-              <DisasterRecovery
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
-                currentRole={currentRole}
-              />
+              currentRole === "SUPER_ADMIN" ? (
+                <DisasterRecovery
+                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  currentRole={currentRole}
+                />
+              ) : (
+                <AccessDenied requiredRole="SUPER_ADMIN" message="Le plan de reprise d'activité (DRP) est strictement réservé au Super Admin." />
+              )
             )}
 
             {normalizedActiveTab === "onboarding" && (

@@ -1,5 +1,27 @@
 # FINOPS ERP — Architectural Changelog
 
+## [4.2.1] - 2026-10-07
+### Enacted & Verified (Phase 15.2R — Independent Runtime Verification & Phase Closure)
+- **Official Phase Verdict**: `VERIFIED WITH LIMITATIONS`.
+- **Defect Resolution**: `DEF-15.1-01 — CLOSED / REMEDIATED`.
+- **Accounting Invariants Verified**:
+  - Full statutory liability settlements (DR 2100_ONA_TAXES_PAYABLE / CR 1010_BANK, DR 2110_OFATMA_TAXES_PAYABLE / CR 1010_BANK) produce 0 HTG additional P&L expense, valid treasury cash outflows, and proper liability reductions.
+  - Net salary settlements (DR 2100_PAYROLL_CLEARING / CR 1010_BANK) produce 0 HTG additional P&L expense and 92,000 HTG cash outflow.
+  - Canonical Golden Payroll V1 expense strictly maintained at 109,000 HTG.
+  - Subsequent-period protection: October-only remittances yield 0 HTG P&L expense (rejects 17k, 109k, 126k, 218k).
+  - Mixed-period reconciliation: Cumulative September–October expense remains exactly 109,000 HTG.
+  - GL vs Payroll Subledger variance is 0 HTG.
+  - Non-payroll TRANSFER and EXCHANGE regressions validated: general transfers and FX conversions produce 0 HTG P&L expense while genuine expenses (5100, 5900) remain recognized.
+  - Cross-BI consistency: `AnalyticsEngine`, `selectSimplifiedMetrics`, and `selectExpertMetrics` produce identical figures for identical scope.
+- **Evidence & Test Inventory Reconciliation**:
+  - Phase 15 regression test suites (70/70 passing):
+    - `Phase151CashReconciliationGate.test.ts`: 13/13 passing
+    - `Phase152PayrollLiabilityRemediation.test.ts`: 21/21 passing
+    - `Phase15FinancialReconciliationAudit.test.ts`: 15/15 passing
+    - `Phase152RIndependentRuntimeVerification.test.ts`: 21/21 passing
+  - Documented evidence boundary: application logic verified under test; real Firestore persistence, security rules, and socket disconnection recovery remain classified as `LIMITED` or `NOT_TESTED`.
+  - Added ADR-011 to `docs/decision-log.md`.
+
 ## [4.2.0] - 2026-10-05
 ### Enacted & Validated (Phase 15.2 — Payroll Liability Settlement Remediation & DEF-15.1-01 Fix)
 - **Remediation of Defect DEF-15.1-01**:

@@ -408,18 +408,18 @@ export const NavigationBuilder = {
     }
 
     // 11. Forensic Audit Trail (Super Admin SRE only)
-    if (userRole === "SUPER_ADMIN" || PermissionService.hasRoleModuleAccess(userRole, "forensic")) {
+    if (userRole === "SUPER_ADMIN") {
       addTab("forensic", t.navigation?.forensic || (isFr ? "Forensic Audit" : isHt ? "Odit Forensik" : "Forensic Audit Trail"), "History");
     }
 
     // 12. Super Admin System SRE Consoles (Health, Reliability/DLQ, Disaster Recovery)
-    if (userRole === "SUPER_ADMIN" || PermissionService.hasRoleModuleAccess(userRole, "health")) {
+    if (userRole === "SUPER_ADMIN") {
       addTab("health", t.navigation?.health || (isFr ? "Santé du Système" : isHt ? "Sante Sistèm" : "System Health"), "Activity");
     }
-    if (userRole === "SUPER_ADMIN" || PermissionService.hasRoleModuleAccess(userRole, "reliability")) {
+    if (userRole === "SUPER_ADMIN") {
       addTab("reliability", t.navigation?.reliability || (isFr ? "Résilience & DLQ" : isHt ? "Rezilyans & DLQ" : "Reliability & DLQ"), "Cpu");
     }
-    if (userRole === "SUPER_ADMIN" || PermissionService.hasRoleModuleAccess(userRole, "recovery")) {
+    if (userRole === "SUPER_ADMIN") {
       addTab("recovery", t.navigation?.recovery || (isFr ? "Restauration Catastrophe" : isHt ? "Restorasyon Katastwòf" : "Disaster Recovery"), "Database");
     }
 

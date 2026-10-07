@@ -143,8 +143,11 @@ export default function AppRouter() {
         <Route path="/platform" element={<SuperAdminRoute><DashboardShell initialTab="platform" /></SuperAdminRoute>} />
         <Route path="/platform/*" element={<SuperAdminRoute><DashboardShell initialTab="platform" /></SuperAdminRoute>} />
         <Route path="/super-admin" element={<SuperAdminRoute><DashboardShell initialTab="platform" /></SuperAdminRoute>} />
-        <Route path="/forensic" element={<BusinessRoute><DashboardShell initialTab="forensic" /></BusinessRoute>} />
-        <Route path="/system/forensic" element={<BusinessRoute><DashboardShell initialTab="forensic" /></BusinessRoute>} />
+        <Route path="/plans" element={<SuperAdminRoute><DashboardShell initialTab="plans" /></SuperAdminRoute>} />
+        <Route path="/licences" element={<SuperAdminRoute><DashboardShell initialTab="plans" /></SuperAdminRoute>} />
+        <Route path="/security" element={<SuperAdminRoute><DashboardShell initialTab="security" /></SuperAdminRoute>} />
+        <Route path="/forensic" element={<SuperAdminRoute><DashboardShell initialTab="forensic" /></SuperAdminRoute>} />
+        <Route path="/system/forensic" element={<SuperAdminRoute><DashboardShell initialTab="forensic" /></SuperAdminRoute>} />
         <Route path="/health" element={<SuperAdminRoute><DashboardShell initialTab="health" /></SuperAdminRoute>} />
         <Route path="/system-health" element={<SuperAdminRoute><DashboardShell initialTab="health" /></SuperAdminRoute>} />
         <Route path="/system/health" element={<SuperAdminRoute><DashboardShell initialTab="health" /></SuperAdminRoute>} />

@@ -252,7 +252,7 @@ export class EnterpriseIdentityOrchestrator {
         console.warn(`[Orchestrator] Returning cached snapshot due to timeout/fallback.`);
         return cached;
       }
-      const isSuperAdmin = user.email?.toLowerCase() === this.SUPER_ADMIN_EMAIL;
+      const isSuperAdmin = isSuperAdminEmail(user.email);
       const fallbackSnapshot: IdentitySnapshot = {
         user_uid: user.uid,
         email: user.email || "",
@@ -314,7 +314,7 @@ export class EnterpriseIdentityOrchestrator {
     try {
       // 1. PHASE 1: FULLY PARALLEL RESOLUTION (Profile + Employee + Owner Biz + Invitations)
       snapshot.orchestratorState = "IDENTITY_RESOLUTION";
-      const isSuperAdmin = user.email?.toLowerCase() === this.SUPER_ADMIN_EMAIL;
+      const isSuperAdmin = isSuperAdminEmail(user.email);
 
       const profilePromise = this.resolveUserProfile(user, correlationId).catch(err => {
         console.warn(`[Orchestrator][${correlationId}] User profile fetch warning:`, err);
@@ -434,13 +434,17 @@ export class EnterpriseIdentityOrchestrator {
 
       // 4. ROLE & PERMISSION RESOLUTION
       snapshot.orchestratorState = "ROLE_RESOLVED";
+      const isSuperUser = isSuperAdmin || isSuperAdminEmail(user.email) || userProfile?.role === "SUPER_ADMIN";
       const isActualOwner = snapshot.business?.ownerId === user.uid || snapshot.business?.owner_id === user.uid || (snapshot.business as any)?.ownerId === user.uid || (snapshot.business as any)?.owner_id === user.uid;
-      snapshot.role = isSuperAdmin ? "SUPER_ADMIN" : (isActualOwner ? "OWNER" : (employee?.role || userProfile?.role || "UNASSIGNED"));
+      
+      // CRITICAL INVARIANT: SuperAdmin platform sovereignty ALWAYS takes precedence over tenant ownership.
+      // A SuperAdmin who provisions or owns a tenant business remains SUPER_ADMIN.
+      snapshot.role = isSuperUser ? "SUPER_ADMIN" : (isActualOwner ? "OWNER" : (employee?.role || userProfile?.role || "UNASSIGNED"));
       
       const pendingRole = this.pendingRequestedRoles.get(user.uid);
       const cachedSnapshot = this.getCachedSnapshot(user.uid);
       const effectiveRequestedRole = pendingRole || cachedSnapshot?.requested_role || (userProfile as any)?.requested_role;
-      snapshot.requested_role = effectiveRequestedRole || (isActualOwner ? "OWNER" : (isSuperAdmin ? "UNASSIGNED" : snapshot.role));
+      snapshot.requested_role = effectiveRequestedRole || (isSuperUser ? "SUPER_ADMIN" : (isActualOwner ? "OWNER" : snapshot.role));
       
       if (!snapshot.permissions || snapshot.permissions.length === 0) {
         snapshot.permissions = await PermissionRepository.getRolePermissions(snapshot.role, snapshot.business?.id);
@@ -663,7 +667,7 @@ export class EnterpriseIdentityOrchestrator {
 
     // Genuine NOT_FOUND (exists === false confirmed by Firestore):
     // Auto-create base profile for newly registered users
-    const isSuperAdmin = user.email?.toLowerCase() === this.SUPER_ADMIN_EMAIL;
+    const isSuperAdmin = isSuperAdminEmail(user.email);
     const baseProfileData = cleanPayload({
       id: user.uid,
       email: user.email || "",

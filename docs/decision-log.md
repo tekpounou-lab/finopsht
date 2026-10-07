@@ -102,3 +102,32 @@
   5. Preserved the treasury cash pipeline in `CanonicalCashEngine`, ensuring actual cash outflows (e.g. 17,000 HTG for statutory remittances) continue to be recognized accurately under cash-basis accounting.
 - **Consequences**: Complete elimination of double-counting in subsequent periods. Profit vs. Net Cash Flow semantic separation is formally preserved. Accrual snapshots reflect true economic expenses without contamination from treasury or balance sheet settlement events.
 
+---
+
+## ADR-011: Phase 15.2R Independent Runtime Verification & Closure of DEF-15.1-01
+- **Date**: 2026-10-07
+- **Status**: Accepted (Verified with Limitations)
+- **Context**: Following remediation of DEF-15.1-01 in Phase 15.2, Phase 15.2R executed an independent forensic runtime verification to establish accounting invariants, SSOT alignment, and regression immunity across all financial and BI layers.
+- **Decision**: Formally recorded the Phase 15.2R verdict and test inventory:
+  1. **Accounting Invariants Formally Verified**:
+     - Canonical September payroll recognized at exactly 109,000 HTG (100,000 HTG gross + 9,000 HTG employer taxes).
+     - Net salary and statutory liability settlements (92,000 HTG salary + 12,000 HTG ONA + 5,000 HTG OFATMA = 109,000 HTG) produce exactly 0 HTG additional P&L expense and 109,000 HTG Treasury cash outflow.
+     - Subsequent period isolation verified: October-only statutory settlements yield 0 HTG P&L expense.
+     - Mixed-period reconciliation verified: September through October cumulative P&L expense remains exactly 109,000 HTG without double counting.
+     - Zero difference between payroll subledger and GL payroll expense.
+     - Cross-BI consistency verified across `AnalyticsEngine`, `selectSimplifiedMetrics`, and `selectExpertMetrics`.
+     - Non-payroll `TRANSFER` and `EXCHANGE` regression suites verified.
+  2. **Test Scope & Documentation Reconciliation**:
+     - Reconciled Phase 15 regression test suites totaling 70/70 passing tests:
+       - `Phase151CashReconciliationGate.test.ts`: 13 tests
+       - `Phase152PayrollLiabilityRemediation.test.ts`: 21 tests
+       - `Phase15FinancialReconciliationAudit.test.ts`: 15 tests
+       - `Phase152RIndependentRuntimeVerification.test.ts`: 21 tests
+     - Clarified that an earlier report swapped test counts between `Phase152PayrollLiabilityRemediation.test.ts` (21 tests) and `Phase15FinancialReconciliationAudit.test.ts` (15 tests); the total suite count remains strictly 70/70.
+  3. **Evidence Classification & Limitations**:
+     - Accounting logic, P&L neutrality, cash outflow, and BI consistency are certified at `PROVEN_UNIT / PROVEN_INTEGRATION` level.
+     - Real Firestore production persistence, Firestore security-rule enforcement, authenticated cross-tenant DB isolation, and live websocket listeners remain classified as `LIMITED / NOT SUFFICIENTLY DEMONSTRATED`.
+     - Physical network socket drops and unknown-commit recovery remain `NOT_TESTED`.
+     - Phase 15.2R is formally closed as `VERIFIED WITH LIMITATIONS`. DEF-15.1-01 is CLOSED / REMEDIATED. No further changes to `AnalyticsEngine` are justified without an evidence-focused live runtime certification phase.
+
+

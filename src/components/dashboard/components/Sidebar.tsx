@@ -112,7 +112,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Administration & Sécurité",
       items: [
         { id: "settings", label: "Administration", icon: Settings, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
-        { id: "forensic", label: "Audit & Sécurité", icon: ShieldCheck, roles: ["OWNER", "ADMIN", "SUPER_ADMIN"] },
+        { id: "forensic", label: "Audit & Sécurité", icon: ShieldCheck, roles: ["SUPER_ADMIN"] },
       ],
     },
     {

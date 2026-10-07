@@ -44,22 +44,6 @@ export function normalizeTab(tab?: string): string {
 }
 
 export function useNavigation(currentRole: Role, initialTab?: string) {
-  const defaultTab = useMemo(() => {
-    if (initialTab) return normalizeTab(initialTab);
-    const resolved = resolveDefaultTabForRole(currentRole);
-    return normalizeTab(resolved || "dashboard");
-  }, [currentRole, initialTab]);
-
-  const [activeTab, setActiveTabState] = useState<string>(defaultTab);
-  const [badgeCounts, setBadgeCounts] = useState<NavigationBadgeCounts>({});
-
-  // Sync if initialTab or currentRole changes
-  useEffect(() => {
-    if (initialTab) {
-      setActiveTabState(normalizeTab(initialTab));
-    }
-  }, [initialTab]);
-
   const authorizedTabs = useMemo(() => {
     const rawAuthorized = getAuthorizedTabsForRole(currentRole) as string[];
     // Expand authorized tabs with both canonical and aliased forms
@@ -77,6 +61,35 @@ export function useNavigation(currentRole: Role, initialTab?: string) {
     });
     return Array.from(expanded);
   }, [currentRole]);
+
+  const defaultTab = useMemo(() => {
+    const fallback = normalizeTab(resolveDefaultTabForRole(currentRole) || "dashboard");
+    if (initialTab) {
+      const normalized = normalizeTab(initialTab);
+      if (authorizedTabs.includes(initialTab) || authorizedTabs.includes(normalized)) {
+        return normalized;
+      }
+      return fallback;
+    }
+    return fallback;
+  }, [currentRole, initialTab, authorizedTabs]);
+
+  const [activeTab, setActiveTabState] = useState<string>(defaultTab);
+  const [badgeCounts, setBadgeCounts] = useState<NavigationBadgeCounts>({});
+
+  // Sync if initialTab or currentRole changes with strict authorization gate
+  useEffect(() => {
+    if (initialTab) {
+      const normalized = normalizeTab(initialTab);
+      if (authorizedTabs.includes(initialTab) || authorizedTabs.includes(normalized)) {
+        setActiveTabState(normalized);
+      } else {
+        const fallback = normalizeTab(resolveDefaultTabForRole(currentRole) || "dashboard");
+        console.warn(`[Navigation] Initial tab "${initialTab}" is not authorized for role "${currentRole}". Redirecting to fallback "${fallback}".`);
+        setActiveTabState(fallback);
+      }
+    }
+  }, [initialTab, currentRole, authorizedTabs]);
 
   const isTabAuthorized = useCallback(
     (tab: string) => {

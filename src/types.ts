@@ -11,7 +11,7 @@ import type {
   EmployeeDepartmentLink 
 } from "./types/organization";
 
-export type Role = "OWNER" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "SUPER_ADMIN" | "UNASSIGNED";
+export type Role = "OWNER" | "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "SUPER_ADMIN" | "UNASSIGNED";
 export type UserRole = Role;
 
 export type { 
