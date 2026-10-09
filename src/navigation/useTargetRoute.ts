@@ -52,7 +52,7 @@ export function resolveTargetRoute(params: {
     flowState !== "BUSINESS_PENDING" && 
     flowState !== "UNREGISTERED" && 
     flowState !== "OWNER_ONBOARDING" && 
-    (isSuperAdminEmail(user?.email) || (role as string) === "SUPER_ADMIN" || (identity?.role as string) === "SUPER_ADMIN")
+    isSuperAdminEmail(user?.email)
   ) {
     return {
       targetPath: "/platform",

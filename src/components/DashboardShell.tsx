@@ -54,7 +54,7 @@ export interface DashboardShellProps {
 
 export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProps = {}) {
   const { user: authUser, identity, dbEmployee, dbUser, role: authRole, logout } = useAuth();
-  const currentRole: Role = (authRole as Role) || "OWNER";
+  const currentRole: Role = (authRole as Role) || (identity?.role as Role) || "EMPLOYEE";
 
   // Resolve full display name from SSOT identity context
   const resolvedUserName = useMemo(() => {

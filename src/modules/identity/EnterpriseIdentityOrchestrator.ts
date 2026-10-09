@@ -434,12 +434,14 @@ export class EnterpriseIdentityOrchestrator {
 
       // 4. ROLE & PERMISSION RESOLUTION
       snapshot.orchestratorState = "ROLE_RESOLVED";
-      const isSuperUser = isSuperAdmin || isSuperAdminEmail(user.email) || userProfile?.role === "SUPER_ADMIN";
+      const isSuperUser = isSuperAdmin || isSuperAdminEmail(user.email);
       const isActualOwner = snapshot.business?.ownerId === user.uid || snapshot.business?.owner_id === user.uid || (snapshot.business as any)?.ownerId === user.uid || (snapshot.business as any)?.owner_id === user.uid;
       
       // CRITICAL INVARIANT: SuperAdmin platform sovereignty ALWAYS takes precedence over tenant ownership.
       // A SuperAdmin who provisions or owns a tenant business remains SUPER_ADMIN.
-      snapshot.role = isSuperUser ? "SUPER_ADMIN" : (isActualOwner ? "OWNER" : (employee?.role || userProfile?.role || "UNASSIGNED"));
+      // A client-side userProfile document can NEVER confer SUPER_ADMIN authority.
+      const safeProfileRole = userProfile?.role === "SUPER_ADMIN" ? "UNASSIGNED" : userProfile?.role;
+      snapshot.role = isSuperUser ? "SUPER_ADMIN" : (isActualOwner ? "OWNER" : (employee?.role || safeProfileRole || "UNASSIGNED"));
       
       const pendingRole = this.pendingRequestedRoles.get(user.uid);
       const cachedSnapshot = this.getCachedSnapshot(user.uid);
@@ -999,7 +1001,7 @@ export class EnterpriseIdentityOrchestrator {
     });
 
     // 0. Super Admin override - Super Admins are always COMPLETED
-    if (profile?.role === "SUPER_ADMIN" || isSuperAdminEmail((profile as any)?.email)) {
+    if (isSuperAdminEmail((profile as any)?.email)) {
       return "COMPLETED";
     }
 
@@ -1047,7 +1049,7 @@ export class EnterpriseIdentityOrchestrator {
   ): IdentityStatus {
     const accStatus = profile?.accountStatus || (profile as any)?.account_status;
 
-    if (profile?.role === "SUPER_ADMIN" || isSuperAdminEmail((profile as any)?.email)) {
+    if (isSuperAdminEmail((profile as any)?.email)) {
       return "SUPER_ADMIN";
     }
 

@@ -96,6 +96,16 @@ describe("AccessResolver Multi-Tenant & Security Tests", () => {
       const resourceA: ProtectedResource = { businessId: "biz_tenant_A" };
       expect(AccessResolver.canAccessResource(noBizActor, resourceA)).toBe(false);
     });
+
+    it("ADV-17B-04: strictly denies access when resource has missing or empty businessId (fail-closed)", () => {
+      expect(AccessResolver.canAccessResource(ownerTenantA, { employeeId: "emp_target_A" })).toBe(false);
+      expect(AccessResolver.canAccessResource(ownerTenantA, {})).toBe(false);
+      expect(AccessResolver.canAccessResource(ownerTenantA, null as any)).toBe(false);
+      expect(AccessResolver.canAccessResource(ownerTenantA, undefined as any)).toBe(false);
+      expect(AccessResolver.canAccessResource(ownerTenantA, { businessId: "" })).toBe(false);
+      expect(AccessResolver.canAccessResource(managerTenantA, { branchId: "branch_nord_A" })).toBe(false);
+      expect(AccessResolver.canAccessResource(employeeTenantA, { employeeId: "emp_john_A" })).toBe(false);
+    });
   });
 
   describe("canMutateEmployee Isolation & Hierarchy", () => {
@@ -115,6 +125,17 @@ describe("AccessResolver Multi-Tenant & Security Tests", () => {
     it("strictly prevents OWNER from mutating a SUPER_ADMIN", () => {
       expect(AccessResolver.canMutateEmployee(ownerTenantA, superAdminTarget)).toBe(false);
     });
+
+    it("ADV-17B-04: strictly prevents mutating employee when target lacks businessId (fail-closed)", () => {
+      const unscopedEmployee: any = {
+        id: "emp_unscoped",
+        name: "No Biz Employee",
+        role: "EMPLOYEE"
+      };
+      expect(AccessResolver.canMutateEmployee(ownerTenantA, unscopedEmployee)).toBe(false);
+      expect(AccessResolver.canMutateEmployee(ownerTenantA, null as any)).toBe(false);
+      expect(AccessResolver.canMutateEmployee(ownerTenantA, undefined as any)).toBe(false);
+    });
   });
 
   describe("canManagePayrollFor Isolation", () => {
@@ -129,6 +150,17 @@ describe("AccessResolver Multi-Tenant & Security Tests", () => {
 
     it("strictly denies OWNER from managing payroll for employee in another tenant", () => {
       expect(AccessResolver.canManagePayrollFor(ownerTenantA, sampleEmployeeB)).toBe(false);
+    });
+
+    it("ADV-17B-04: strictly denies managing payroll when target lacks businessId (fail-closed)", () => {
+      const unscopedEmployee: any = {
+        id: "emp_unscoped",
+        name: "No Biz Employee",
+        role: "EMPLOYEE"
+      };
+      expect(AccessResolver.canManagePayrollFor(ownerTenantA, unscopedEmployee)).toBe(false);
+      expect(AccessResolver.canManagePayrollFor(ownerTenantA, null as any)).toBe(false);
+      expect(AccessResolver.canManagePayrollFor(ownerTenantA, undefined as any)).toBe(false);
     });
   });
 });

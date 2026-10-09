@@ -61,7 +61,7 @@ export class AICFOChatService {
       userId: userContext?.userId || "usr_current",
       userName: userContext?.userName || "Opérateur FinOps",
       userEmail: userContext?.userEmail || "",
-      role: userContext?.role || "OWNER",
+      role: userContext?.role || "EMPLOYEE",
       businessId: userContext?.businessId || business.id || "biz_demo",
       branchId: userContext?.branchId || branch?.id || null,
       departmentId: userContext?.departmentId || null

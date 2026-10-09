@@ -33,7 +33,7 @@ export const ConnectedBusinessIntelligence: React.FC<ConnectedBusinessIntelligen
     isLoading 
   } = useBusinessContext();
   
-  const currentRole = props.currentRole || (role as Role) || "OWNER";
+  const currentRole = props.currentRole || (role as Role) || "EMPLOYEE";
   const activeBusiness = business || props.currentBusiness || ({
     id: props.current_business_id || "BIZ_MAIN",
     name: "Entreprise Principale",

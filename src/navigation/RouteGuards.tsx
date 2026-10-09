@@ -104,9 +104,9 @@ export const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
   }
 
   const isSuper = 
-    role === "SUPER_ADMIN" || 
-    flowState === "SUPER_ADMIN_ACTIVE" || 
-    isSuperAdminEmail(user.email);
+    isSuperAdminEmail(user.email) || 
+    (role === "SUPER_ADMIN" && isSuperAdminEmail(user.email)) || 
+    (flowState === "SUPER_ADMIN_ACTIVE" && isSuperAdminEmail(user.email));
 
   if (!isSuper) {
     return <AccessDenied requiredRole="SUPER_ADMIN" message="Ce module est strictement réservé à la supervision plateforme Super Admin." />;

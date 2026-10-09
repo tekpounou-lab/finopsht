@@ -185,4 +185,116 @@ describe("PermissionService Unit Tests", () => {
       expect(PermissionService.can("payroll.approve")).toBe(true);
     });
   });
+
+  describe("Phase 18: ADV-17B Hardening & Controlled Authorization", () => {
+    it("ADV-17B-01: strictly denies unknown capabilities to ALL non-SUPER_ADMIN roles (fail-closed)", () => {
+      const nonSuperRoles = ["OWNER", "ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"];
+      const unknownCapabilities = [
+        "unknown_capability",
+        "manage_cross_tenant_data",
+        "future_global_capability",
+        "random_new_permission",
+        "system_root_access",
+        "arbitrary_custom_action"
+      ];
+
+      nonSuperRoles.forEach((role) => {
+        PermissionService.init(
+          role,
+          ["all", "*", "unknown_capability", "system_root_access"], // Even if client claims wildcard or injected permission!
+          { attendance: true, payroll: true, accounting: true, hr: true, bi: true, pos: true, crm: true, aiCfo: true },
+          "ENTERPRISE",
+          "ACTIVE",
+          "biz_tenant_01"
+        );
+
+        unknownCapabilities.forEach((cap) => {
+          expect(PermissionService.can(cap)).toBe(false);
+        });
+      });
+    });
+
+    it("ADV-17B-01: allows registered platform capabilities strictly to SUPER_ADMIN", () => {
+      PermissionService.init(
+        "SUPER_ADMIN",
+        [],
+        { attendance: true, payroll: true, accounting: true, hr: true, bi: true, pos: true, crm: true, aiCfo: true },
+        "ENTERPRISE",
+        "ACTIVE",
+        null
+      );
+
+      expect(PermissionService.can("approve_business")).toBe(true);
+      expect(PermissionService.can("manage_licensing")).toBe(true);
+      expect(PermissionService.can("manage_system_config")).toBe(true);
+    });
+
+    it("ADV-17B-02: enforces subscription barrier on OWNER - STARTER tier denies paid modules & capabilities", () => {
+      PermissionService.init(
+        "OWNER",
+        ["read_bi", "use_aicfo", "view_ledger"],
+        { attendance: true, payroll: true, accounting: true, hr: true, bi: true, pos: false, crm: false, aiCfo: true },
+        "STARTER",
+        "ACTIVE",
+        "biz_tenant_01"
+      );
+
+      // Starter tier must deny BI, AICFO, and Accounting/Ledger modules even for OWNER
+      expect(PermissionService.hasModule("bi")).toBe(false);
+      expect(PermissionService.hasModule("aicfo")).toBe(false);
+      expect(PermissionService.hasModule("accounting")).toBe(false);
+      expect(PermissionService.hasModule("ledger")).toBe(false);
+
+      // Fine-grained capabilities must also fail closed
+      expect(PermissionService.can("bi.read")).toBe(false);
+      expect(PermissionService.can("read_bi")).toBe(false);
+      expect(PermissionService.can("aicfo.use")).toBe(false);
+      expect(PermissionService.can("use_aicfo")).toBe(false);
+      expect(PermissionService.can("accounting.view")).toBe(false);
+      expect(PermissionService.can("ledger.view")).toBe(false);
+      expect(PermissionService.can("view_ledger")).toBe(false);
+
+      // Legitimate starter modules must still be allowed
+      expect(PermissionService.hasModule("payroll")).toBe(true);
+      expect(PermissionService.can("payroll.approve")).toBe(true);
+    });
+
+    it("ADV-17B-02: allows paid modules and capabilities to OWNER on eligible plans with enabled features", () => {
+      PermissionService.init(
+        "OWNER",
+        [],
+        { attendance: true, payroll: true, accounting: true, hr: true, bi: true, pos: true, crm: true, aiCfo: true },
+        "ENTERPRISE",
+        "ACTIVE",
+        "biz_tenant_01"
+      );
+
+      expect(PermissionService.hasModule("bi")).toBe(true);
+      expect(PermissionService.hasModule("aicfo")).toBe(true);
+      expect(PermissionService.hasModule("accounting")).toBe(true);
+
+      expect(PermissionService.can("bi.read")).toBe(true);
+      expect(PermissionService.can("aicfo.use")).toBe(true);
+      expect(PermissionService.can("accounting.view")).toBe(true);
+    });
+
+    it("ADV-17B-02: denies module when feature flag is explicitly false, even on ENTERPRISE tier for OWNER", () => {
+      PermissionService.init(
+        "OWNER",
+        [],
+        { attendance: true, payroll: true, accounting: false, hr: true, bi: false, pos: false, crm: false, aiCfo: false },
+        "ENTERPRISE",
+        "ACTIVE",
+        "biz_tenant_01"
+      );
+
+      expect(PermissionService.hasModule("bi")).toBe(false);
+      expect(PermissionService.hasModule("aicfo")).toBe(false);
+      expect(PermissionService.hasModule("accounting")).toBe(false);
+
+      expect(PermissionService.can("bi.read")).toBe(false);
+      expect(PermissionService.can("aicfo.use")).toBe(false);
+      expect(PermissionService.can("accounting.view")).toBe(false);
+    });
+  });
 });

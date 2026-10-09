@@ -39,21 +39,22 @@ export const AccessResolver = {
    * - SUPERVISOR has departmental/branch access within their tenant.
    * - EMPLOYEE can only access resources belonging directly to them (employeeId matches actor.id).
    */
-  canAccessResource(actor: ActorIdentity, resource: ProtectedResource): boolean {
+  canAccessResource(actor: ActorIdentity, resource?: ProtectedResource | null): boolean {
     // 1. Super Admin possesses universal platform bypass
     if (actor.role === "SUPER_ADMIN") {
       return true;
     }
 
-    // 2. Strict Tenant Isolation Barrier for all tenant-scoped roles (including OWNER)
-    const actorBiz = actor.businessId || actor.business_id;
-    const resourceBiz = resource.businessId || resource.business_id;
-    
-    // Cross-tenant access is strictly prohibited for non-SUPER_ADMIN
-    if (resourceBiz && (!actorBiz || actorBiz !== resourceBiz)) {
+    // 2. Strict Fail-Closed Tenant Isolation:
+    // Resource must exist and both actor and resource must possess a valid, non-empty matching businessId
+    if (!resource) {
       return false;
     }
-    if (actorBiz && resourceBiz && actorBiz !== resourceBiz) {
+
+    const actorBiz = actor.businessId || actor.business_id;
+    const resourceBiz = resource.businessId || resource.business_id;
+
+    if (!actorBiz || !resourceBiz || actorBiz !== resourceBiz) {
       return false;
     }
 
@@ -97,18 +98,19 @@ export const AccessResolver = {
    *   3. Do not hold MANAGER role (managers cannot mutate other managers).
    * - SUPERVISOR & EMPLOYEE cannot mutate any employee documents.
    */
-  canMutateEmployee(actor: ActorIdentity, target: Employee | ActorIdentity): boolean {
+  canMutateEmployee(actor: ActorIdentity, target?: Employee | ActorIdentity | null): boolean {
     if (actor.role === "SUPER_ADMIN") {
       return true;
     }
 
-    // Strict Tenant Isolation: Never mutate employees across tenant boundaries
-    const actorBiz = actor.businessId || actor.business_id;
-    const targetBiz = (target as any).businessId || (target as any).business_id;
-    if (targetBiz && (!actorBiz || actorBiz !== targetBiz)) {
+    if (!target) {
       return false;
     }
-    if (actorBiz && targetBiz && actorBiz !== targetBiz) {
+
+    // Strict Fail-Closed Tenant Isolation: Both actor and target must possess a valid matching businessId
+    const actorBiz = actor.businessId || actor.business_id;
+    const targetBiz = (target as any).businessId || (target as any).business_id;
+    if (!actorBiz || !targetBiz || actorBiz !== targetBiz) {
       return false;
     }
 
@@ -140,18 +142,19 @@ export const AccessResolver = {
   /**
    * Evaluate if an actor can prepare or edit payrolls for a target employee.
    */
-  canManagePayrollFor(actor: ActorIdentity, target: Employee | ActorIdentity): boolean {
+  canManagePayrollFor(actor: ActorIdentity, target?: Employee | ActorIdentity | null): boolean {
     if (actor.role === "SUPER_ADMIN") {
       return true;
     }
 
-    // Strict Tenant Isolation Barrier
-    const actorBiz = actor.businessId || actor.business_id;
-    const targetBiz = (target as any).businessId || (target as any).business_id;
-    if (targetBiz && (!actorBiz || actorBiz !== targetBiz)) {
+    if (!target) {
       return false;
     }
-    if (actorBiz && targetBiz && actorBiz !== targetBiz) {
+
+    // Strict Fail-Closed Tenant Isolation: Both actor and target must possess a valid matching businessId
+    const actorBiz = actor.businessId || actor.business_id;
+    const targetBiz = (target as any).businessId || (target as any).business_id;
+    if (!actorBiz || !targetBiz || actorBiz !== targetBiz) {
       return false;
     }
 
@@ -165,6 +168,7 @@ export const AccessResolver = {
 
     if (actor.role === "MANAGER") {
       // Local branch manager restriction
+      if (!actor.branchId || !target.branchId) return false;
       return actor.branchId === target.branchId;
     }
 

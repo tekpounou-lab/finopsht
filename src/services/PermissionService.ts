@@ -55,6 +55,145 @@ export const PLATFORM_CAPABILITIES = new Set([
   "security.platform_view"
 ]);
 
+/**
+ * Explicit canonical allowlist of legitimate ERP tenant capabilities.
+ * Any capability NOT present in this set (or in PLATFORM_CAPABILITIES for SUPER_ADMIN)
+ * MUST fail closed (DENY) for all non-SUPER_ADMIN roles.
+ */
+export const TENANT_ERP_CAPABILITIES = new Set([
+  // Staff & Employees
+  "view_employees",
+  "manage_employees",
+  "invite_employees",
+  "delete_employees",
+  "employees.suspend",
+  "employee.suspend",
+  "employees.reactivate",
+  "employee.reactivate",
+  "employee.create",
+  "employee.update",
+  "employee.import",
+  "employee.delete",
+  "employee.view",
+  "employee.read",
+  "staff.view",
+  "staff.read",
+
+  // Structure / Branches / Departments
+  "manage_branches",
+  "create_branch",
+  "branch.create",
+  "branch.update",
+  "manage_departments",
+  "create_department",
+  "department.create",
+  "department.update",
+  "manage_tenant_profile",
+
+  // Payroll
+  "view_payroll",
+  "manage_payroll",
+  "lock_payroll",
+  "validate_payroll",
+  "payroll.view",
+  "payroll.read",
+  "payroll.calculate",
+  "payroll.approve",
+  "payroll.lock",
+
+  // Attendance
+  "view_attendance",
+  "manage_attendance",
+  "log_attendance",
+  "override_attendance",
+  "attendance.view",
+  "attendance.read",
+  "attendance.log",
+  "attendance.override",
+  "attendance.approve",
+
+  // Leaves & Planning
+  "view_leaves",
+  "request_leaves",
+  "manage_leaves",
+  "leave.request",
+  "leave.create",
+  "leaves.request",
+  "leave.manage",
+  "leaves.manage",
+  "view_planning",
+  "manage_planning",
+  "planning.read",
+  "planning.view",
+  "planning.write",
+  "planning.manage",
+
+  // Accounting & Ledger
+  "view_ledger",
+  "write_ledger",
+  "view_accounting",
+  "accounting.view",
+  "accounting.read",
+  "ledger.view",
+  "ledger.read",
+  "ledger.write",
+  "journal.post",
+
+  // CRM, Leads, Invoices
+  "manage_crm",
+  "crm.view",
+  "crm.read",
+  "crm.write",
+  "leads.view",
+  "leads.read",
+  "leads.write",
+  "prospects.view",
+  "prospects.read",
+  "prospects.write",
+  "proformas.view",
+  "proformas.read",
+  "proformas.write",
+  "manage_invoices",
+  "invoices.view",
+  "invoices.read",
+  "invoices.write",
+  "invoice_template.view",
+  "invoice_template.write",
+
+  // Documents & Employee Space
+  "view_documents",
+  "manage_documents",
+  "documents.read",
+  "documents.write",
+  "documents.delete",
+  "view_employee_space",
+  "employeespace.view",
+
+  // Settings & Administration within Tenant
+  "manage_settings",
+  "business.settings",
+  "settings.write",
+  "manage_tenant_settings",
+  "manage_tenant_users",
+  "view_tenant_financials",
+
+  // BI & AI Assistant (Subject to Subscription Entitlements)
+  "read_bi",
+  "bi.read",
+  "use_aicfo",
+  "aicfo.use",
+
+  // Observability & Audit within Tenant
+  "observability.view",
+  "observability.read",
+  "view_audit_logs",
+  "security.view",
+  "audit.read",
+  "view_reports",
+  "export_reports",
+  "view_dashboard"
+]);
+
 export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, boolean>> = {
   SUPER_ADMIN: {
     platform: true,
@@ -319,6 +458,7 @@ class PermissionServiceClass {
    * Maps fine-grained capability queries (e.g. "payroll.approve") to role permissions.
    */
   public can(action: string): boolean {
+    if (!action || typeof action !== "string") return false;
     const actionLower = action.toLowerCase();
     
     // Forensic log modification is strictly prohibited for ALL roles (including SuperAdmin)
@@ -345,17 +485,10 @@ class PermissionServiceClass {
       return true;
     }
 
-    // Business OWNER possesses full sovereign control over legitimate ERP business operations
-    // strictly within their own enterprise (Never platform, cross-tenant, or global infrastructure capabilities)
-    if (this.activeRole === "OWNER") {
-      this.capabilityCache[actionLower] = true;
-      return true;
-    }
-
-    // Wildcard permissions bypass (tenant operational scope only; never platform capabilities)
-    if (this.permissions.includes("all") || this.permissions.includes("*")) {
-      this.capabilityCache[actionLower] = true;
-      return true;
+    // STRICT INVARIANT ADV-17B-01: Deny-by-default for all non-SUPER_ADMIN on ANY unknown capability
+    if (!TENANT_ERP_CAPABILITIES.has(actionLower)) {
+      this.capabilityCache[actionLower] = false;
+      return false;
     }
 
     // Read-only state checks for expired/suspended subscriptions
@@ -366,6 +499,50 @@ class PermissionServiceClass {
         this.capabilityCache[actionLower] = false;
         return false;
       }
+    }
+
+    // STRICT INVARIANT ADV-17B-02: Enforce module subscription barriers before permitting actions
+    if (actionLower === "bi.read" || actionLower === "read_bi") {
+      if (!this.hasModule("bi")) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+    if (actionLower === "aicfo.use" || actionLower === "use_aicfo") {
+      if (!this.hasModule("aicfo")) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+    if (
+      actionLower === "accounting.view" ||
+      actionLower === "accounting.read" ||
+      actionLower === "view_accounting"
+    ) {
+      if (!this.hasModule("accounting")) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+    if (
+      actionLower === "ledger.view" ||
+      actionLower === "ledger.read" ||
+      actionLower === "ledger.write" ||
+      actionLower === "journal.post" ||
+      actionLower === "view_ledger" ||
+      actionLower === "write_ledger"
+    ) {
+      if (!this.hasModule("ledger") || !this.hasModule("accounting")) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+
+    // Business OWNER possesses authorized access to legitimate tenant ERP capabilities
+    // provided module and subscription checks passed above
+    if (this.activeRole === "OWNER") {
+      this.capabilityCache[actionLower] = true;
+      return true;
     }
 
     let result = false;
@@ -534,6 +711,7 @@ class PermissionServiceClass {
    * Checks if a high-fidelity workspace module is activated for the tenant, factoring in Subscription barriers.
    */
   public hasModule(moduleName: string): boolean {
+    if (!moduleName) return false;
     const modLower = moduleName.toLowerCase();
     
     // System & Platform modules are reserved exclusively for SUPER_ADMIN
@@ -546,20 +724,20 @@ class PermissionServiceClass {
       return true;
     }
 
-    // Business OWNER sovereign access to legitimate tenant modules
-    if (this.activeRole === "OWNER") {
-      return true;
-    }
-
-    const isFeatureEnabledInMatrix = !!this.features[modLower as keyof FeatureMatrix];
-    if (!isFeatureEnabledInMatrix) {
-      return false;
-    }
-
-    // Enforce subscription modules access limits
+    // STRICT INVARIANT ADV-17B-02: Enforce subscription modules access limits for all tenant roles (including OWNER)
     if (this.subscriptionPlan === "STARTER") {
-      // Starter Plan is restricted from AI CFO, Business Intelligence (Executive BI), and advanced ledger systems
-      if (["aicfo", "bi", "accounting"].includes(modLower)) {
+      // Starter Plan is restricted from AI CFO, Business Intelligence (Executive BI), and advanced ledger/accounting systems
+      if (["aicfo", "bi", "accounting", "ledger"].includes(modLower)) {
+        return false;
+      }
+    }
+
+    // STRICT INVARIANT ADV-17B-02: Feature matrix flags apply to all tenant roles (including OWNER)
+    if (this.features && Object.keys(this.features).length > 0) {
+      const featVal = this.features[modLower as keyof FeatureMatrix] ?? 
+        (modLower === "aicfo" ? (this.features as any).aiCfo : undefined) ??
+        (modLower === "ledger" ? this.features.accounting : undefined);
+      if (featVal === false) {
         return false;
       }
     }
@@ -609,31 +787,33 @@ class PermissionServiceClass {
       return false;
     }
 
-    // 3. Business OWNER possesses sovereign control over business modules of their enterprise
-    if (effectiveRole === "OWNER") return true;
-
-    // 4. Global feature availability check (must be active for tenant)
-    if (this.features && Object.keys(this.features).length > 0) {
-      const isFeatureSet = this.features[modLower as keyof FeatureMatrix];
-      if (isFeatureSet === false) {
-        return false;
-      }
-    }
-
-    // 5. Subscription plan restrictions (e.g. Starter tier cannot access AI CFO / BI / Accounting)
+    // 3. STRICT INVARIANT ADV-17B-02: Subscription plan restrictions apply to ALL tenant roles (including OWNER)
     if (this.subscriptionPlan === "STARTER") {
-      if (["aicfo", "bi", "accounting"].includes(modLower)) {
+      if (["aicfo", "bi", "accounting", "ledger"].includes(modLower)) {
         return false;
       }
     }
 
-    // 6. Explicit Admin-defined Matrix rule (Highest authority within tenant)
+    // 4. STRICT INVARIANT ADV-17B-02: Global feature availability check (must be active for tenant)
+    if (this.features && Object.keys(this.features).length > 0) {
+      const featVal = this.features[modLower as keyof FeatureMatrix] ?? 
+        (modLower === "aicfo" ? (this.features as any).aiCfo : undefined) ??
+        (modLower === "ledger" ? this.features.accounting : undefined);
+      if (featVal === false) {
+        return false;
+      }
+    }
+
+    // 5. Explicit Admin-defined Matrix rule (Highest authority within tenant)
     if (this.roleModuleMatrix && this.roleModuleMatrix[effectiveRole]) {
       const explicitSetting = this.roleModuleMatrix[effectiveRole][modLower];
       if (explicitSetting !== undefined) {
         return Boolean(explicitSetting);
       }
     }
+
+    // 6. Business OWNER possesses sovereign control over permitted business modules of their enterprise
+    if (effectiveRole === "OWNER") return true;
 
     // 7. Canonical ERP Role Defaults
     const defaultAllowedRoles: Record<string, string[]> = {

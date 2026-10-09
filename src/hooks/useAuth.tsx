@@ -75,7 +75,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const onboardingStatus = identity.onboardingStatus;
       const bizStatus = identity.business?.status;
       
-      const isSuperUser = role === "SUPER_ADMIN" || isSuperAdminEmail(auth.currentUser.email);
+      const isSuperUser = isSuperAdminEmail(auth.currentUser.email) || (role === "SUPER_ADMIN" && isSuperAdminEmail(auth.currentUser.email));
 
       const bStatus = (bizStatus as string) || "";
       const oStatus = (onboardingStatus as string) || "";

@@ -30,7 +30,7 @@ export default function AICFOAnalysisSheet({ isOpen, onClose, transactionsCount,
       userId: identity.user_uid || identity.employee?.id || "usr_sheet",
       userName: identity.employee?.name || identity.displayName || "Opérateur FinOps",
       userEmail: identity.email || "",
-      role: identity.role || "OWNER",
+      role: identity.role || "EMPLOYEE",
       businessId: current_business_id,
       branchId: identity.employee?.branchId || null,
       departmentId: identity.employee?.departmentId || null

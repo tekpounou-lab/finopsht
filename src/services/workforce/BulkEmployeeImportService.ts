@@ -869,7 +869,7 @@ export class BulkEmployeeImportService {
           importedRows: createdEmployees.length,
           createdBranches: plan.branchesToCreate.length,
           createdDepartments: plan.departmentsToCreate.length,
-          triggeredBy: actor?.role || "OWNER"
+          triggeredBy: actor?.role || "UNASSIGNED"
         });
       } catch (orchErr) {
         console.warn("[BulkEmployeeImportService] Orchestrator notification warning:", orchErr);

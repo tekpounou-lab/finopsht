@@ -90,7 +90,7 @@ export const ConnectedOrganizationStructure: React.FC<ConnectedOrganizationStruc
     updatedAt: new Date(),
   } as Business;
 
-  const effectiveRole: Role = propsRole || (authRole as Role) || "OWNER";
+  const effectiveRole: Role = propsRole || (authRole as Role) || "EMPLOYEE";
   const effectiveUser = propsUser || { name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" };
 
   return (

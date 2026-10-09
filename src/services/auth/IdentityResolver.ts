@@ -96,7 +96,8 @@ export const IdentityResolver = {
           const empSnap = await getDoc(empRef);
           if (empSnap.exists()) {
             const empData = empSnap.data();
-            const role = empData.role || userData.role || "EMPLOYEE";
+            const rawRole = empData.role || userData.role || "EMPLOYEE";
+            const role = rawRole === "SUPER_ADMIN" && !isSuperAdminEmail(cleanEmail) ? "EMPLOYEE" : rawRole;
             const businessId = empData.business_id || userData.business_id || "";
             const permissions = await PermissionRepository.getRolePermissions(role, businessId);
             return {
@@ -112,7 +113,8 @@ export const IdentityResolver = {
         }
 
         // If no employee record could be fetched, fall back to profile details (e.g. newly registered owner)
-        const role = userData.role || "EMPLOYEE";
+        const rawRole = userData.role || "EMPLOYEE";
+        const role = rawRole === "SUPER_ADMIN" && !isSuperAdminEmail(cleanEmail) ? "EMPLOYEE" : rawRole;
         const businessId = userData.business_id || "";
         const permissions = await PermissionRepository.getRolePermissions(role, businessId);
         return {

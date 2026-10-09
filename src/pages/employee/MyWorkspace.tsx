@@ -197,7 +197,7 @@ export function MyWorkspace({
       id: identityEmpId || curUid || employee?.id || "emp_owner_self",
       name: identity?.displayName || identity?.userProfile?.name || curEmail?.split("@")[0] || employee?.name || "Propriétaire",
       email: curEmail || employee?.email || "collaborateur@finops.erp",
-      role: (identity?.role || employee?.role || "OWNER") as Role,
+      role: (identity?.role || employee?.role || "EMPLOYEE") as Role,
       position: (identity?.role || employee?.role) === "OWNER" ? "Propriétaire / Direction Générale" : "Membre de la Direction",
       departmentId: employee?.departmentId || "dept_exec",
       branchId: employee?.branchId || fallbackBizId,

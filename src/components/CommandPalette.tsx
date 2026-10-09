@@ -145,7 +145,7 @@ export default function CommandPalette({
       userId: identitySnap.user_uid || identitySnap.employee?.id || "usr_cmd",
       userName: identitySnap.employee?.name || identitySnap.displayName || "Opérateur FinOps",
       userEmail: identitySnap.email || "",
-      role: identitySnap.role || "OWNER",
+      role: identitySnap.role || "EMPLOYEE",
       businessId: currentBusiness.id,
       branchId: currentBranch?.id || identitySnap.employee?.branchId || null,
       departmentId: identitySnap.employee?.departmentId || null

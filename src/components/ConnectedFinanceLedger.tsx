@@ -39,7 +39,7 @@ export const ConnectedFinanceLedger: React.FC<ConnectedFinanceLedgerProps> = (pr
     ledgerTransactions: liveTransactions = [] 
   } = useBusinessContext();
   
-  const currentRole = props.currentRole || (role as Role) || "OWNER";
+  const currentRole = props.currentRole || (role as Role) || "EMPLOYEE";
   const current_business_id = props.current_business_id || liveBusiness?.id || "BIZ_MAIN";
   const currentBranchId = props.currentBranchId ?? (liveBranches[0]?.id || null);
   const currentBusiness = props.currentBusiness || liveBusiness || ({ id: current_business_id, name: liveBusiness?.name || "Entreprise" } as Business);
