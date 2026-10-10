@@ -14,6 +14,8 @@ import { EmployeeRepository } from "../../repositories/EmployeeRepository";
 import { EventBus } from "../../modules/runtime/EventBus";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
 import { CacheInvalidationService } from "../performance/CacheInvalidationService";
+import { toDateOnly } from "../../utils/dateNormalization";
+
 
 export interface ParsedEmployeeRow {
   name: string;
@@ -367,10 +369,12 @@ export class BulkEmployeeImportService {
       const { payRegime, paymentModel } = parsePayRegime(rawPayRegimeInput, commissionRate, baseSalary);
 
       const rawHireDate = getRecordValue(record, [
+
         "hire_date", "hiredate", "hireDate", "date_embauche", "date_recrutement", 
         "date_entree", "date_start", "start_date", "embauche"
       ]);
-      const hireDate = rawHireDate ? rawHireDate.toString().trim() : undefined;
+      const hireDate = rawHireDate ? toDateOnly(rawHireDate) || rawHireDate.toString().trim() : undefined;
+
 
       // 4. Resolve / Auto-Create Branch
       const rawBranchInput = (getRecordValue(record, [

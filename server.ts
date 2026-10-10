@@ -1147,8 +1147,8 @@ export async function startServer() {
 
     server.on("error", (err: any) => {
       if (err.code === "EADDRINUSE") {
-        console.warn(`[FinOps Server] Port ${PORT} is already bound by an active instance. Existing server remains healthy.`);
-        resolve();
+        console.error(`❌ Critical server startup error: Port ${PORT} is already in use.`);
+        reject(err);
       } else {
         console.error("❌ Critical server startup error:", err);
         reject(err);

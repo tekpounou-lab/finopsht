@@ -29,6 +29,8 @@ import { getLocalIP, generateSignature } from '../../data';
 import { calculateAttendanceVariance } from '../../lib/attendanceSSOT';
 import { AttendanceSnapshotEngine } from '../../services/workforce/AttendanceSnapshotEngine';
 import { toast } from 'sonner';
+import { toDateOnly, normalizeAttendanceStatus } from '../../utils/dateNormalization';
+
 
 interface MassImportModalProps {
   isOpen: boolean;
@@ -191,28 +193,9 @@ export default function MassImportModal({
   };
 
   // Clean date serial or string to YYYY-MM-DD
+
   const cleanDateString = (input: any): string => {
-    if (!input) return "";
-    const str = String(input).trim();
-    if (/^\d{5}(\.\d+)?$/.test(str)) {
-      const serial = parseFloat(str);
-      const parsedDate = xlsx.SSF.parse_date_code(serial);
-      const y = parsedDate.y;
-      const m = String(parsedDate.m).padStart(2, '0');
-      const d = String(parsedDate.d).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    // Match standard YYYY-MM-DD or replace slashes
-    if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
-      const parts = str.split(/[-/]/);
-      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-    }
-    // Match DD/MM/YYYY or DD-MM-YYYY
-    if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(str)) {
-      const parts = str.split(/[-/]/);
-      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-    }
-    return str;
+    return toDateOnly(input);
   };
 
   // Clean time string (HH:MM)
@@ -391,33 +374,39 @@ export default function MassImportModal({
         }
       }
 
-      // --- STEP 3: Check-In / Check-Out Validation (Rule 3 & Rule 7) ---
+      // --- STEP 3: Check-In / Check-Out Validation (Rule 3 & Rule 7 & Status Validation) ---
       const cleanIn = cleanTimeString(row.check_in);
       const cleanOut = cleanTimeString(row.check_out);
       const hasIn = !!cleanIn;
       const hasOut = !!cleanOut;
 
+      const rawStatusInput = row.status || (row as any).statut || (row as any).state || "";
+      const normalizedStatus = normalizeAttendanceStatus(rawStatusInput, hasIn && hasOut ? "NORMAL" : "");
+      const isExplicitAbsenceOrLeave = normalizedStatus === "ABSENT" || normalizedStatus === "CONGE";
+
       if (!rejectionCategory) {
-        // Rule 3 Cases
-        if (hasIn && !hasOut) {
-          rejectionCategory = "MISSING_CHECKOUT";
-          rejectionReason = "Incomplete attendance: Missing Check-Out.";
-          errors.push("Incomplete attendance: Missing Check-Out.");
-        } else if (!hasIn && hasOut) {
-          rejectionCategory = "MISSING_CHECKIN";
-          rejectionReason = "Incomplete attendance: Missing Check-In.";
-          errors.push("Incomplete attendance: Missing Check-In.");
-        } else if (!hasIn && !hasOut) {
-          rejectionCategory = "NO_TIMES";
-          rejectionReason = "No attendance recorded.";
-          errors.push("No attendance recorded.");
-        } else {
-          // Both times present - validate HH:MM format
-          const timePattern = /^\d{2}:\d{2}$/;
-          if (!timePattern.test(cleanIn) || !timePattern.test(cleanOut)) {
-            rejectionCategory = "INVALID_TIME_FORMAT";
-            rejectionReason = "Invalid time format.";
-            errors.push("Invalid time format (Expected HH:MM).");
+        if (!isExplicitAbsenceOrLeave) {
+          // Rule 3 Cases
+          if (hasIn && !hasOut) {
+            rejectionCategory = "MISSING_CHECKOUT";
+            rejectionReason = "Incomplete attendance: Missing Check-Out.";
+            errors.push("Incomplete attendance: Missing Check-Out.");
+          } else if (!hasIn && hasOut) {
+            rejectionCategory = "MISSING_CHECKIN";
+            rejectionReason = "Incomplete attendance: Missing Check-In.";
+            errors.push("Incomplete attendance: Missing Check-In.");
+          } else if (!hasIn && !hasOut) {
+            rejectionCategory = "NO_TIMES";
+            rejectionReason = "No attendance or status recorded.";
+            errors.push("No attendance recorded.");
+          } else {
+            // Both times present - validate HH:MM format
+            const timePattern = /^\d{2}:\d{2}$/;
+            if (!timePattern.test(cleanIn) || !timePattern.test(cleanOut)) {
+              rejectionCategory = "INVALID_TIME_FORMAT";
+              rejectionReason = "Invalid time format.";
+              errors.push("Invalid time format (Expected HH:MM).");
+            }
           }
         }
       }
@@ -464,19 +453,28 @@ export default function MassImportModal({
       let mappedRecord: AttendanceRecord | undefined = undefined;
 
       if (isValid && matchedEmployee) {
-        // Calculate Hours & Variance
-        const [inH, inM] = cleanIn.split(":").map(Number);
-        const [outH, outM] = cleanOut.split(":").map(Number);
-        const totalInMin = inH * 60 + inM;
-        const totalOutMin = outH * 60 + outM;
         let realHours = 0;
-        if (totalOutMin > totalInMin) {
-          realHours = parseFloat(((totalOutMin - totalInMin) / 60).toFixed(2));
-        } else {
-          warnings.push("Check-out time is earlier than check-in time.");
+        let plannedHours = 8;
+        const finalStatus = normalizedStatus || "NORMAL";
+
+        if (hasIn && hasOut) {
+          const [inH, inM] = cleanIn.split(":").map(Number);
+          const [outH, outM] = cleanOut.split(":").map(Number);
+          const totalInMin = inH * 60 + inM;
+          const totalOutMin = outH * 60 + outM;
+          if (totalOutMin > totalInMin) {
+            realHours = parseFloat(((totalOutMin - totalInMin) / 60).toFixed(2));
+          } else {
+            warnings.push("Check-out time is earlier than check-in time.");
+          }
+        } else if (finalStatus === "ABSENT") {
+          realHours = 0;
+          plannedHours = 8;
+        } else if (finalStatus === "CONGE") {
+          realHours = 0;
+          plannedHours = 8;
         }
 
-        const plannedHours = 8;
         const variance = calculateAttendanceVariance(realHours, plannedHours);
 
         const finalBranch = matchedEmployee.branchId || branches?.[0]?.id || "BRANCH_DEFAULT";
@@ -493,16 +491,17 @@ export default function MassImportModal({
           branchId: finalBranch,
           departmentId: finalDept,
           date: cleanDate,
-          checkIn: cleanIn,
-          checkOut: cleanOut,
+          checkIn: cleanIn || "",
+          checkOut: cleanOut || "",
           plannedHours,
           realHours,
           variance,
-          status: "NORMAL", // Rule 7: Check-In ✅ & Check-Out ✅ = PRESENT (NORMAL)
+          status: finalStatus as any,
           overrideReason: row.notes || "Bulk imported via Enterprise Import Engine",
           overrideBy: currentUser?.name || currentRole
         };
       }
+
 
       results.push({
         original: row,

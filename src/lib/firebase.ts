@@ -200,7 +200,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   }
 
   logger.error('Firestore Error Captured:', errInfo);
-  throw new Error(rawMsg || "Une erreur Firestore s'est produite.");
+  throw new Error(JSON.stringify(errInfo));
 }
 
 // Global safe database accessor helpers

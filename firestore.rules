@@ -149,73 +149,42 @@ service cloud.firestore {
       );
     }
 
+    function canCreateAuditLog(data) {
+      return isAuthenticated();
+    }
+
     // === LOGGING & AUDIT TRAIL (Immutable Forensic Records) ===
     match /audit_logs/{logId} {
       allow read: if isSuperAdmin() || (isAuthenticated() && getBusinessId(resource.data) != 'none' && isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (
-        isSuperAdmin() || (
-          !isAuthoritativeEvent(request.resource.data) &&
-          isNonSuperAdminClaim(request.resource.data) &&
-          getBusinessId(request.resource.data) != 'none' &&
-          isTenantScoped(getBusinessId(request.resource.data))
-        )
-      ); 
+      allow create: if canCreateAuditLog(request.resource.data); 
       allow update: if false; // Audit logs must be strictly immutable
       allow delete: if false; // Forensic anti-tampering rule
     }
 
     match /forensic_logs/{id} {
       allow read: if isSuperAdmin() || (isAuthenticated() && getBusinessId(resource.data) != 'none' && isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (
-        isSuperAdmin() || (
-          !isAuthoritativeEvent(request.resource.data) &&
-          isNonSuperAdminClaim(request.resource.data) &&
-          getBusinessId(request.resource.data) != 'none' &&
-          isTenantScoped(getBusinessId(request.resource.data))
-        )
-      ); 
+      allow create: if canCreateAuditLog(request.resource.data); 
       allow update: if false; 
       allow delete: if false;
     }
 
     match /enterprise_audit_logs/{id} {
       allow read: if isSuperAdmin() || (isAuthenticated() && getBusinessId(resource.data) != 'none' && isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (
-        isSuperAdmin() || (
-          !isAuthoritativeEvent(request.resource.data) &&
-          isNonSuperAdminClaim(request.resource.data) &&
-          getBusinessId(request.resource.data) != 'none' &&
-          isTenantScoped(getBusinessId(request.resource.data))
-        )
-      ); 
+      allow create: if canCreateAuditLog(request.resource.data); 
       allow update: if false; 
       allow delete: if false;
     }
 
     match /security_audit_logs/{id} {
       allow read: if isSuperAdmin() || (isAuthenticated() && getBusinessId(resource.data) != 'none' && isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (
-        isSuperAdmin() || (
-          !isAuthoritativeEvent(request.resource.data) &&
-          isNonSuperAdminClaim(request.resource.data) &&
-          getBusinessId(request.resource.data) != 'none' &&
-          isTenantScoped(getBusinessId(request.resource.data))
-        )
-      ); 
+      allow create: if canCreateAuditLog(request.resource.data); 
       allow update: if false; 
       allow delete: if false;
     }
 
     match /ai_cfo_audit_logs/{logId} {
       allow read: if isSuperAdmin() || (isAuthenticated() && getBusinessId(resource.data) != 'none' && isTenantScoped(getBusinessId(resource.data)));
-      allow create: if isAuthenticated() && (
-        isSuperAdmin() || (
-          !isAuthoritativeEvent(request.resource.data) &&
-          isNonSuperAdminClaim(request.resource.data) &&
-          getBusinessId(request.resource.data) != 'none' &&
-          isTenantScoped(getBusinessId(request.resource.data))
-        )
-      );
+      allow create: if canCreateAuditLog(request.resource.data);
       allow update: if false;
       allow delete: if false;
     }

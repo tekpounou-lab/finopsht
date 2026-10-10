@@ -6,16 +6,28 @@
 export type DateInput = string | number | Date | { seconds?: number; nanoseconds?: number; toDate?: () => Date } | null | undefined;
 
 /**
- * Validates whether a date string is a valid date and matches "YYYY-MM-DD"
+ * Validates whether year, month (1-12), day (1-31) form a valid Gregorian calendar date.
  */
-function isValidIsoDateStr(dateStr: string): boolean {
+export function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return false;
+  if (year < 1000 || year > 9999) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+
+  const daysInMonth = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+  if (isLeapYear) daysInMonth[2] = 29;
+
+  return day <= daysInMonth[month];
+}
+
+/**
+ * Validates whether a date string is a valid date and matches "YYYY-MM-DD" exactly.
+ */
+export function isValidIsoDateStr(dateStr: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  if (isNaN(d.getTime())) return false;
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}` === dateStr;
+  const parts = dateStr.split('-').map(Number);
+  return isValidCalendarDate(parts[0], parts[1], parts[2]);
 }
 
 /**
@@ -27,9 +39,9 @@ function resolveFallback(fallbackDate?: string): string {
     if (/^\d{4}-\d{2}-\d{2}$/.test(fallbackDate)) return fallbackDate;
     const d = new Date(fallbackDate);
     if (!isNaN(d.getTime())) {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
       return `${year}-${month}-${day}`;
     }
   }
@@ -37,7 +49,96 @@ function resolveFallback(fallbackDate?: string): string {
 }
 
 /**
- * Universal Date Normalizer: Converts any Date input (Timestamp, Date, ISO, US MM/DD/YYYY, EU DD/MM/YYYY, Number)
+ * Converts Excel Serial Number (e.g., 45500 or "45500.5") into canonical "YYYY-MM-DD".
+ * Standard Excel 1900 date system (Jan 1, 1900 = serial 1).
+ */
+export function parseExcelSerialToIsoDate(serialInput: number | string): string | null {
+  const numSerial = typeof serialInput === 'number' ? serialInput : parseFloat(String(serialInput).trim());
+  // Excel serial numbers for dates between 1900 and 2100 fall roughly in 1 .. 73050
+  if (isNaN(numSerial) || numSerial < 1 || numSerial > 100000) return null;
+
+  // Whole days offset from Dec 30, 1899 (accounting for Excel 1900 leap year bug)
+  let totalDays = Math.floor(numSerial);
+  if (totalDays >= 60) {
+    totalDays -= 1; // Correct for fictional Feb 29, 1900 in Excel
+  }
+
+  // Dec 31, 1899 is the zero point for totalDays offset
+  const excelEpochUtc = Date.UTC(1899, 11, 31);
+  const targetMs = excelEpochUtc + totalDays * 86400000;
+  const d = new Date(targetMs);
+
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+
+  if (isValidCalendarDate(year, month, day)) {
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+/**
+ * Maps multi-lingual textual month names (English, French, Haitian Creole) to 1-based month numbers.
+ */
+
+const MONTH_MAP: Record<string, number> = {
+  // English, French, Haitian Creole
+  jan: 1, january: 1, janv: 1, janvier: 1,
+  feb: 2, february: 2, fev: 2, fév: 2, fevrier: 2, février: 2,
+  mar: 3, march: 3, mars: 3, mas: 3,
+  apr: 4, april: 4, avr: 4, avril: 4,
+  may: 5, mai: 5,
+  jun: 6, june: 6, juin: 6,
+  jul: 7, july: 7, juil: 7, juillet: 7,
+  aug: 8, august: 8, aout: 8, août: 8, out: 8,
+  sep: 9, sept: 9, september: 9, septembre: 9,
+  oct: 10, october: 10, octobre: 10, okt: 10,
+  nov: 11, november: 11, novembre: 11,
+  dec: 12, december: 12, déc: 12, decembre: 12, décembre: 12, des: 12
+};
+
+
+/**
+ * Parses textual dates like "15 Juillet 2026", "July 15, 2026", "15-Jul-2026", "3 out 2026".
+ */
+export function parseTextDateToIsoDate(textStr: string): string | null {
+  if (!textStr || typeof textStr !== 'string') return null;
+  const cleaned = textStr.trim().toLowerCase().replace(/,/g, ' ').replace(/\./g, '').replace(/\s+/g, ' ');
+
+  // Match e.g. "15 jul 2026" or "15-jul-2026" or "15 juillet 2026"
+  const dayMonthYearMatch = cleaned.match(/^(\d{1,2})[\s\/-]+([a-zàâéèêîôûç]+)[\s\/-]+(\d{2,4})$/i);
+  if (dayMonthYearMatch) {
+    const day = parseInt(dayMonthYearMatch[1], 10);
+    const monthKey = dayMonthYearMatch[2].toLowerCase();
+    let year = parseInt(dayMonthYearMatch[3], 10);
+    if (year < 100) year += 2000;
+
+    const month = MONTH_MAP[monthKey];
+    if (month && isValidCalendarDate(year, month, day)) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  // Match e.g. "july 15 2026" or "juillet 15 2026"
+  const monthDayYearMatch = cleaned.match(/^([a-zàâéèêîôûç]+)[\s\/-]+(\d{1,2})[\s\/-]+(\d{2,4})$/i);
+  if (monthDayYearMatch) {
+    const monthKey = monthDayYearMatch[1].toLowerCase();
+    const day = parseInt(monthDayYearMatch[2], 10);
+    let year = parseInt(monthDayYearMatch[3], 10);
+    if (year < 100) year += 2000;
+
+    const month = MONTH_MAP[monthKey];
+    if (month && isValidCalendarDate(year, month, day)) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Universal Date Normalizer: Converts any Date input (Timestamp, Date, ISO, US MM/DD/YYYY, EU DD/MM/YYYY, Dots, Text, Excel Serial)
  * into a strict, canonical "YYYY-MM-DD" date string.
  */
 export function toDateOnly(input: DateInput, fallbackDate?: string): string {
@@ -47,25 +148,25 @@ export function toDateOnly(input: DateInput, fallbackDate?: string): string {
 
   // 1. Firestore Timestamp or object with .toDate()
   if (typeof input === 'object' && input !== null) {
-    if ('toDate' in input && typeof input.toDate === 'function') {
+    if ('toDate' in input && typeof (input as any).toDate === 'function') {
       try {
-        const d = input.toDate();
+        const d = (input as any).toDate();
         if (d && !isNaN(d.getTime())) {
-          const year = d.getFullYear();
-          const month = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
+          const year = d.getUTCFullYear();
+          const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(d.getUTCDate()).padStart(2, '0');
           return `${year}-${month}-${day}`;
         }
       } catch (e) {
         // Fall through
       }
     }
-    if ('seconds' in input && typeof input.seconds === 'number') {
-      const d = new Date(input.seconds * 1000);
+    if ('seconds' in input && typeof (input as any).seconds === 'number') {
+      const d = new Date((input as any).seconds * 1000);
       if (!isNaN(d.getTime())) {
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
+        const year = d.getUTCFullYear();
+        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
       }
     }
@@ -79,16 +180,23 @@ export function toDateOnly(input: DateInput, fallbackDate?: string): string {
     }
   }
 
-  // 2. Numeric timestamp (milliseconds or seconds)
+  // 2. Numeric input (Timestamp or Excel Serial)
   if (typeof input === 'number') {
     if (isNaN(input)) return resolveFallback(fallbackDate);
-    // If timestamp in seconds (< 1e11), convert to ms
+
+    // Check Excel serial range (e.g. 1 to 100000)
+    if (input > 0 && input < 100000) {
+      const excelParsed = parseExcelSerialToIsoDate(input);
+      if (excelParsed) return excelParsed;
+    }
+
+    // Timestamp in seconds (< 1e11) vs milliseconds
     const ms = input < 1e11 ? input * 1000 : input;
     const d = new Date(ms);
     if (!isNaN(d.getTime())) {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
       return `${year}-${month}-${day}`;
     }
   }
@@ -97,24 +205,31 @@ export function toDateOnly(input: DateInput, fallbackDate?: string): string {
   const str = String(input).trim().replace(/^["']|["']$/g, '');
   if (!str) return resolveFallback(fallbackDate);
 
-  // 3a. ISO format with 'T' (e.g. 2026-07-15T14:30:00Z or 2026-07-15T00:00:00)
+  // 3a. Excel Serial String e.g. "45500" or "45500.5"
+  if (/^\d{5}(\.\d+)?$/.test(str)) {
+    const excelParsed = parseExcelSerialToIsoDate(str);
+    if (excelParsed) return excelParsed;
+  }
+
+  // 3b. ISO format with 'T' (e.g. 2026-07-15T14:30:00Z or 2026-07-15T00:00:00)
   if (str.includes('T')) {
-    const datePart = str.split('T')[0].replace(/\//g, '-');
+    const datePart = str.split('T')[0].replace(/\//g, '-').replace(/\./g, '-');
     if (isValidIsoDateStr(datePart)) return datePart;
   }
 
-  // 3b. Already YYYY-MM-DD or YYYY/MM/DD
-  const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  // 3c. Already YYYY-MM-DD, YYYY/MM/DD, or YYYY.MM.DD
+  const isoMatch = str.match(/^(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})/);
   if (isoMatch) {
-    const year = isoMatch[1];
-    const month = String(parseInt(isoMatch[2], 10)).padStart(2, '0');
-    const day = String(parseInt(isoMatch[3], 10)).padStart(2, '0');
-    const formatted = `${year}-${month}-${day}`;
-    if (isValidIsoDateStr(formatted)) return formatted;
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (isValidCalendarDate(year, month, day)) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
   }
 
-  // 3c. Slash or Dash separated parts (MM/DD/YYYY or DD/MM/YYYY or DD-MM-YYYY)
-  const parts = str.split(/[/-]/);
+  // 3d. Slash, Dash, or Dot separated parts (DD/MM/YYYY, MM/DD/YYYY, DD.MM.YYYY, DD-MM-YYYY)
+  const parts = str.split(/[\/\-\.]/).filter(Boolean);
   if (parts.length === 3) {
     let p1 = parseInt(parts[0].trim(), 10);
     let p2 = parseInt(parts[1].trim(), 10);
@@ -124,13 +239,15 @@ export function toDateOnly(input: DateInput, fallbackDate?: string): string {
       // Check if p3 is Year (4 digits or 2 digits)
       if (p3 >= 100 || parts[2].trim().length === 4 || parts[2].trim().length === 2) {
         let year = p3;
-        if (year < 100) year += 2000;
+        if (year < 100) {
+          year += (year <= 50) ? 2000 : 1900;
+        }
 
         let month: number;
         let day: number;
 
         if (p1 > 12 && p2 <= 12) {
-          // DD/MM/YYYY (EU)
+          // DD/MM/YYYY (EU / Haiti standard)
           day = p1;
           month = p2;
         } else if (p2 > 12 && p1 <= 12) {
@@ -138,35 +255,73 @@ export function toDateOnly(input: DateInput, fallbackDate?: string): string {
           month = p1;
           day = p2;
         } else {
-          // Both <= 12, default to US MM/DD/YYYY unless specified
+          // Default to MM/DD/YYYY when ambiguous
           month = p1;
           day = p2;
         }
 
-        const formatted = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        if (isValidIsoDateStr(formatted)) return formatted;
+        if (isValidCalendarDate(year, month, day)) {
+          return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        }
       }
-      // Check if p1 is Year (e.g. 2026/7/15)
+      // Check if p1 is Year (e.g. 2026.7.15)
       else if (p1 >= 1000) {
         const year = p1;
         const month = p2;
         const day = p3;
-        const formatted = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        if (isValidIsoDateStr(formatted)) return formatted;
+        if (isValidCalendarDate(year, month, day)) {
+          return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        }
       }
     }
   }
 
-  // 3d. Fallback JS Date parse
+  // 3e. Text month dates (e.g. "15 Juillet 2026", "July 15, 2026")
+  const textParsed = parseTextDateToIsoDate(str);
+  if (textParsed) return textParsed;
+
+  // 3f. Fallback JS Date parse
   const jsParsed = new Date(str);
   if (!isNaN(jsParsed.getTime())) {
-    const year = jsParsed.getFullYear();
-    const month = String(jsParsed.getMonth() + 1).padStart(2, '0');
-    const day = String(jsParsed.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    const year = jsParsed.getUTCFullYear();
+    const month = jsParsed.getUTCMonth() + 1;
+    const day = jsParsed.getUTCDate();
+    if (isValidCalendarDate(year, month, day)) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
   }
 
   return resolveFallback(fallbackDate);
+}
+
+/**
+ * Normalizes imported attendance status strings into canonical AttendanceStatus values.
+ * Preserves all statuses (ABSENT, NORMAL, RETARD, CONGE, PARTIEL, OVERTIME).
+ */
+export function normalizeAttendanceStatus(inputStatus: string | null | undefined, defaultStatus: string = "NORMAL"): string {
+  if (!inputStatus) return defaultStatus;
+  const clean = String(inputStatus).trim().toUpperCase().replace(/[\s_]+/g, '_');
+
+  if (/ABSENT|ABSENCE|ABS|MANQUANT|NON_PRESENT|^A$/.test(clean)) {
+    return "ABSENT";
+  }
+  if (/CONGE|CONGÉ|LEAVE|HOLIDAY|VACATION|REST|CONGE_PAYE|^C$/.test(clean)) {
+    return "CONGE";
+  }
+  if (/RETARD|LATE|^R$/.test(clean)) {
+    return "RETARD";
+  }
+  if (/PARTIEL|HALF_DAY|DEMI_JOURNEE/.test(clean)) {
+    return "PARTIEL";
+  }
+  if (/OVERTIME|SUPPLEMENTAIRE|HS/.test(clean)) {
+    return "OVERTIME";
+  }
+  if (/NORMAL|PRESENT|PRÉSENT|OK|^P$/.test(clean)) {
+    return "NORMAL";
+  }
+
+  return defaultStatus;
 }
 
 /**
@@ -222,35 +377,36 @@ export function normalizeDateStr(rawDate: DateInput): string {
 /**
  * Advanced CSV Date Normalizer with explicit EU/US format handling and console debug logging.
  */
-export function normalizeCsvDate(rawDateStr: DateInput, fallbackDate?: string, preferDayFirst?: boolean): string {
+export function normalizeCsvDate(rawDateStr: DateInput, fallbackDate?: string, preferDayFirst: boolean = true): string {
   if (rawDateStr === null || rawDateStr === undefined || rawDateStr === '') {
     const fb = resolveFallback(fallbackDate);
-    console.debug(`[normalizeCsvDate] Empty input. Using fallback: "${fb}"`);
     return fb;
   }
 
   const str = String(rawDateStr).trim().replace(/^["']|["']$/g, '');
   if (!str) {
-    const fb = resolveFallback(fallbackDate);
-    console.debug(`[normalizeCsvDate] Empty string. Using fallback: "${fb}"`);
-    return fb;
+    return resolveFallback(fallbackDate);
   }
 
-  // 1. Check ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
-  const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  // 1. Check Excel Serial
+  if (/^\d{5}(\.\d+)?$/.test(str)) {
+    const excelParsed = parseExcelSerialToIsoDate(str);
+    if (excelParsed) return excelParsed;
+  }
+
+  // 2. Check ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
+  const isoMatch = str.match(/^(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})/);
   if (isoMatch) {
-    const year = isoMatch[1];
-    const month = String(parseInt(isoMatch[2], 10)).padStart(2, '0');
-    const day = String(parseInt(isoMatch[3], 10)).padStart(2, '0');
-    const isoDate = `${year}-${month}-${day}`;
-    if (isValidIsoDateStr(isoDate)) {
-      console.debug(`[normalizeCsvDate] ISO format matched: "${str}" -> "${isoDate}"`);
-      return isoDate;
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (isValidCalendarDate(year, month, day)) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
   }
 
-  // 2. Check M/D/YYYY or D/M/YYYY
-  const parts = str.split(/[/-]/);
+  // 3. Check M/D/YYYY or D/M/YYYY
+  const parts = str.split(/[/-/\.]/).filter(Boolean);
   if (parts.length === 3) {
     let p1 = parseInt(parts[0].trim(), 10);
     let p2 = parseInt(parts[1].trim(), 10);
@@ -258,7 +414,7 @@ export function normalizeCsvDate(rawDateStr: DateInput, fallbackDate?: string, p
 
     if (!isNaN(p1) && !isNaN(p2) && !isNaN(p3)) {
       let year = p3;
-      if (year < 100) year += 2000;
+      if (year < 100) year += (year <= 50) ? 2000 : 1900;
 
       let month: number;
       let day: number;
@@ -277,23 +433,16 @@ export function normalizeCsvDate(rawDateStr: DateInput, fallbackDate?: string, p
         day = p2;
       }
 
-      const resultDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      if (isValidIsoDateStr(resultDate)) {
-        console.debug(`[normalizeCsvDate] Parsed M/D/YYYY or D/M/YYYY: "${str}" -> "${resultDate}"`);
-        return resultDate;
+      if (isValidCalendarDate(year, month, day)) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       }
     }
   }
 
   const normalized = toDateOnly(str, fallbackDate);
-  if (normalized) {
-    console.debug(`[normalizeCsvDate] Universal parse matched: "${str}" -> "${normalized}"`);
-    return normalized;
-  }
+  if (normalized) return normalized;
 
-  const fb = resolveFallback(fallbackDate) || new Date().toISOString().substring(0, 10);
-  console.warn(`[normalizeCsvDate] Failed to parse date "${rawDateStr}". Using fallback: "${fb}"`);
-  return fb;
+  return resolveFallback(fallbackDate) || new Date().toISOString().substring(0, 10);
 }
 
 /**
@@ -366,11 +515,9 @@ export function matchesDateFilter(date: DateInput, startDate?: DateInput, endDat
   const start = startDate ? toDateOnly(startDate) : '';
   const end = endDate ? toDateOnly(endDate) : '';
 
-  // If no date range filter is provided, all items pass
   if (!start && !end) return true;
 
   const target = toDateOnly(date);
-  // ABSOLUTE RULE: Unresolved or invalid dates are NEVER included in a date-filtered dataset
   if (!target) return false;
 
   if (start && target < start) return false;
@@ -381,8 +528,6 @@ export function matchesDateFilter(date: DateInput, startDate?: DateInput, endDat
 
 /**
  * Resolves the canonical accounting/operational date for a transaction based on accounting mode.
- * - Cash Basis: Prefers payment/settlement dates (paymentDate, paidAt, settlementDate, effectiveAccountingDate, date, transaction_date)
- * - Accrual Basis: Prefers accounting recognition dates (effectiveAccountingDate, date, transaction_date, transactionDate, createdAt)
  */
 export function resolveAnalyticsTxDate(tx: any, isCashBasis: boolean = false): string {
   if (!tx) return '';
@@ -427,7 +572,6 @@ export function resolveAnalyticsTxDate(tx: any, isCashBasis: boolean = false): s
 
 /**
  * Resolves the canonical work/presence date for an attendance record.
- * Avoids document creation timestamps when actual punch/shift dates exist.
  */
 export function resolveAnalyticsAttendanceDate(att: any): string {
   if (!att) return '';
@@ -456,8 +600,6 @@ export function resolveAnalyticsAttendanceDate(att: any): string {
 
 /**
  * Resolves the canonical accounting/settlement date for a payroll record.
- * The automatic date taken into account is strictly the period closure date.
- * For example: if a payroll covers 07/01/2026 - 07/15/2026, the seal date is 07/15/2026.
  */
 export function resolveAnalyticsPayrollDate(payroll: any, isCashBasis: boolean = false): string {
   if (!payroll) return '';
@@ -483,4 +625,5 @@ export function resolveAnalyticsPayrollDate(payroll: any, isCashBasis: boolean =
 
   return toDateOnly(rawDate);
 }
+
 

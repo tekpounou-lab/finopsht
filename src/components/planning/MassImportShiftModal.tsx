@@ -5,6 +5,8 @@ import { Employee, Role, ERPEvent, ForensicLog, Branch, Department } from '../..
 import { Shift, ShiftStatus } from './types';
 import { getLocalIP, generateSignature } from '../../data';
 import { ScheduleRepository } from '../../repositories/ScheduleRepository';
+import { toDateOnly } from '../../utils/dateNormalization';
+
 
 interface MassImportShiftModalProps {
   isOpen: boolean;
@@ -203,16 +205,9 @@ export default function MassImportShiftModal({
   };
 
   const cleanDateString = (input: string) => {
-    if (/^\d{5}(\.\d+)?$/.test(input)) {
-      const serial = parseFloat(input);
-      const parsedDate = xlsx.SSF.parse_date_code(serial);
-      const y = parsedDate.y;
-      const m = String(parsedDate.m).padStart(2, '0');
-      const d = String(parsedDate.d).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    return input;
+    return toDateOnly(input);
   };
+
 
   const cleanTimeString = (input: string) => {
     if (!input) return "";
