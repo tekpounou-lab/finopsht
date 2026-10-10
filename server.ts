@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -574,7 +573,7 @@ export async function createApp() {
   });
 
   // API endpoint: AI CFO Insights utilizing Gemini 3.5 Flash & Role-Based Governance
-  app.post("/api/cfo/analyze", async (req, res) => {
+  app.post(["/api/cfo/analyze", "/cfo/analyze"], async (req, res) => {
     let resolvedUserContext: IdentityUserContext | undefined;
     let userQuestion: string = "";
     let evaluation: any = undefined;
@@ -962,7 +961,7 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
   });
 
   // Dedicated endpoint to generate 3-paragraph executive narratives with semantic formatting and NO technical IDs
-  app.post("/api/cfo/narrative", async (req, res) => {
+  app.post(["/api/cfo/narrative", "/cfo/narrative"], async (req, res) => {
     try {
       const { snapshot, business, branch, userContext } = req.body || {};
 
@@ -1114,6 +1113,7 @@ Schema:
   // Serve static files and integrate Vite middlewares (when not running inside Vercel serverless functions)
   if (!process.env.VERCEL) {
     if (process.env.NODE_ENV !== "production") {
+      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { 
           middlewareMode: true,

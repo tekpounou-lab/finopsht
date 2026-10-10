@@ -14,7 +14,7 @@ describe("Phase 21: Firestore Rules Runtime Security Certification Suite", () =>
       firestore: {
         rules,
         host: "127.0.0.1",
-        port: 8080
+        port: 8088
       }
     });
   }, 60000);

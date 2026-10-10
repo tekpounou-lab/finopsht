@@ -49,6 +49,8 @@ export class EmployeeRepository {
             maxTransactions: sub.allowedLimits?.maxTransactions ?? 10000,
             featuresEnabled: sub.allowedLimits?.featuresEnabled ?? ["attendance", "payroll", "hr", "accounting"]
           }
+        }).catch((err: any) => {
+          console.warn("[EmployeeRepository] Non-superadmin client skipped remote subscription write:", err?.message || err);
         });
       }
     }

@@ -3,6 +3,7 @@ import { UploadCloud, FileSpreadsheet, AlertTriangle, CheckCircle2, X, FileText 
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { BulkEmployeeImportService } from "../../../services/workforce/BulkEmployeeImportService";
+import { EmployeeRepository } from "../../../repositories/EmployeeRepository";
 import { Branch, Department, Employee, Business } from "../../../types";
 
 interface OrganizationBulkImportModalProps {
@@ -11,6 +12,7 @@ interface OrganizationBulkImportModalProps {
   currentBusiness: Business;
   branches: Branch[];
   departments: Department[];
+  existingEmployees?: Employee[];
   onSuccess: (importedCount: number) => void;
 }
 
@@ -20,6 +22,7 @@ export const OrganizationBulkImportModal: React.FC<OrganizationBulkImportModalPr
   currentBusiness,
   branches,
   departments,
+  existingEmployees,
   onSuccess,
 }) => {
   const [file, setFile] = useState<File | null>(null);
@@ -70,12 +73,13 @@ export const OrganizationBulkImportModal: React.FC<OrganizationBulkImportModalPr
     setLogs(["Démarrage de l'analyse du plan d'importation..."]);
 
     try {
+      const activeStaff = existingEmployees || (await EmployeeRepository.listAll(currentBusiness.id).catch(() => []));
       const plan = BulkEmployeeImportService.resolveImportPlan(
         currentBusiness.id,
         parsedRows,
         branches,
         departments,
-        []
+        activeStaff
       );
 
       if (plan.validationErrors && plan.validationErrors.length > 0) {

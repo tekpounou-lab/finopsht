@@ -223,6 +223,7 @@ export interface BulkImportResolutionPlan {
 }
 
 export type BulkImportStatus = "PENDING" | "RUNNING" | "SUCCESS" | "PARTIAL_FAILURE" | "FAILED";
+export type BulkImportErrorCategory = "VALIDATION" | "PERMISSION" | "SEAT_LIMIT" | "CONFLICT" | "NETWORK" | "INTERNAL";
 
 export interface BulkImportExecutionResult {
   status: BulkImportStatus;
@@ -240,6 +241,10 @@ export interface BulkImportExecutionResult {
   totalBatchesCount?: number;
   logs: string[];
   error?: string;
+  correlationId?: string;
+  errorCode?: string;
+  errorCategory?: BulkImportErrorCategory;
+  failedStep?: string;
 }
 
 /**
@@ -901,7 +906,52 @@ export class BulkEmployeeImportService {
         logs
       };
     } catch (err: any) {
-      console.error("[BulkEmployeeImportService] Atomic import failure:", err);
+      const rawMsg = err?.message || (typeof err === "string" ? err : "") || "Erreur inconnue";
+      const errCode = err?.code || (err?.name === "FinopsException" ? (err as any).code : undefined);
+
+      let category: BulkImportErrorCategory = "INTERNAL";
+      let stableCode = "ERR_BULK_IMPORT_INTERNAL";
+      let userMessage = "Une erreur inattendue est survenue lors de l'intégration des collaborateurs.";
+
+      if (errCode === "SEAT_LIMIT_EXCEEDED" || rawMsg.includes("limite de collaborateurs") || rawMsg.includes("forfait")) {
+        category = "SEAT_LIMIT";
+        stableCode = "ERR_SEAT_LIMIT_EXCEEDED";
+        userMessage = rawMsg;
+      } else if (rawMsg.toLowerCase().includes("permission") || rawMsg.toLowerCase().includes("insufficient") || errCode === "permission-denied") {
+        category = "PERMISSION";
+        stableCode = "ERR_FIRESTORE_PERMISSION_DENIED";
+        userMessage = "Permissions insuffisantes pour enregistrer les collaborateurs dans cette entreprise.";
+      } else if (rawMsg.includes("budget actif") || rawMsg.includes("Erreur de validation") || errCode === "VALIDATION_ERROR" || errCode === "SCHEMA_VALIDATION_ERROR") {
+        category = "VALIDATION";
+        stableCode = "ERR_VALIDATION_FAILED";
+        userMessage = rawMsg;
+      } else if ((rawMsg.includes("succursale") && rawMsg.includes("n'existe pas")) || (rawMsg.includes("département") && rawMsg.includes("n'existe pas"))) {
+        category = "CONFLICT";
+        stableCode = "ERR_INTEGRITY_ENTITY_NOT_FOUND";
+        userMessage = rawMsg;
+      } else if (rawMsg.toLowerCase().includes("network") || rawMsg.toLowerCase().includes("offline") || rawMsg.toLowerCase().includes("unavailable")) {
+        category = "NETWORK";
+        stableCode = "ERR_NETWORK_UNAVAILABLE";
+        userMessage = "Réseau indisponible. Vérifiez votre connexion internet.";
+      } else if (rawMsg && rawMsg !== "Erreur inconnue") {
+        userMessage = rawMsg.length > 250 ? rawMsg.substring(0, 250) + "..." : rawMsg;
+        stableCode = errCode || "ERR_BULK_IMPORT_FAILED";
+      }
+
+      const correlationId = `bulk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const failedStep = committedBatches === 0 ? "METADATA_OR_VALIDATION" : `CHUNK_BATCH_${committedBatches + 1}`;
+
+      console.error(`[BulkEmployeeImportService] Import failed [correlationId=${correlationId}, code=${stableCode}, step=${failedStep}, category=${category}]:`, {
+        correlationId,
+        code: stableCode,
+        category,
+        step: failedStep,
+        message: rawMsg,
+        processedRows: validRows.length,
+        committedBatches,
+        totalBatches
+      });
+
       const isPartial = committedBatches > 0;
       const status: BulkImportStatus = isPartial ? "PARTIAL_FAILURE" : "FAILED";
       const importedCount = isPartial ? Math.min(createdEmployees.length, committedBatches * 45) : 0;
@@ -920,8 +970,12 @@ export class BulkEmployeeImportService {
         createdContracts: isPartial ? createdContracts.slice(0, importedCount) : [],
         committedBatchesCount: committedBatches,
         totalBatchesCount: totalBatches,
-        logs: [...logs, `Échec de l'intégration (${status}) : ${err.message}`],
-        error: err.message
+        logs: [...logs, `Échec de l'intégration (${status}) [${stableCode}] : ${userMessage}`],
+        error: userMessage,
+        correlationId,
+        errorCode: stableCode,
+        errorCategory: category,
+        failedStep
       };
     }
   }

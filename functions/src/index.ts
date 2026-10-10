@@ -20,6 +20,8 @@ const db = getFirestore(FIRESTORE_DATABASE_ID);
  * List of authorized explicit origins for FINOPS ERP
  */
 const ALLOWED_ORIGINS: (string | RegExp)[] = [
+  "https://finopsht.vercel.app",
+  /https:\/\/.*\.vercel\.app$/,
   "https://finops-tek-pou-nou.ai.studio",
   "http://localhost:3000",
   "http://localhost:5173",
@@ -50,6 +52,8 @@ export const finopsEventOrchestrator = onRequest(
   {
     region: "us-central1",
     cors: [
+      "https://finopsht.vercel.app",
+      /https:\/\/.*\.vercel\.app$/,
       /https:\/\/.*\.ai\.studio$/,
       /https:\/\/.*\.run\.app$/,
       "https://finops-tek-pou-nou.ai.studio",
@@ -67,8 +71,6 @@ export const finopsEventOrchestrator = onRequest(
     // Set CORS headers dynamically based on request origin
     if (origin && isOriginAllowed(origin)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
-    } else {
-      res.setHeader("Access-Control-Allow-Origin", "https://finops-tek-pou-nou.ai.studio");
     }
 
     res.setHeader("Access-Control-Allow-Credentials", "true");
