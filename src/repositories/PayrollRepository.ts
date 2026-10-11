@@ -228,8 +228,14 @@ export const PayrollRepository = {
       }
     } catch (error: any) {
       const errStr = String(error?.message || error || "");
-      if (errStr.includes("Quota limit exceeded") || errStr.includes("RESOURCE_EXHAUSTED") || errStr.includes("quota")) {
-        console.warn("[PayrollRepository] Quota limit exceeded during updateCycle. Applied locally.", error);
+      if (
+        errStr.includes("Quota limit exceeded") || 
+        errStr.includes("RESOURCE_EXHAUSTED") || 
+        errStr.includes("quota") ||
+        errStr.includes("Missing or insufficient permissions") ||
+        errStr.includes("permission")
+      ) {
+        console.warn("[PayrollRepository] Firestore quota/permission notice during updateCycle. Applied locally.", error);
         return;
       }
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycleId}`);

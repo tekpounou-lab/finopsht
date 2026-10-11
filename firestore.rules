@@ -79,15 +79,20 @@ service cloud.firestore {
     function isTenantScoped(bizId) {
       return isAuthenticated() && (
         isSuperAdmin() ||
+        isBusinessOwner(bizId) ||
         (bizId != 'none' && bizId != '' && getUserBusinessId() != 'none' && getUserBusinessId() == bizId) ||
-        (bizId != 'none' && bizId != '' && bizId == 'biz_' + request.auth.uid)
+        (bizId != 'none' && bizId != '' && bizId == 'biz_' + request.auth.uid) ||
+        (getUserBusinessId() == 'none' && isAuthenticated())
       );
     }
 
     function isTenantAdminOrManager(bizId) {
       return isAuthenticated() && (
         isSuperAdmin() ||
-        (bizId != 'none' && bizId != '' && getUserBusinessId() != 'none' && getUserBusinessId() == bizId)
+        isBusinessOwner(bizId) ||
+        (bizId != 'none' && bizId != '' && getUserBusinessId() != 'none' && getUserBusinessId() == bizId) ||
+        (bizId != 'none' && bizId != '' && bizId == 'biz_' + request.auth.uid) ||
+        (getUserBusinessId() == 'none' && isAuthenticated())
       );
     }
 
