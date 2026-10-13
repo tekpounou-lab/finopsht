@@ -193,7 +193,18 @@ export const LedgerRepository = {
    * Saves a single Ledger transaction into Firestore atomically alongside its Outbox Event.
    */
   async save(tx: LedgerTransaction, customEvent?: RuntimeEvent): Promise<void> {
-    const businessId = tx.business_id || "biz_default";
+    const snakeTenant = tx.business_id?.trim();
+    const camelTenant = tx.businessId?.trim();
+
+    if (snakeTenant && camelTenant && snakeTenant !== camelTenant) {
+      throw new Error(`[MultiTenancyViolation] LedgerTransaction ${tx.id} contains contradictory tenant IDs (business_id: "${snakeTenant}", businessId: "${camelTenant}"). Action blocked.`);
+    }
+
+    const businessId = snakeTenant || camelTenant;
+    if (!businessId || businessId === "biz_default") {
+      throw new Error(`[MultiTenancyViolation] LedgerTransaction ${tx.id} requires a valid business_id. Generic or fallback tenant ("${businessId}") rejected.`);
+    }
+
     const enrichedTx = applyDoubleEntryRules(tx);
     const amountCents = enrichedTx.amount_cents ?? Math.round((enrichedTx.amount || 0) * 100);
     const amount = enrichedTx.amount || (amountCents / 100);
@@ -201,6 +212,8 @@ export const LedgerRepository = {
 
     const finalTx: LedgerTransaction = {
       ...enrichedTx,
+      business_id: businessId,
+      businessId: businessId,
       cost_center_id: costCenter,
       costCenterId: costCenter,
       branchId: enrichedTx.branchId || enrichedTx.branch_id || costCenter,

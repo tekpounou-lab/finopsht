@@ -16,6 +16,20 @@ export interface ProvisioningOptions {
   correlationId?: string;
   businessId?: string;
   employeeId?: string;
+  selectedPlan?: string;
+  plan?: string;
+}
+
+export function resolveAndValidateSubscriptionPlan(rawPlan?: string): string {
+  const planCandidate = (rawPlan || "").trim().toUpperCase();
+  if (!planCandidate) {
+    return "STARTER"; // Policy default plan
+  }
+  const SUPPORTED_PLANS = ["STARTER", "PROFESSIONAL", "BUSINESS", "ENTERPRISE", "FREE_TIER", "CUSTOM", "TRIAL"];
+  if (!SUPPORTED_PLANS.includes(planCandidate)) {
+    throw new Error(`INVALID_SUBSCRIPTION_PLAN: Plan '${rawPlan}' is not supported by the catalog.`);
+  }
+  return planCandidate;
 }
 
 export class WorkspaceProvisioningService {
@@ -39,8 +53,9 @@ export class WorkspaceProvisioningService {
     // 1. Generate deterministic identifiers upfront
     const businessId = options.businessId || `biz_${founder.uid}`;
     const employeeId = options.employeeId || `emp_${founder.uid}`;
+    const targetPlan = resolveAndValidateSubscriptionPlan(options.plan || options.selectedPlan);
     
-    console.log(`[Provisioning] Initiating orchestration for ${businessName} (Business ID: ${businessId}, Correlation: ${correlationId})`);
+    console.log(`[Provisioning] Initiating orchestration for ${businessName} (Business ID: ${businessId}, Plan: ${targetPlan}, Correlation: ${correlationId})`);
 
     // 2. Pre-flight Idempotency Check
     try {
@@ -90,7 +105,7 @@ export class WorkspaceProvisioningService {
         body: JSON.stringify({
           founder,
           businessName,
-          options: { ...options, businessId, employeeId, correlationId }
+          options: { ...options, businessId, employeeId, correlationId, plan: targetPlan, selectedPlan: targetPlan }
         })
       });
 
@@ -143,7 +158,7 @@ export class WorkspaceProvisioningService {
       // Subscription
       batch.set(doc(db, "subscriptions", businessId), {
         businessId: businessId,
-        plan: "FREE_TIER",
+        plan: targetPlan,
         status: "ACTIVE",
         expiresAt: null,
         seats: 100,

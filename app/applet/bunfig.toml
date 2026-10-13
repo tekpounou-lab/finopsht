@@ -1,0 +1,4 @@
+[install]
+# Prevent puppeteer from attempting to download browsers during bun install
+[install.env]
+PUPPETEER_SKIP_DOWNLOAD = "true"

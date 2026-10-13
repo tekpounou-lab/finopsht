@@ -2,6 +2,11 @@ import { CashBasisSnapshot } from "../../../types/cash-basis";
 import { CashBasisEngine as CanonicalCashEngine } from "../../cash/engine/CashBasisEngine";
 import { LedgerTransaction, PayrollRecord, Employee } from "../../../types";
 
+/**
+ * @deprecated Legacy Analytics CashBasisEngine.
+ * Delegated to the Canonical SSOT Engine at src/domains/cash/engine/CashBasisEngine.ts.
+ * Kept for backward-compatibility with integration tests (e.g. SSOTInvariantMatrix.test.ts).
+ */
 export class CashBasisEngine {
   static async generateSnapshot(
     businessId: string,

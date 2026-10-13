@@ -264,7 +264,9 @@ export const PendingBusinessRepository = {
         };
         const provResult = await WorkspaceProvisioningService.provision(founder, beforeData.businessName, {
           nif: beforeData.taxId,
-          domain: beforeData.industry
+          domain: beforeData.industry,
+          selectedPlan: beforeData.selectedPlan,
+          plan: beforeData.selectedPlan
         });
         finalBusinessId = provResult.businessId;
       }
@@ -273,6 +275,7 @@ export const PendingBusinessRepository = {
       await updateDoc(docRef, {
         status: "APPROVED",
         businessId: finalBusinessId,
+        selectedPlan: beforeData.selectedPlan || "STARTER",
         approvedBy: adminUid,
         approvedAt: serverTimestamp(),
         approvalNote: approvalNote || "Demande approuvée par le Super Admin",
@@ -297,10 +300,14 @@ export const PendingBusinessRepository = {
         }).catch(() => {});
 
         const subDocRef = doc(db, "subscriptions", finalBusinessId);
-        await updateDoc(subDocRef, {
+        const subUpdates: Record<string, any> = {
           status: "ACTIVE",
           updatedAt: serverTimestamp()
-        }).catch(() => {});
+        };
+        if (beforeData.selectedPlan) {
+          subUpdates.plan = beforeData.selectedPlan;
+        }
+        await updateDoc(subDocRef, subUpdates).catch(() => {});
       } catch (err) {
         console.warn("[PendingBusinessRepository] User profile/business status update warning:", err);
       }

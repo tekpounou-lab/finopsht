@@ -68,3 +68,24 @@ export interface CashBasisStatementResult {
   reconciliationAudit: ReconciliationAuditSummary;
   suppressedMovements: SuppressedMovementRecord[];
 }
+
+export interface MultiCurrencyCashEngineQueryOptions extends Omit<CashEngineQueryOptions, 'currency' | 'openingBalance'> {
+  /** Optional explicit subset of currencies to evaluate (e.g. ['HTG', 'USD']) */
+  currencies?: string[];
+  /** Currency-keyed initial opening balances (e.g. { HTG: 500000, USD: 10000 }) */
+  openingBalances?: Record<string, number>;
+}
+
+export interface MultiCurrencyCashBasisStatementResult {
+  businessId: string;
+  startDate: string;
+  endDate: string;
+  /** All unique active currencies discovered or requested */
+  currencies: string[];
+  /** Discrete statement for each currency - STRICT ZERO CROSS-CURRENCY SUMMATION */
+  byCurrency: Record<string, CashBasisStatementResult>;
+  /** Strict multi-currency policy enforcement */
+  consolidationPolicy: "STRICT_SEPARATION_NO_FX";
+  /** Security notice on multi-currency operations */
+  notice: string;
+}

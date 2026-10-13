@@ -105,7 +105,7 @@ export function usePayrollRuns({
     const list = mergedList
       .filter(
         (c) =>
-          (c.business_id === current_business_id || (c as any).businessId === current_business_id || !c.business_id) &&
+          (c.business_id === current_business_id || (c as any).businessId === current_business_id) &&
           !(c as any).deleted &&
           (c as any).deleted !== "true" &&
           !localDeleted.includes(c.id) &&

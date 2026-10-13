@@ -4,6 +4,59 @@ import { getAdminFirestore, getAdminAuth } from "../../lib/firebaseAdmin";
 import firebaseConfig from "../../../firebase-applet-config.json";
 import { EventBus } from "../../modules/runtime/EventBus";
 
+export class OwnerResolutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OwnerResolutionError";
+  }
+}
+
+export function resolveOwnerInfo(bizData: Record<string, any>): { ownerUid: string; ownerEmployeeId: string } {
+  const camelUid = typeof bizData.ownerId === "string" ? bizData.ownerId.trim() : undefined;
+  const snakeUid = typeof bizData.owner_id === "string" ? bizData.owner_id.trim() : undefined;
+
+  let resolvedUid: string;
+
+  if (camelUid && !snakeUid) {
+    resolvedUid = camelUid;
+  } else if (!camelUid && snakeUid) {
+    resolvedUid = snakeUid;
+  } else if (camelUid && snakeUid) {
+    if (camelUid === snakeUid) {
+      resolvedUid = camelUid;
+    } else {
+      throw new OwnerResolutionError(`OWNER_ID_COHERENCE_MISMATCH: Contradictory owner identifiers found: ownerId='${camelUid}' vs owner_id='${snakeUid}'.`);
+    }
+  } else {
+    throw new OwnerResolutionError("MISSING_OWNER_ID: Business document contains neither ownerId nor owner_id.");
+  }
+
+  if (!resolvedUid) {
+    throw new OwnerResolutionError("MISSING_OWNER_ID: Resolved owner ID is empty.");
+  }
+
+  const camelEmp = typeof bizData.ownerEmployeeId === "string" ? bizData.ownerEmployeeId.trim() : undefined;
+  const snakeEmp = typeof bizData.owner_employee_id === "string" ? bizData.owner_employee_id.trim() : undefined;
+
+  let resolvedEmpId: string;
+
+  if (camelEmp && !snakeEmp) {
+    resolvedEmpId = camelEmp;
+  } else if (!camelEmp && snakeEmp) {
+    resolvedEmpId = snakeEmp;
+  } else if (camelEmp && snakeEmp) {
+    if (camelEmp === snakeEmp) {
+      resolvedEmpId = camelEmp;
+    } else {
+      throw new OwnerResolutionError(`OWNER_EMPLOYEE_ID_COHERENCE_MISMATCH: Contradictory owner employee identifiers found: ownerEmployeeId='${camelEmp}' vs owner_employee_id='${snakeEmp}'.`);
+    }
+  } else {
+    resolvedEmpId = `emp_${resolvedUid}`;
+  }
+
+  return { ownerUid: resolvedUid, ownerEmployeeId: resolvedEmpId };
+}
+
 export class BusinessActivationService {
   /**
    * Helper to get Firestore instance with exact project & database binding.
@@ -32,8 +85,9 @@ export class BusinessActivationService {
         const bizData = bizDoc.data()!;
         if (bizData.status === "ACTIVE") return; // Already active
 
-        const ownerUid = bizData.owner_id;
-        const ownerEmployeeId = bizData.owner_employee_id;
+        // Safe resolution of owner UID and owner Employee ID
+        const { ownerUid, ownerEmployeeId } = resolveOwnerInfo(bizData);
+
         const branchId = `br_${Math.random().toString(36).substring(2, 11)}`;
         const deptId = `dept_${Math.random().toString(36).substring(2, 11)}`;
 

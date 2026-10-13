@@ -3,6 +3,7 @@ import { Edit3, Trash2, Check, Users, ShieldAlert, Calendar, RefreshCw } from "l
 import { AdaptiveModal } from "../../ui/AdaptiveModal";
 import { PayrollCycle, Employee } from "../../../types";
 import { formatPayrollCycleName } from "../../../utils/dateUtils";
+import { toast } from "sonner";
 
 export interface EditCycleModalProps {
   isOpen: boolean;
@@ -77,13 +78,42 @@ export const EditCycleModal: React.FC<EditCycleModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!startDate || !endDate) return;
+    console.debug(`[PAYROLL_RECALC_CLICKED] Recalculate button clicked for cycle ${cycle.id}`);
+    console.debug(`[PAYROLL_VALIDATION_STARTED] Validating period dates, cycle status, and name...`);
+
+    if (!startDate || !endDate) {
+      console.warn(`[PAYROLL_VALIDATION_FAILED] Period start/end date missing.`);
+      toast.error("Veuillez spécifier la date de début et la date de fin de la période.");
+      return;
+    }
+
+    if (!cycleName || !cycleName.trim()) {
+      console.warn(`[PAYROLL_VALIDATION_FAILED] Cycle name/label missing.`);
+      toast.error("Veuillez spécifier un nom ou libellé pour le cycle de paie.");
+      return;
+    }
+
+    if (new Date(startDate) > new Date(endDate)) {
+      console.warn(`[PAYROLL_VALIDATION_FAILED] Invalid date range: startDate > endDate.`);
+      toast.error("Date invalide : La date de début ne peut pas être postérieure à la date de fin.");
+      return;
+    }
+
+    if (cycle.status === "SEALED" || cycle.status === "LOCKED" || cycle.status === "PAID" || (cycle as any).status === "VALIDATED") {
+      console.warn(`[PAYROLL_VALIDATION_FAILED] Cannot recalculate locked/sealed cycle ${cycle.id} with status ${cycle.status}.`);
+      toast.error(`Opération refusée (CYCLE_IMMUTABLE) : Le cycle "${cycle.cycleName || cycle.id}" est ${cycle.status}. Un recalcul direct n'est pas autorisé.`);
+      return;
+    }
 
     setIsSaving(true);
     try {
       const activeEmps = employees.filter((e) => e.status === "ACTIVE" || !e.status);
       const includedEmps = activeEmps.filter((e) => !excludedIds.includes(e.id)).map((e) => e.id);
       const computedName = cycleName.trim() || formatPayrollCycleName(startDate, endDate);
+
+      if (includedEmps.length === 0) {
+        toast.warning("Avertissement (NO_EMPLOYEES_INCLUDED) : Aucun employé n'est inclus dans ce cycle.");
+      }
 
       const updates: Partial<PayrollCycle> = {
         cycleName: computedName,
@@ -98,7 +128,7 @@ export const EditCycleModal: React.FC<EditCycleModalProps> = ({
         recordsCount: includedEmps.length,
       } as any;
 
-      console.debug(`[EditCycleModal] Submitting cycle update:`, updates);
+      console.debug(`[PAYROLL_CYCLE_SAVE_STARTED] Persisting cycle update for ${cycle.id}:`, updates);
 
       const updatedCycle: PayrollCycle = {
         ...cycle,
@@ -106,14 +136,16 @@ export const EditCycleModal: React.FC<EditCycleModalProps> = ({
       };
 
       await onUpdateCycle(cycle.id, updates);
+      console.debug(`[PAYROLL_CYCLE_SAVE_SUCCEEDED] Cycle ${cycle.id} updated successfully.`);
 
       if (onReCalculate) {
-        onReCalculate(updatedCycle);
+        await onReCalculate(updatedCycle);
       }
 
       onClose();
-    } catch (err) {
-      console.error("[Payroll] Error updating cycle draft:", err);
+    } catch (err: any) {
+      console.error("[PAYROLL_RECALCULATION_FAILED] Error updating cycle draft:", err);
+      toast.error(`Échec de l'enregistrement (PERSISTENCE_FAILED) : ${err?.message || "Erreur indéterminée"}`);
     } finally {
       setIsSaving(false);
     }
@@ -152,7 +184,7 @@ export const EditCycleModal: React.FC<EditCycleModalProps> = ({
       icon={<Edit3 className="w-5 h-5 text-indigo-400" />}
       iconVariant="blue"
     >
-      <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+      <form onSubmit={handleSubmit} noValidate className="space-y-4 text-xs">
         {/* Dates & Period */}
         <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800 space-y-3">
           <div className="flex items-center justify-between">
@@ -363,7 +395,7 @@ export const EditCycleModal: React.FC<EditCycleModalProps> = ({
             <button
               type="submit"
               disabled={isSaving}
-              className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-1.5 transition shadow-lg shadow-indigo-900/20 disabled:opacity-50"
+              className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-1.5 transition shadow-lg shadow-indigo-900/20 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
             >
               <Check className="w-3.5 h-3.5" />
               <span>{isSaving ? "Enregistrement..." : "Enregistrer & Recalculer"}</span>

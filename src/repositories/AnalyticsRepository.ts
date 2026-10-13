@@ -32,49 +32,84 @@ export class AnalyticsSnapshotRepository {
   }
 
   static async getLatest(businessId: string): Promise<AnalyticsSnapshot | null> {
-    const q = query(
+    let snap = await getDocs(query(
       collection(db, "analytics_snapshots"),
-      where("businessId", "==", businessId),
+      where("business_id", "==", businessId),
       orderBy("generatedAt", "desc"),
       limit(1)
-    );
-    const snap = await getDocs(q);
+    ));
+
+    if (snap.empty) {
+      snap = await getDocs(query(
+        collection(db, "analytics_snapshots"),
+        where("businessId", "==", businessId),
+        orderBy("generatedAt", "desc"),
+        limit(1)
+      ));
+    }
+
     if (snap.empty) return null;
     const docSnap = snap.docs[0];
     return { id: docSnap.id, ...docSnap.data() } as AnalyticsSnapshot;
   }
 
   static async getByPeriodKey(businessId: string, periodKey: string): Promise<AnalyticsSnapshot | null> {
-    const q = query(
+    let snap = await getDocs(query(
       collection(db, "analytics_snapshots"),
-      where("businessId", "==", businessId),
+      where("business_id", "==", businessId),
       where("periodKey", "==", periodKey),
       limit(1)
-    );
-    const snap = await getDocs(q);
+    ));
+
+    if (snap.empty) {
+      snap = await getDocs(query(
+        collection(db, "analytics_snapshots"),
+        where("businessId", "==", businessId),
+        where("periodKey", "==", periodKey),
+        limit(1)
+      ));
+    }
+
     if (snap.empty) return null;
     const docSnap = snap.docs[0];
     return { id: docSnap.id, ...docSnap.data() } as AnalyticsSnapshot;
   }
 
   static async listByPeriod(businessId: string, periodKey: string): Promise<AnalyticsSnapshot[]> {
-    const q = query(
+    let snap = await getDocs(query(
       collection(db, "analytics_snapshots"),
-      where("businessId", "==", businessId),
+      where("business_id", "==", businessId),
       where("periodKey", "==", periodKey)
-    );
-    const snap = await getDocs(q);
+    ));
+
+    if (snap.empty) {
+      snap = await getDocs(query(
+        collection(db, "analytics_snapshots"),
+        where("businessId", "==", businessId),
+        where("periodKey", "==", periodKey)
+      ));
+    }
+
     return snap.docs.map(d => ({ id: d.id, ...d.data() } as AnalyticsSnapshot));
   }
 
   static async listByPeriodRange(businessId: string, startPeriod: string, endPeriod: string): Promise<AnalyticsSnapshot[]> {
-    const q = query(
+    let snap = await getDocs(query(
       collection(db, "analytics_snapshots"),
-      where("businessId", "==", businessId),
+      where("business_id", "==", businessId),
       where("periodKey", ">=", startPeriod),
       where("periodKey", "<=", endPeriod)
-    );
-    const snap = await getDocs(q);
+    ));
+
+    if (snap.empty) {
+      snap = await getDocs(query(
+        collection(db, "analytics_snapshots"),
+        where("businessId", "==", businessId),
+        where("periodKey", ">=", startPeriod),
+        where("periodKey", "<=", endPeriod)
+      ));
+    }
+
     return snap.docs.map(d => ({ id: d.id, ...d.data() } as AnalyticsSnapshot));
   }
 

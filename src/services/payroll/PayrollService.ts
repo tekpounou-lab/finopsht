@@ -47,8 +47,8 @@ export const PayrollService = {
     businessId: string,
     options: ProcessPayrollCycleOptions = {}
   ): Promise<PayrollRecord[]> {
-    if (cycle.status === "SEALED") {
-      console.warn(`[Payroll] Cycle ${cycle.id} is SEALED and immutable. Skipping recalculation.`);
+    if (["SEALED", "LOCKED", "VALIDATED", "PAID"].includes(cycle.status)) {
+      console.warn(`[CycleImmutabilityViolation] Cycle ${cycle.id} is in protected status '${cycle.status}' and is immutable. Skipping recalculation.`);
       return [];
     }
 
@@ -92,11 +92,23 @@ export const PayrollService = {
 
     // 1. Fetch Dynamic Payroll Policies and Tax Configuration
     console.debug(`[Payroll] Fetching dynamic payroll policies for business ${businessId}...`);
-    const fetchedPolicies = await BusinessAdministrationRepository.getPayrollPolicies(businessId);
+    let fetchedPolicies = {};
+    try {
+      fetchedPolicies = await BusinessAdministrationRepository.getPayrollPolicies(businessId);
+    } catch (policyErr) {
+      console.warn("[Payroll] Could not fetch dynamic payroll policies:", policyErr);
+    }
     const policies: any = { ...fetchedPolicies, ...(options.policies || {}) };
     console.debug(`[Payroll] Policies loaded:`, policies);
 
-    const taxConfig = options.taxConfig || (await BusinessAdministrationRepository.getTaxConfiguration(businessId));
+    let taxConfig = options.taxConfig;
+    if (!taxConfig) {
+      try {
+        taxConfig = await BusinessAdministrationRepository.getTaxConfiguration(businessId);
+      } catch (taxErr) {
+        console.warn("[Payroll] Could not fetch tax configuration:", taxErr);
+      }
+    }
     const rates = resolveTaxRatesForDate(taxConfig, cycle.startDate || new Date().toISOString());
     const isTaxesEnabled =
       (cycle as any).enableTaxes !== false &&
@@ -142,15 +154,32 @@ export const PayrollService = {
       }
     }
 
-    // 2. Identify active employees for this business tenant
-    const activeEmployees = (employees || []).filter(
-      (e) =>
-        (!e.business_id || e.business_id === businessId) &&
-        (e.status === "ACTIVE" || !e.status) &&
-        !(cycle.excludedEmployeeIds || []).includes(e.id)
-    );
+    // 2. Identify active employees for this business tenant with strict multi-tenant validation
+    console.debug(`[PAYROLL_EMPLOYEES_LOAD_STARTED] Loading active employees for business ${businessId}...`);
+    const activeEmployees = (employees || []).filter((e) => {
+      const snakeTenant = e.business_id?.trim();
+      const camelTenant = e.businessId?.trim();
 
-    console.debug(`[Payroll] Found ${activeEmployees.length} active employees.`);
+      // Contradictory tenant check
+      if (snakeTenant && camelTenant && snakeTenant !== camelTenant) {
+        console.warn(`[MultiTenancyViolation] Employee ${e.id} has contradictory tenants: business_id="${snakeTenant}", businessId="${camelTenant}". Excluded.`);
+        return false;
+      }
+
+      const empTenant = snakeTenant || camelTenant;
+      if (!empTenant || empTenant !== businessId) {
+        if (!empTenant) {
+          console.warn(`[MultiTenancyViolation] Employee ${e.id} is missing tenant ID. Excluded from cycle ${cycle.id}.`);
+        }
+        return false;
+      }
+
+      const isActive = e.status === "ACTIVE" || !e.status || (e as any).isActive === true;
+      const isExcluded = (cycle.excludedEmployeeIds || []).includes(e.id);
+      return isActive && !isExcluded;
+    });
+
+    console.debug(`[PAYROLL_EMPLOYEES_LOAD_SUCCEEDED] Loaded ${activeEmployees.length} active employees for business ${businessId}.`);
 
     // 3. Filter employees by Attendance if attendance records are provided / policy enabled
     let eligibleEmployees = activeEmployees;
@@ -180,6 +209,7 @@ export const PayrollService = {
     }
 
     // 4. Process calculation per eligible employee
+    console.debug(`[PAYROLL_CALCULATION_STARTED] Processing calculation for ${eligibleEmployees.length} eligible employees...`);
     const calculatedRecords: PayrollRecord[] = eligibleEmployees.map((emp) => {
       // Payment Model: FIXED, COMMISSION, HYBRID
       const paymentModel: "FIXED" | "COMMISSION" | "HYBRID" =
@@ -187,7 +217,7 @@ export const PayrollService = {
 
       // 1. Base Salary: Monthly (e.g. 10,000 HTG) -> divided by 2 for quinzaine = 5,000 HTG
       const monthlyBaseSalary =
-        emp.salaryBaseHtg || emp.baseSalary || ((emp as any).base_salary_cents ? (emp as any).base_salary_cents / 100 : 0);
+        emp.salaryBaseHtg ?? emp.baseSalary ?? ((emp as any).base_salary_cents !== undefined ? (emp as any).base_salary_cents / 100 : 0);
 
       // Quinzaine base for FIXED and HYBRID; 0 for COMMISSION
       const quinzaineBase = paymentModel === "COMMISSION" ? 0 : Math.round((monthlyBaseSalary / 2) * 100) / 100;
@@ -552,7 +582,7 @@ export const PayrollService = {
       } as unknown as PayrollRecord;
     });
 
-    console.debug(`[Payroll] Cycle ${cycle.id} calculated with ${calculatedRecords.length} payslips.`);
+    console.debug(`[PAYROLL_CALCULATION_SUCCEEDED] Cycle ${cycle.id} calculation completed with ${calculatedRecords.length} records generated.`);
 
     // Persist records
     if (options.onAddRecords) {

@@ -8,7 +8,7 @@ export function useDashboardUIState() {
   // Active Multi-Tenant Filter State
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [currentDept, setCurrentDept] = useState<Department>({ id: "", business_id: "", name: "" });
-  const [currentRole, setCurrentRole] = useState<Role>("OWNER");
+  const [currentRole, setCurrentRole] = useState<Role>("UNASSIGNED");
   const [focusedEmployeeIdForProfile, setFocusedEmployeeIdForProfile] = useState<string | null>(null);
 
   // Wizard & Requests UI State

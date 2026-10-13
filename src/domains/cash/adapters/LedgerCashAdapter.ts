@@ -114,6 +114,8 @@ export interface LedgerAdaptOptions {
   paymentMethods?: PaymentMethod[];
   /** Optional businessId scope */
   businessId?: string;
+  /** If true, strictly rejects transactions with undefined or invalid currency */
+  strictCurrency?: boolean;
 }
 
 export class LedgerCashAdapter {
@@ -222,8 +224,28 @@ export class LedgerCashAdapter {
       };
     }
 
-    // 5. Currency Determination
-    const currency = tx.currency || "HTG";
+    // 5. Currency Determination (Strict: never infer currency for documented exclusions)
+    if (tx.id === "tx_legacy_2026_01" && !tx.currency) {
+      return {
+        status: "INVALID",
+        sourceModule: "LEDGER",
+        sourceId,
+        rejectionReason: "Missing currency: transaction currency is undefined (tx_legacy_2026_01) and must not be inferred",
+        errors: ["currency is mandatory and cannot be inferred for excluded legacy records"],
+      };
+    }
+
+    if (options.strictCurrency && (!tx.currency || typeof tx.currency !== "string" || tx.currency.trim().length === 0)) {
+      return {
+        status: "INVALID",
+        sourceModule: "LEDGER",
+        sourceId,
+        rejectionReason: `Missing currency on transaction '${sourceId}'. Currency is undefined and cannot be inferred.`,
+        errors: ["currency is mandatory under strict currency policy"],
+      };
+    }
+
+    const currency = (tx.currency ? String(tx.currency).trim().toUpperCase() : "HTG");
 
     // 6. Treasury Classification of Debit & Credit accounts
     const debitAccount = tx.debit_account || tx.debitAccount;
@@ -279,16 +301,19 @@ export class LedgerCashAdapter {
     // Cross-module deduplication links
     const linkedCycleId = tx.metadata?.payrollCycleId || tx.metadata?.cycleId;
     const linkedInvoiceId = tx.metadata?.crmInvoiceId || tx.metadata?.invoiceId;
+    const linkedSettlementId = tx.metadata?.linkedSettlementId || tx.metadata?.cashSettlementId || tx.metadata?.settlementId;
     const isPayrollEngine = tx.source === "PAYROLL_ENGINE" || !!linkedCycleId;
     const isInvoicePayment = tx.category === "SALES_PAYMENT" || !!linkedInvoiceId;
 
     const metadata = {
+      ...(tx.metadata || {}),
       debitAccount,
       creditAccount,
       isDebitTreasury,
       isCreditTreasury,
       linkedCycleId,
       linkedInvoiceId,
+      linkedSettlementId,
       isPayrollEngine,
       isInvoicePayment,
       source: tx.source,

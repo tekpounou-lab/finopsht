@@ -7,3 +7,4 @@ export * from "./adapter.types";
 export * from "./PayrollCashAdapter";
 export * from "./InvoiceCashAdapter";
 export * from "./LedgerCashAdapter";
+export * from "./CashSettlementAdapter";

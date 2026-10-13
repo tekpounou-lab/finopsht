@@ -554,14 +554,30 @@ export default function PayrollEngine({
             toast.success("Cycle DRAFT supprimé avec succès.");
           }}
           onReCalculate={async (updatedCycle) => {
+            if (updatedCycle.status === "SEALED" || updatedCycle.status === "LOCKED" || updatedCycle.status === "PAID") {
+              toast.error(`Opération refusée (CYCLE_IMMUTABLE) : Le cycle "${updatedCycle.cycleName || updatedCycle.id}" est ${updatedCycle.status}. Un recalcul direct n'est pas autorisé.`);
+              return;
+            }
+            if (!current_business_id) {
+              toast.error("Erreur (TENANT_UNRESOLVED) : L'identifiant d'entreprise n'est pas résolu.");
+              return;
+            }
             updateCycleLocal(updatedCycle.id, updatedCycle);
             if (updatedCycle.excludedEmployeeIds && updatedCycle.excludedEmployeeIds.length > 0) {
               deleteRecordsForExcludedEmployees(updatedCycle.id, updatedCycle.excludedEmployeeIds);
             }
-            const calculatedRecords = await runPayrollDryRun(updatedCycle);
-            if (calculatedRecords && calculatedRecords.length > 0) {
-              await commitPayrollCycle(updatedCycle, calculatedRecords, { updateStatus: "CALCULATED" });
-              addRecordsLocal(calculatedRecords);
+            try {
+              const calculatedRecords = await runPayrollDryRun(updatedCycle);
+              if (calculatedRecords && calculatedRecords.length > 0) {
+                await commitPayrollCycle(updatedCycle, calculatedRecords, { updateStatus: "CALCULATED" });
+                addRecordsLocal(calculatedRecords);
+                toast.success(`Recalcul réussi (RECALCULATION_SUCCEEDED) : ${calculatedRecords.length} bulletins enregistrés.`);
+              } else {
+                toast.warning("Avertissement (NO_EMPLOYEES_INCLUDED) : Aucun bulletin n'a été généré lors du recalcul.");
+              }
+            } catch (calcErr: any) {
+              console.error("[PayrollEngine] Recalculation failed:", calcErr);
+              toast.error(`Échec du recalcul (CALCULATION_FAILED) : ${calcErr?.message || "Erreur de calcul"}`);
             }
           }}
         />

@@ -1,0 +1,6 @@
+{
+  "summary": "Diagnostic report identifying the identity and permission issues with the Firebase Admin SDK in the FINOPS project. It confirms that the SDK is falling back to Application Default Credentials (ADC) from the AI Studio environment (project 683065282899), which lacks permissions on the target project (finopsht).",
+  "updatedAt": "2026-10-12T20:30:27.961402332Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

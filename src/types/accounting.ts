@@ -156,14 +156,26 @@ export interface BankStatementLine {
   reference?: string;
   balanceAfterCents?: number;
   matchedTransactionId?: string;
-  reconciliationStatus: 'UNMATCHED' | 'EXACT_MATCH' | 'SUGGESTED_MATCH' | 'MANUAL_MATCH' | 'RECONCILED' | 'IGNORED';
+  reconciliationStatus: 'UNMATCHED' | 'EXACT_MATCH' | 'SUGGESTED_MATCH' | 'MANUAL_MATCH' | 'DISPUTED' | 'RECONCILED' | 'IGNORED';
   matchConfidenceScore?: number; // 0 to 100
+  currency?: string;
+  isInvalid?: boolean;
+  validationError?: string;
+}
+
+export interface BankReconciliationBreakdown {
+  depositsInTransitCents: number;
+  outstandingChecksCents: number;
+  unrecordedBankFeesCents: number;
+  disputedItemsCents: number;
+  unexplainedDifferenceCents: number;
 }
 
 export interface BankReconciliation {
   id: string;
   businessId: string;
   bankAccountCode: string;
+  currency?: string;
   statementStartDate: string;
   statementEndDate: string;
   statementOpeningBalanceCents: number;
@@ -179,6 +191,7 @@ export interface BankReconciliation {
   reconciledBy?: string;
   reconciledAt?: string;
   notes?: string;
+  breakdown?: BankReconciliationBreakdown;
 }
 
 export interface LedgerAnomaly {

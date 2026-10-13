@@ -210,7 +210,8 @@ export function mapEmployee<T = any>(raw: any): T {
   const branchId = data.branchId || raw.branch_id || "";
   const departmentId = data.departmentId || raw.department_id || "";
   const uid = data.uid || raw.firebase_uid || raw.uid;
-  const baseSalary = data.baseSalary ?? raw.salary_base_htg ?? raw.salaryBaseHtg ?? raw.baseSalary ?? 0;
+  const baseSalary = data.baseSalary ?? raw.salary_base_htg ?? raw.salaryBaseHtg ?? raw.baseSalary ?? (raw.base_salary_cents !== undefined ? raw.base_salary_cents / 100 : 0);
+  const baseSalaryCents = raw.base_salary_cents ?? Math.round(baseSalary * 100);
   const commissionRate = data.commissionRate ?? raw.commission_rate ?? raw.commissionRate ?? 0;
   const isActive = data.isActive !== undefined ? data.isActive : (raw.is_active !== undefined ? raw.is_active : (raw.status !== "SUSPENDED" && raw.status !== "TERMINATED"));
   const createdAt = data.createdAt || raw.created_at || raw.createdAt;
@@ -229,6 +230,7 @@ export function mapEmployee<T = any>(raw: any): T {
     firebase_uid: uid,
     baseSalary,
     salaryBaseHtg: baseSalary,
+    base_salary_cents: baseSalaryCents,
     commissionRate,
     commission_rate: commissionRate,
     isActive,
@@ -266,14 +268,18 @@ export function mapPayrollCycle<T = any>(raw: any): T {
   if (!raw) return raw;
   const data = toCamelCase<any>(raw);
   const businessId = data.businessId || raw.business_id || "";
-  const startDate = data.startDate || raw.start_date || "";
-  const endDate = data.endDate || raw.end_date || "";
+  const cycleId = data.cycleId || raw.cycle_id || raw.payroll_cycle_id || raw.id || data.id || "";
+  const startDate = data.startDate || raw.start_date || raw.periodStart || raw.period_start || "";
+  const endDate = data.endDate || raw.end_date || raw.periodEnd || raw.period_end || "";
   const createdAt = data.createdAt || raw.created_at || raw.createdAt;
   const updatedAt = data.updatedAt || raw.updated_at || raw.updatedAt;
 
   return {
     ...data,
     id: raw.id || data.id,
+    cycleId,
+    cycle_id: cycleId,
+    payroll_cycle_id: cycleId,
     businessId,
     business_id: businessId,
     startDate,
@@ -286,3 +292,29 @@ export function mapPayrollCycle<T = any>(raw: any): T {
     updated_at: updatedAt,
   } as T;
 }
+
+export function mapLedgerTransaction<T = any>(raw: any): T {
+  if (!raw) return raw;
+  const data = toCamelCase<any>(raw);
+  const businessId = data.businessId || raw.business_id || "";
+  const amount = data.amount ?? raw.amount ?? (raw.amount_cents !== undefined ? raw.amount_cents / 100 : 0);
+  const amountCents = raw.amount_cents ?? raw.amountCents ?? Math.round(amount * 100);
+  const debitAccount = data.debitAccount || raw.debit_account || "";
+  const creditAccount = data.creditAccount || raw.credit_account || "";
+  const currency = data.currency || raw.currency || undefined;
+
+  return {
+    ...data,
+    id: raw.id || data.id,
+    businessId,
+    business_id: businessId,
+    amount,
+    amount_cents: amountCents,
+    debitAccount,
+    debit_account: debitAccount,
+    creditAccount,
+    credit_account: creditAccount,
+    currency,
+  } as T;
+}
+

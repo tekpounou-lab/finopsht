@@ -15,7 +15,7 @@ export function useCommandBus() {
       metadata: {
         userId: user?.uid || "SYSTEM",
         business_id: currentBusiness?.id || "N/A",
-        role: (overrideRole || (role && role !== "UNASSIGNED" ? role : "OWNER")) as any,
+        role: (overrideRole || (role && role !== "UNASSIGNED" ? role : "UNASSIGNED")) as any,
         timestamp: new Date().toISOString(),
         correlationId: Math.random().toString(36).substring(2, 15)
       }

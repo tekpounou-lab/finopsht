@@ -4,6 +4,8 @@ import { generateSignature } from "../../../data";
 import { EventBus } from "../../../modules/runtime/EventBus";
 import { PayrollService } from "../../../services/payroll/PayrollService";
 
+import { PayrollRepository } from "../../../repositories/PayrollRepository";
+
 export interface UsePayrollCalculationProps {
   current_business_id: string;
   employees: Employee[];
@@ -114,8 +116,19 @@ export function usePayrollCalculation({
 
   const commitPayrollCycle = useCallback(
     async (cycle: PayrollCycle, records: PayrollRecord[], options?: { updateStatus?: string }) => {
+      console.debug(`[PAYROLL_BULLETINS_SAVE_STARTED] Committing ${records.length} records for cycle ${cycle.id}`);
+      
       if (onAddRecords && records.length > 0) {
         onAddRecords(records);
+      }
+
+      // Persist records to Firestore
+      if (records && records.length > 0 && current_business_id) {
+        try {
+          await PayrollRepository.savePayrollRecords(current_business_id, records);
+        } catch (saveErr) {
+          console.error("[PAYROLL_RECALCULATION_FAILED] Error persisting payroll records to Firestore:", saveErr);
+        }
       }
 
       const targetStatus = options?.updateStatus || "CALCULATED";

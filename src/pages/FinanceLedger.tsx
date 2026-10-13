@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Filter, Database, Sparkles, Plus, Loader2, Layers, TrendingUp } from 'lucide-react';
+import { Filter, Database, Sparkles, Plus, Loader2, Layers, TrendingUp, Building2 } from 'lucide-react';
 import { Employee, LedgerTransaction, ERPEvent, ForensicLog, Role, Branch, Business, Department } from '../types';
 import LedgerHeader from '../components/ledger/LedgerHeader';
 import FilterToolbar from '../components/ledger/FilterToolbar';
@@ -10,6 +10,7 @@ import CompensationDialog from '../components/ledger/CompensationDialog';
 import DataIntegrityDialog from '../components/ledger/DataIntegrityDialog';
 import AICFOAnalysisSheet from '../components/ledger/AICFOAnalysisSheet';
 import { FinancialDashboard } from '../components/ledger/FinancialDashboard';
+import { BankReconciliationConsole } from '../components/ledger/BankReconciliationConsole';
 import { LedgerRepository } from '../repositories/LedgerRepository';
 import { LedgerFilterParams } from '../components/ledger/types';
 import { generateSignature, getLocalIP } from '../data';
@@ -121,7 +122,7 @@ export default function FinanceLedger({
   const [showCompensation, setShowCompensation] = useState(false);
   const [showAiCfo, setShowAiCfo] = useState(false);
   const [showDataIntegrity, setShowDataIntegrity] = useState(false);
-  const [currentView, setCurrentView] = useState<'TRANSACTIONS' | 'FINANCIAL_STATEMENTS'>('TRANSACTIONS');
+  const [currentView, setCurrentView] = useState<'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION'>('TRANSACTIONS');
   const [isSeeding, setIsSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -711,10 +712,28 @@ export default function FinanceLedger({
             <TrendingUp className="w-3.5 h-3.5" />
             {tText("États Financiers & Ratios (Bilan / P&L)")}
           </button>
+          <button
+            onClick={() => setCurrentView('BANK_RECONCILIATION')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              currentView === 'BANK_RECONCILIATION'
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-sm shadow-cyan-950/40'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+            }`}
+            id="btn_view_bank_reconciliation"
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            {tText("Rapprochement Bancaire")}
+          </button>
         </div>
       </div>
 
-      {currentView === 'FINANCIAL_STATEMENTS' ? (
+      {currentView === 'BANK_RECONCILIATION' ? (
+        <BankReconciliationConsole
+          businessId={current_business_id}
+          ledgerTransactions={ledgerTransactions}
+          currency={currentBusiness?.currency || "HTG"}
+        />
+      ) : currentView === 'FINANCIAL_STATEMENTS' ? (
         <FinancialDashboard 
           transactions={filteredTransactions}
           allTransactions={ledgerTransactions}

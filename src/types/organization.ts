@@ -14,7 +14,6 @@ export interface Business {
   nif?: string;
   domain?: string;
   ownerId?: string;
-  /** Legacy alias for ownerId */
   owner_id?: string;
   settings?: any;
   currency?: string;
@@ -23,9 +22,7 @@ export interface Business {
   industry?: string;
   createdAt?: any;
   updatedAt?: any;
-  /** Legacy alias for createdAt */
   created_at?: any;
-  /** Legacy alias for updatedAt */
   updated_at?: any;
 }
 
@@ -35,21 +32,17 @@ export interface Business {
 export interface Branch {
   id: string;
   businessId?: string;
-  /** Legacy alias for businessId */
   business_id?: string;
   name: string;
   code?: string;
   address?: string;
   location?: string;
   isActive?: boolean;
-  /** Legacy alias for isActive */
   is_active?: boolean;
   status?: "ACTIVE" | "INACTIVE";
   createdAt?: any;
   updatedAt?: any;
-  /** Legacy alias for createdAt */
   created_at?: any;
-  /** Legacy alias for updatedAt */
   updated_at?: any;
 }
 
@@ -59,10 +52,8 @@ export interface Branch {
 export interface Department {
   id: string;
   businessId?: string;
-  /** Legacy alias for businessId */
   business_id?: string;
   branchId?: string;
-  /** Legacy alias for branchId */
   branch_id?: string;
   businessUnitId?: string;
   costCenterId?: string;
@@ -71,26 +62,20 @@ export interface Department {
   aliases?: string[];
   budget?: number;
   isActive?: boolean;
-  /** Legacy alias for isActive */
   is_active?: boolean;
   status?: "ACTIVE" | "INACTIVE";
   managerId?: string;
   metadata?: Record<string, any>;
   createdAt?: any;
   updatedAt?: any;
-  /** Legacy alias for createdAt */
   created_at?: any;
-  /** Legacy alias for updatedAt */
   updated_at?: any;
   normalizedName?: string;
-  /** Legacy alias for normalizedName */
   normalized_name?: string;
   source?: string;
   isSystemGenerated?: boolean;
-  /** Legacy alias for isSystemGenerated */
   is_system_generated?: boolean;
   createdBy?: string;
-  /** Legacy alias for createdBy */
   created_by?: string;
 }
 
@@ -100,7 +85,6 @@ export interface Department {
 export interface BusinessUnit {
   id: string;
   businessId?: string;
-  /** Legacy alias for businessId */
   business_id?: string;
   name: string;
   code: string;
@@ -108,13 +92,10 @@ export interface BusinessUnit {
   managerId?: string;
   status: "ACTIVE" | "INACTIVE";
   isActive?: boolean;
-  /** Legacy alias for isActive */
   is_active?: boolean;
   createdAt?: any;
   updatedAt?: any;
-  /** Legacy alias for createdAt */
   created_at?: any;
-  /** Legacy alias for updatedAt */
   updated_at?: any;
 }
 
@@ -124,29 +105,23 @@ export interface BusinessUnit {
 export interface CostCenter {
   id: string;
   businessId?: string;
-  /** Legacy alias for businessId */
   business_id?: string;
   businessUnitId?: string;
   departmentId?: string;
-  /** Legacy alias for departmentId */
   department_id?: string;
   name: string;
   code: string;
   budget: number;
   allocatedAmount?: number;
-  /** Legacy alias for allocatedAmount */
   allocated_amount?: number;
   currency: string;
   status: "ACTIVE" | "INACTIVE";
   isActive?: boolean;
-  /** Legacy alias for isActive */
   is_active?: boolean;
   managerId?: string;
   createdAt?: any;
   updatedAt?: any;
-  /** Legacy alias for createdAt */
   created_at?: any;
-  /** Legacy alias for updatedAt */
   updated_at?: any;
 }
 
@@ -155,13 +130,18 @@ export interface CostCenter {
  */
 export interface Role {
   id: string;
-  business_id: string;
+  businessId: string;
+  business_id?: string;
   name: string; // e.g., "MANAGER", "ACCOUNTANT"
   permissions: string[];
-  dashboard_widget_ids: string[];
-  is_system_role: boolean;
-  created_at: string;
-  updated_at: string;
+  dashboardWidgetIds: string[];
+  dashboard_widget_ids?: string[];
+  isSystemRole: boolean;
+  is_system_role?: boolean;
+  createdAt: string;
+  created_at?: string;
+  updatedAt: string;
+  updated_at?: string;
 }
 
 /**
@@ -169,14 +149,20 @@ export interface Role {
  */
 export interface BusinessSettings {
   id: string;
-  business_id: string;
-  company_name: string;
+  businessId: string;
+  business_id?: string;
+  companyName: string;
+  company_name?: string;
+  logoUrl?: string;
   logo_url?: string;
   timezone: string;
   currency: "HTG" | "USD";
-  fiscal_year_start_month: number;
-  working_days: number[];
-  updated_at: string;
+  fiscalYearStartMonth: number;
+  fiscal_year_start_month?: number;
+  workingDays: number[];
+  working_days?: number[];
+  updatedAt: string;
+  updated_at?: string;
 }
 
 /**
@@ -184,15 +170,28 @@ export interface BusinessSettings {
  */
 export interface EmployeeDepartmentLink {
   id?: string;
-  business_id: string;
-  employee_id: string;
-  department_id: string;
-  relation_type: "PRIMARY" | "SALES" | "SUPERVISION";
+  businessId?: string;
+  business_id?: string;
+  employeeId?: string;
+  employee_id?: string;
+  departmentId?: string;
+  department_id?: string;
+  relationType?: "PRIMARY" | "SALES" | "SUPERVISION";
+  relation_type?: "PRIMARY" | "SALES" | "SUPERVISION";
+  firstTransaction?: string;
   first_transaction?: string;
+  lastTransaction?: string;
   last_transaction?: string;
-  sales_amount: number;
-  sales_count: number;
-  created_at: string;
-  updated_at: string;
+  salesAmount?: number;
+  sales_amount?: number;
+  salesCount?: number;
+  sales_count?: number;
+  createdAt?: string;
+  created_at?: string;
+  updatedAt?: string;
+  updated_at?: string;
 }
+
+
+
 

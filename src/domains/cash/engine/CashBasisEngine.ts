@@ -8,17 +8,21 @@
 
 import type { PayrollRecord, PayrollCycle, LedgerTransaction } from '../../../types';
 import type { Invoice } from '../../../types/crm';
+import type { CashSettlement } from '../../../types/cash-basis';
 import type { NormalizedCashMovement } from '../types/NormalizedCashMovement';
 import { getCashFlowImpact, isEffectiveCashMovement } from '../types/NormalizedCashMovement';
 import { PayrollCashAdapter } from '../adapters/PayrollCashAdapter';
 import { InvoiceCashAdapter } from '../adapters/InvoiceCashAdapter';
 import { LedgerCashAdapter } from '../adapters/LedgerCashAdapter';
+import { CashSettlementAdapter } from '../adapters/CashSettlementAdapter';
 import { CrossSourceCashReconciliationEngine } from '../reconciliation/CrossSourceCashReconciliationEngine';
 import { calculateBeginningCash } from './beginningCash';
 import type {
   CashEngineQueryOptions,
   CashBasisStatementResult,
   CashFlowCategorySummary,
+  MultiCurrencyCashEngineQueryOptions,
+  MultiCurrencyCashBasisStatementResult,
 } from './engine.types';
 
 export interface RawOperationalSources {
@@ -26,6 +30,7 @@ export interface RawOperationalSources {
   payrollCycles?: PayrollCycle[];
   invoices?: Invoice[];
   ledgerTransactions?: LedgerTransaction[];
+  cashSettlements?: CashSettlement[];
 }
 
 export class CashBasisEngine {
@@ -218,7 +223,134 @@ export class CashBasisEngine {
       }
     }
 
-    // 4. Generate Statement
+    // 4. Adapt Operational Cash Settlements
+    if (sources.cashSettlements && sources.cashSettlements.length > 0) {
+      const batchResult = CashSettlementAdapter.adaptBatch(sources.cashSettlements, {
+        businessId: options.businessId,
+      });
+      if (batchResult.movements.length > 0) {
+        candidateMovements.push(...batchResult.movements);
+      }
+    }
+
+    // 5. Generate Statement
     return CashBasisEngine.generateStatement(candidateMovements, options);
+  }
+
+  /**
+   * Generates a multi-currency cash basis statement.
+   * STRICT SEPARATION: Evaluates HTG, USD, and other currencies in discrete buckets.
+   * Forbids ungrounded consolidation or cross-currency additions without explicit exchange rates.
+   */
+  public static generateMultiCurrencyStatement(
+    candidateMovements: NormalizedCashMovement[],
+    options: MultiCurrencyCashEngineQueryOptions
+  ): MultiCurrencyCashBasisStatementResult {
+    const { businessId, startDate, endDate, currencies: requestedCurrencies, openingBalances = {} } = options;
+
+    // Discover active currencies across movements matching businessId
+    const activeCurrenciesSet = new Set<string>();
+    for (const m of candidateMovements) {
+      if (m.businessId === businessId && m.currency) {
+        activeCurrenciesSet.add(m.currency.toUpperCase());
+      }
+    }
+
+    const targetCurrencies = requestedCurrencies && requestedCurrencies.length > 0
+      ? requestedCurrencies.map(c => c.toUpperCase())
+      : (activeCurrenciesSet.size > 0 ? Array.from(activeCurrenciesSet) : ['HTG']);
+
+    // Sort currencies predictably (HTG first, then USD, then alphabetical)
+    targetCurrencies.sort((a, b) => {
+      if (a === 'HTG') return -1;
+      if (b === 'HTG') return 1;
+      if (a === 'USD') return -1;
+      if (b === 'USD') return 1;
+      return a.localeCompare(b);
+    });
+
+    const byCurrency: Record<string, CashBasisStatementResult> = {};
+    for (const curr of targetCurrencies) {
+      const openingBalance = openingBalances[curr] ?? 0;
+      byCurrency[curr] = this.generateStatement(candidateMovements, {
+        ...options,
+        currency: curr,
+        openingBalance,
+      });
+    }
+
+    return {
+      businessId,
+      startDate,
+      endDate,
+      currencies: targetCurrencies,
+      byCurrency,
+      consolidationPolicy: "STRICT_SEPARATION_NO_FX",
+      notice: "HTG and USD amounts are strictly isolated in independent currency statements. Consolidation into a single currency requires an audited, explicitly applied exchange rate.",
+    };
+  }
+
+  /**
+   * End-to-end multi-currency pipeline execution.
+   */
+  public static executeMultiCurrencyPipeline(
+    sources: RawOperationalSources,
+    options: MultiCurrencyCashEngineQueryOptions
+  ): MultiCurrencyCashBasisStatementResult {
+    const candidateMovements: NormalizedCashMovement[] = [];
+
+    // Adapt all sources
+    if (sources.payrollRecords && sources.payrollRecords.length > 0) {
+      const cycleMap = new Map<string, PayrollCycle>();
+      if (sources.payrollCycles) {
+        for (const c of sources.payrollCycles) {
+          cycleMap.set(c.id, c);
+        }
+      }
+      for (const rec of sources.payrollRecords) {
+        const cycle = rec.cycleId ? cycleMap.get(rec.cycleId) : undefined;
+        const res = PayrollCashAdapter.adaptRecord(rec, { cycle });
+        if (res.status === 'VALID' && res.movement) {
+          candidateMovements.push(res.movement);
+        }
+      }
+    }
+
+    if (sources.invoices && sources.invoices.length > 0) {
+      for (const inv of sources.invoices) {
+        const res = InvoiceCashAdapter.adaptInvoice(inv);
+        if (res.status === 'VALID') {
+          if (res.movements && res.movements.length > 0) {
+            candidateMovements.push(...res.movements);
+          } else if (res.movement) {
+            candidateMovements.push(res.movement);
+          }
+        }
+      }
+    }
+
+    if (sources.ledgerTransactions && sources.ledgerTransactions.length > 0) {
+      for (const tx of sources.ledgerTransactions) {
+        const res = LedgerCashAdapter.adaptTransaction(tx, { splitTransfers: false });
+        if (res.status === 'VALID') {
+          if (res.movements && res.movements.length > 0) {
+            candidateMovements.push(...res.movements);
+          } else if (res.movement) {
+            candidateMovements.push(res.movement);
+          }
+        }
+      }
+    }
+
+    if (sources.cashSettlements && sources.cashSettlements.length > 0) {
+      const batchResult = CashSettlementAdapter.adaptBatch(sources.cashSettlements, {
+        businessId: options.businessId,
+      });
+      if (batchResult.movements.length > 0) {
+        candidateMovements.push(...batchResult.movements);
+      }
+    }
+
+    return this.generateMultiCurrencyStatement(candidateMovements, options);
   }
 }

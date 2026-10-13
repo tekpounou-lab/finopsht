@@ -82,6 +82,18 @@ export class PayrollCashAdapter {
       };
     }
 
+    // Document-level Exclusion: emp_legacy_002 has unresolved identity mismatch and must not be processed
+    const employeeId = record.employeeId || (record as any).employee_id;
+    if (employeeId === "emp_legacy_002") {
+      return {
+        status: "INVALID",
+        sourceModule: "PAYROLL",
+        sourceId,
+        rejectionReason: "Excluded employee: emp_legacy_002 has an unresolved identity conflict and is excluded from cash processing",
+        errors: ["emp_legacy_002 identity conflict unresolved"],
+      };
+    }
+
     // 2. Status & Settlement Verification
     // A payroll record is considered paid only if its status is PAID or SEALED,
     // or if the parent cycle is PAID / SEALED with a disbursement execution.

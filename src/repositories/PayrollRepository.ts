@@ -19,12 +19,16 @@ import { EventBus } from "../modules/runtime/EventBus";
 import { PaginatedRepository, PaginatedResult } from "./PaginatedRepository";
 import { PayrollService } from "../services/payroll/PayrollService";
 import { FinopsException } from "../modules/runtime/FinopsException";
+import { hasPermission } from "../permissions/role.permissions";
 
 export interface SealPayrollParams {
   cycle: PayrollCycle;
   payslips: Payslip[];
   ledgerTransactions: LedgerTransaction[];
   forensicLog: ForensicLog;
+  userRole?: string;
+  actorRole?: string;
+  currentUser?: { id?: string; name?: string; role?: string };
 }
 
 export interface RollbackPayrollParams {
@@ -196,8 +200,31 @@ export const PayrollRepository = {
       throw new Error("Multi-Tenancy Violation: business_id is required to update PayrollCycle.");
     }
 
+    const ref = doc(db, "payroll_cycles", cycleId);
+
+    // PAY-INT-002: Check cycle immutability before updating
     try {
-      const ref = doc(db, "payroll_cycles", cycleId);
+      const existingSnap = await getDoc(ref);
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data() as PayrollCycle;
+        if (existingData.business_id && existingData.business_id !== updates.business_id) {
+          throw new Error(`[MultiTenancyViolation] Cycle ${cycleId} belongs to business '${existingData.business_id}', cannot update under '${updates.business_id}'.`);
+        }
+        if (["SEALED", "LOCKED", "VALIDATED", "PAID"].includes(existingData.status)) {
+          const isReopenAttempt = updates.status === "REOPEN_REQUESTED" || updates.status === "DRAFT";
+          if (!isReopenAttempt) {
+            throw new Error(`[CycleImmutabilityViolation] Payroll cycle ${cycleId} is in protected status '${existingData.status}' and cannot be modified.`);
+          }
+        }
+      }
+    } catch (checkErr: any) {
+      if (checkErr.message?.includes("CycleImmutabilityViolation") || checkErr.message?.includes("MultiTenancyViolation")) {
+        throw checkErr;
+      }
+      console.warn("[PayrollRepository] Cycle immutability read check warning:", checkErr);
+    }
+
+    try {
       await setDoc(ref, {
         ...updates,
         updated_at: serverTimestamp()
@@ -206,15 +233,23 @@ export const PayrollRepository = {
       // If excludedEmployeeIds are updated, clean up existing records for those employees
       if (Array.isArray(updates.excludedEmployeeIds) && updates.excludedEmployeeIds.length > 0) {
         try {
-          const q = query(
+          let snap = await getDocs(query(
             collection(db, "payroll_records"),
             where("business_id", "==", updates.business_id),
-            where("payroll_cycle_id", "==", cycleId)
-          );
-          const snap = await getDocs(q);
+            where("cycleId", "==", cycleId)
+          ));
+
+          if (snap.empty) {
+            snap = await getDocs(query(
+              collection(db, "payroll_records"),
+              where("business_id", "==", updates.business_id),
+              where("payroll_cycle_id", "==", cycleId)
+            ));
+          }
+
           for (const d of snap.docs) {
             const recData = d.data();
-            if (updates.excludedEmployeeIds.includes(recData.employeeId)) {
+            if (updates.excludedEmployeeIds.includes(recData.employeeId || recData.employee_id)) {
               await updateDoc(d.ref, {
                 deleted: true,
                 isExcluded: true,
@@ -239,6 +274,63 @@ export const PayrollRepository = {
         return;
       }
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycleId}`);
+    }
+  },
+
+  /**
+   * Persists calculated payroll records to Firestore (/payroll_records).
+   */
+  async savePayrollRecords(businessId: string, records: PayrollRecord[]): Promise<void> {
+    if (!businessId || !records || records.length === 0) return;
+
+    console.debug(`[PAYROLL_BULLETINS_SAVE_STARTED] Saving ${records.length} records to Firestore for business ${businessId}...`);
+
+    const event: RuntimeEvent = {
+      eventId: `evt_pay_recalc_saved_${Date.now()}`,
+      correlationId: `corr_recalc_${records[0]?.cycleId || "batch"}`,
+      businessId,
+      module: "PAYROLL",
+      aggregate: "PayrollRecord",
+      type: "PAYROLL_RECALCULATED",
+      eventType: "PAYROLL_RECALCULATED",
+      source: "PayrollRepository",
+      payload: {
+        recordsCount: records.length,
+        cycleId: records[0]?.cycleId || "",
+        business_id: businessId,
+      },
+      version: "1.0.0",
+      status: "PENDING",
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      await MessageQueue.persistAndPublishWithBatch(
+        businessId,
+        (batch) => {
+          records.forEach((rec) => {
+            const recRef = doc(db, "payroll_records", rec.id);
+            const cycleIdVal = rec.cycleId || (rec as any).payroll_cycle_id || "";
+            batch.set(
+              recRef,
+              {
+                ...rec,
+                cycleId: cycleIdVal,
+                payroll_cycle_id: cycleIdVal,
+                business_id: businessId,
+                updated_at: serverTimestamp(),
+                created_at: (rec as any).created_at || serverTimestamp(),
+              },
+              { merge: true }
+            );
+          });
+        },
+        event
+      );
+      console.debug(`[PAYROLL_BULLETINS_SAVE_SUCCEEDED] Persisted ${records.length} payroll_records in Firestore for business ${businessId}`);
+    } catch (error: any) {
+      console.error("[PAYROLL_RECALCULATION_FAILED] Failed to persist payroll_records to Firestore:", error);
+      handleFirestoreError(error, OperationType.WRITE, `payroll_records/batch`);
     }
   },
 
@@ -298,24 +390,32 @@ export const PayrollRepository = {
       const snap = await getDoc(ref);
       if (snap.exists()) {
         cycleData = snap.data() as PayrollCycle;
-        if (cycleData.status === "SEALED") {
-          throw new Error("Impossible de supprimer un cycle scellé (SEALED).");
+        if (["SEALED", "LOCKED", "VALIDATED", "PAID"].includes(cycleData.status || "")) {
+          throw new Error(`[CycleImmutabilityViolation] Impossible de supprimer un cycle protégé ou scellé (status: ${cycleData.status}).`);
         }
       }
     } catch (readErr: any) {
-      if (readErr.message?.includes("SEALED")) throw readErr;
+      if (readErr.message?.includes("CycleImmutabilityViolation")) throw readErr;
       console.warn("[PayrollRepository] Fetching cycle before delete failed (quota or offline):", readErr);
     }
 
     // Query associated child payroll_records to soft-delete them as well
     const childRecordRefs: Array<ReturnType<typeof doc>> = [];
     try {
-      const qRecs = query(
+      let recSnap = await getDocs(query(
         collection(db, "payroll_records"),
         where("business_id", "==", businessId),
         where("cycleId", "==", cycleId)
-      );
-      const recSnap = await getDocs(qRecs);
+      ));
+
+      if (recSnap.empty) {
+        recSnap = await getDocs(query(
+          collection(db, "payroll_records"),
+          where("business_id", "==", businessId),
+          where("payroll_cycle_id", "==", cycleId)
+        ));
+      }
+
       recSnap.docs.forEach((d) => {
         childRecordRefs.push(doc(db, "payroll_records", d.id));
       });
@@ -458,6 +558,17 @@ export const PayrollRepository = {
 
     if (!businessId) {
       throw new Error("Multi-Tenancy Violation: business_id is required for sealing payroll cycle.");
+    }
+
+    // PAY-INT-001: Segregation of Duties Check
+    const actorRole = params.actorRole || params.userRole || params.currentUser?.role;
+    if (actorRole && !hasPermission(actorRole, "canValidatePayroll")) {
+      throw new Error(`[SegregationOfDutiesViolation] User with role '${actorRole}' is not authorized to validate or seal payroll cycles. Required permission: canValidatePayroll.`);
+    }
+
+    // PAY-INT-002: Cycle Status Immutability Check
+    if (cycle.status === "SEALED" || cycle.status === "PAID") {
+      throw new Error(`[CycleImmutabilityViolation] Payroll cycle ${cycle.id} is already in '${cycle.status}' status and cannot be sealed again.`);
     }
 
     const event: RuntimeEvent = {

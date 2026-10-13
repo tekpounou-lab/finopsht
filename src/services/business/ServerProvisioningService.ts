@@ -91,9 +91,14 @@ export class ServerProvisioningService {
           updatedAt: now
         };
 
+        const rawPlan = options.plan || options.selectedPlan || "STARTER";
+        const planCandidate = (rawPlan || "").trim().toUpperCase();
+        const SUPPORTED_PLANS = ["STARTER", "PROFESSIONAL", "BUSINESS", "ENTERPRISE", "FREE_TIER", "CUSTOM", "TRIAL"];
+        const targetPlan = SUPPORTED_PLANS.includes(planCandidate) ? planCandidate : "STARTER";
+
         const subscription = {
           businessId: businessId,
-          plan: "FREE_TIER",
+          plan: targetPlan,
           status: "ACTIVE",
           expiresAt: null,
           seats: 100,

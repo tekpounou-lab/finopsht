@@ -340,7 +340,8 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
     if (r === "OWNER") setPermissions(["*"]);
     else if (r === "MANAGER") setPermissions(["manage_users", "view_reports", "manage_payroll", "edit_attendance"]);
     else if (r === "SUPERVISOR") setPermissions(["view_reports", "edit_attendance"]);
-    else setPermissions(["view_own_data"]); // Default employee permissions
+    else if (r === "EMPLOYEE") setPermissions(["view_own_data"]);
+    else setPermissions([]);
   }, [identity?.role]);
 
   // Synchronize roleModuleMatrix dynamically with PermissionService

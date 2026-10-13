@@ -102,6 +102,19 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
     employeeContracts = [],
   } = useBusinessContext();
 
+  // Canonical resolution of tenant business ID with zero fake fallbacks
+  const resolvedBusinessId = useMemo(() => {
+    return (
+      liveBusiness?.id ||
+      identity?.business?.id ||
+      (dbUser as any)?.businessId ||
+      (dbUser as any)?.business_id ||
+      (dbEmployee as any)?.businessId ||
+      (dbEmployee as any)?.business_id ||
+      ""
+    );
+  }, [liveBusiness, identity, dbUser, dbEmployee]);
+
   // 1. Navigation Hook with normalized tab mapping
   const { activeTab, setActiveTab } = useNavigation(currentRole, initialTab);
   const normalizedActiveTab = normalizeTab(activeTab);
@@ -210,7 +223,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
             {normalizedActiveTab === "dashboard" && (
               <ConnectedBusinessIntelligence
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                current_business_id={resolvedBusinessId}
                 employees={employees}
                 ledgerTransactions={ledgerTransactions}
                 payrollRecords={payrollRecords}
@@ -245,78 +258,118 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             )}
 
             {normalizedActiveTab === "payroll" && (
-              <PayrollEngine
-                currentRole={currentRole}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
-                employees={employees}
-                ledgerTransactions={ledgerTransactions}
-                payrollCycles={payrollCycles}
-                payrollRecords={payrollRecords}
-                attendanceRecords={attendanceRecords}
-                onLockCycle={async (cycleId, lockedBy) => {
-                  console.debug(`[Payroll] Cycle locked: ${cycleId} by ${lockedBy}`);
-                  await PayrollRepository.updateCycle(cycleId, {
-                    status: "LOCKED",
-                    validatedBy: lockedBy,
-                    validatedAt: new Date().toISOString(),
-                    business_id: liveBusiness?.id || "BIZ_MAIN"
-                  });
-                }}
-                onAddCycle={async (cycle) => {
-                  console.debug(`[Payroll] Creating cycle with period: ${cycle.startDate}, ${cycle.endDate} -> generated name: "${cycle.cycleName}"`);
-                  await PayrollRepository.createCycle(cycle);
-                  console.debug(`[Payroll] Cycle created with ID: ${cycle.id} and name: "${cycle.cycleName}"`);
-                }}
-                onUpdateCycle={async (cycleId, updates) => {
-                  console.debug(`[Payroll] Updating cycle ${cycleId}:`, updates);
-                  await PayrollRepository.updateCycle(cycleId, {
-                    ...updates,
-                    business_id: liveBusiness?.id || "BIZ_MAIN"
-                  });
-                }}
-                onDeleteCycle={async (cycleId) => {
-                  console.debug(`[Payroll] Deleting cycle ${cycleId}`);
-                  await PayrollRepository.deleteCycle(cycleId, liveBusiness?.id || "BIZ_MAIN", authUser?.uid || "admin");
-                }}
-                onAddRecords={async (records) => {
-                  console.debug(`[Payroll] Employees added: ${records.length} payroll records`);
-                  for (const rec of records) {
-                    const ref = doc(db, "payroll_records", rec.id);
+              <>
+                {!resolvedBusinessId && (
+                  <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between">
+                    <span className="font-semibold">⚠️ Attention : Identifiant d'entreprise actif non résolu. La modification du cycle de paie est suspendue pour garantir l'isolation des données multi-tenant.</span>
+                  </div>
+                )}
+                <PayrollEngine
+                  currentRole={currentRole}
+                  current_business_id={resolvedBusinessId}
+                  employees={employees}
+                  ledgerTransactions={ledgerTransactions}
+                  payrollCycles={payrollCycles}
+                  payrollRecords={payrollRecords}
+                  attendanceRecords={attendanceRecords}
+                  onLockCycle={async (cycleId, lockedBy) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Lock cycle aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Cycle locked: ${cycleId} by ${lockedBy}`);
+                    await PayrollRepository.updateCycle(cycleId, {
+                      status: "LOCKED",
+                      validatedBy: lockedBy,
+                      validatedAt: new Date().toISOString(),
+                      business_id: resolvedBusinessId
+                    });
+                  }}
+                  onAddCycle={async (cycle) => {
+                    const targetBizId = cycle.business_id || resolvedBusinessId;
+                    if (!targetBizId) {
+                      console.error("[Payroll] Create cycle aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Creating cycle with period: ${cycle.startDate}, ${cycle.endDate} -> generated name: "${cycle.cycleName}"`);
+                    await PayrollRepository.createCycle({ ...cycle, business_id: targetBizId });
+                    console.debug(`[Payroll] Cycle created with ID: ${cycle.id} and name: "${cycle.cycleName}"`);
+                  }}
+                  onUpdateCycle={async (cycleId, updates) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Update cycle aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Updating cycle ${cycleId}:`, updates);
+                    await PayrollRepository.updateCycle(cycleId, {
+                      ...updates,
+                      business_id: resolvedBusinessId
+                    });
+                  }}
+                  onDeleteCycle={async (cycleId) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Delete cycle aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Deleting cycle ${cycleId}`);
+                    await PayrollRepository.deleteCycle(cycleId, resolvedBusinessId, authUser?.uid || "admin");
+                  }}
+                  onAddRecords={async (records) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Add records aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Employees added: ${records.length} payroll records`);
+                    for (const rec of records) {
+                      const ref = doc(db, "payroll_records", rec.id);
+                      await setDoc(ref, {
+                        ...rec,
+                        business_id: resolvedBusinessId,
+                        updated_at: serverTimestamp()
+                      }, { merge: true });
+                    }
+                  }}
+                  onAddForensicLog={async (log) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Forensic log aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Forensic log recorded: ${log.id}`);
+                    const ref = doc(db, "forensic_logs", log.id);
                     await setDoc(ref, {
-                      ...rec,
-                      business_id: liveBusiness?.id || "BIZ_MAIN",
-                      updated_at: serverTimestamp()
+                      ...log,
+                      business_id: resolvedBusinessId,
+                      _server_timestamp: serverTimestamp()
                     }, { merge: true });
-                  }
-                }}
-                onAddForensicLog={async (log) => {
-                  console.debug(`[Payroll] Forensic log recorded: ${log.id}`);
-                  const ref = doc(db, "forensic_logs", log.id);
-                  await setDoc(ref, {
-                    ...log,
-                    business_id: liveBusiness?.id || "BIZ_MAIN",
-                    _server_timestamp: serverTimestamp()
-                  }, { merge: true });
-                }}
-                onAddEvent={async (ev) => {
-                  console.debug(`[Payroll] Event published: ${ev.type}`);
-                  const ref = doc(db, "erp_events", ev.id);
-                  await setDoc(ref, {
-                    ...ev,
-                    business_id: liveBusiness?.id || "BIZ_MAIN",
-                    created_at: serverTimestamp()
-                  }, { merge: true });
-                }}
-                onAddTransaction={async (tx) => {
-                  console.debug(`[Payroll] Ledger transaction posted: ${tx.id}`);
-                  const ref = doc(db, "ledger_transactions", tx.id);
-                  await setDoc(ref, {
-                    ...tx,
-                    business_id: liveBusiness?.id || "BIZ_MAIN",
-                    updatedAt: serverTimestamp()
-                  }, { merge: true });
-                }}
-              />
+                  }}
+                  onAddEvent={async (ev) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Add event aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Event published: ${ev.type}`);
+                    const ref = doc(db, "erp_events", ev.id);
+                    await setDoc(ref, {
+                      ...ev,
+                      business_id: resolvedBusinessId,
+                      created_at: serverTimestamp()
+                    }, { merge: true });
+                  }}
+                  onAddTransaction={async (tx) => {
+                    if (!resolvedBusinessId) {
+                      console.error("[Payroll] Add transaction aborted: unresolved tenant business ID.");
+                      return;
+                    }
+                    console.debug(`[Payroll] Ledger transaction posted: ${tx.id}`);
+                    const ref = doc(db, "ledger_transactions", tx.id);
+                    await setDoc(ref, {
+                      ...tx,
+                      business_id: resolvedBusinessId,
+                      updatedAt: serverTimestamp()
+                    }, { merge: true });
+                  }}
+                />
+              </>
             )}
 
             {normalizedActiveTab === "ledger" && (
@@ -327,7 +380,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <AttendanceLedger
                 currentRole={currentRole}
                 currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                current_business_id={resolvedBusinessId}
                 currentBranchId={liveBranches[0]?.id || null}
                 isOffline={false}
                 employees={employees}
@@ -344,7 +397,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <ConnectedSchedules
                 currentRole={currentRole}
                 currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" } as any}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                current_business_id={resolvedBusinessId}
                 branches={liveBranches}
                 departments={liveDepartments}
                 onAddEvent={() => {}}
@@ -356,7 +409,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <LeaveManagement
                 currentRole={currentRole}
                 currentUser={{ name: authUser?.displayName || "User", id: authUser?.uid || "usr_1" }}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                current_business_id={resolvedBusinessId}
                 employees={employees}
                 leaves={leaves}
                 onAddEvent={() => {}}
@@ -370,7 +423,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
             {normalizedActiveTab === "crm" && (
               <CrmCenter
-                businessId={liveBusiness?.id || "BIZ_MAIN"}
+                businessId={resolvedBusinessId}
                 currentRole={currentRole}
                 currentUser={{
                   name: resolvedUserName || authUser?.displayName || "Administrateur",
@@ -403,7 +456,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 currentRole={currentRole}
                 currentUser={{ name: resolvedUserName || authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
                 currentUserId={authUser?.uid}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                current_business_id={resolvedBusinessId}
                 businessName={liveBusiness?.name || ""}
                 employees={employees || []}
                 employeeContracts={employeeContracts || []}
@@ -459,7 +512,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               currentRole === "SUPER_ADMIN" ? (
                 <ConnectedForensicLogs />
               ) : (
-                <AccessDenied requiredRole="SUPER_ADMIN" message="Le registre d'audit forensique immuable est strictement réservé au Super Admin." />
+                <AccessDenied requiredRole="SUPER_ADMIN" message="Le registre d'audit forensique immuable est strictly réservé au Super Admin." />
               )
             )}
 
@@ -467,7 +520,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               <NotificationsCenter
                 currentRole={currentRole}
                 currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
-                current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                current_business_id={resolvedBusinessId}
                 events={events}
                 readIds={[]}
                 setReadIds={() => {}}
@@ -477,7 +530,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             {normalizedActiveTab === "settings" && (
               <BusinessAdministrationCenter
                 currentRole={currentRole}
-                businessId={liveBusiness?.id || "BIZ_MAIN"}
+                businessId={resolvedBusinessId}
               />
             )}
 
@@ -485,7 +538,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               currentRole === "SUPER_ADMIN" ? (
                 <EventStreamPage
                   events={events}
-                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  current_business_id={resolvedBusinessId}
                   isOffline={false}
                   onReplayEvent={() => {}}
                   onClearDlq={() => {}}
@@ -498,7 +551,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             {normalizedActiveTab === "health" && (
               currentRole === "SUPER_ADMIN" ? (
                 <SystemHealthConsole
-                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  current_business_id={resolvedBusinessId}
                   employees={employees}
                   departments={liveDepartments}
                   branches={liveBranches}
@@ -516,7 +569,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
             {normalizedActiveTab === "recovery" && (
               currentRole === "SUPER_ADMIN" ? (
                 <DisasterRecovery
-                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  current_business_id={resolvedBusinessId}
                   currentRole={currentRole}
                 />
               ) : (
@@ -562,7 +615,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 <NotificationsCenter
                   currentRole={currentRole}
                   currentUser={{ name: resolvedUserName, id: authUser?.uid || "usr_1" }}
-                  current_business_id={liveBusiness?.id || "BIZ_MAIN"}
+                  current_business_id={resolvedBusinessId}
                   events={events}
                   readIds={[]}
                   setReadIds={() => {}}
