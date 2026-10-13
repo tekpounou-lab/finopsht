@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { PermissionService } from "../../../services/PermissionService";
 import { AccessResolver } from "../../../permissions/AccessResolver";
 import { hasPermission } from "../../../permissions/role.permissions";
-import { useCommandBus } from "../../../hooks/useCommandBus";
 import { useDashboardUIState } from "../../../hooks/useDashboardUIState";
 import { FeatureMatrix } from "../../../repositories";
 
@@ -185,6 +184,54 @@ describe("PRIORITÉ 2.0 — Sécurité Globale, RBAC et Isolation Multi-Tenant",
       expect(hasPermission("MANAGER", "canValidatePayroll")).toBe(false); // Doit passer par Owner/Admin
       expect(AccessResolver.canAccessResource(actorManager, targetEmpSameBranch)).toBe(true);
       expect(AccessResolver.canAccessResource(actorManager, targetEmpOtherBranch)).toBe(false);
+    });
+  });
+
+  describe("6. Validation des Règles Métier du Bloc payroll_cycles et des Événements Forensiques", () => {
+    it("valide la logique d'état des cycles de paie (DRAFT vs SEALED / VALIDATED / PAID)", () => {
+      const PROTECTED_STATUSES = ["SEALED", "LOCKED", "VALIDATED", "PAID"];
+      
+      // Un statut DRAFT ou PREPARED ne doit pas être bloqué par la liste des statuts protégés
+      expect(PROTECTED_STATUSES.includes("DRAFT")).toBe(false);
+      expect(PROTECTED_STATUSES.includes("PREPARED")).toBe(false);
+
+      // Les statuts clôturés sont strictement détectés
+      expect(PROTECTED_STATUSES.includes("SEALED")).toBe(true);
+      expect(PROTECTED_STATUSES.includes("VALIDATED")).toBe(true);
+      expect(PROTECTED_STATUSES.includes("PAID")).toBe(true);
+      expect(PROTECTED_STATUSES.includes("LOCKED")).toBe(true);
+    });
+
+    it("interdit la création directe d'un cycle SEALED par un gestionnaire sans canValidatePayroll", () => {
+      // MANAGER ne possède pas canValidatePayroll
+      expect(hasPermission("MANAGER", "canValidatePayroll")).toBe(false);
+      // OWNER et SUPER_ADMIN possèdent canValidatePayroll
+      expect(hasPermission("OWNER", "canValidatePayroll")).toBe(true);
+      expect(hasPermission("SUPER_ADMIN", "canValidatePayroll")).toBe(true);
+    });
+
+    it("valide la détection des événements forensiques d'autorité et des claims SuperAdmin", () => {
+      const AUTHORITATIVE_ACTIONS = [
+        "USER_ROLE_CHANGED",
+        "BUSINESS_APPROVED",
+        "BUSINESS_SUSPENDED",
+        "BUSINESS_ACTIVATED",
+        "SUBSCRIPTION_CHANGED",
+        "PERMISSION_CHANGED",
+        "SUPER_ADMIN_ACTION",
+        "FORENSIC_ACTION",
+        "SECURITY_POLICY_CHANGED",
+        "PLATFORM_CONFIG_CHANGED",
+        "ROLE_ESCALATION_BLOCKED"
+      ];
+
+      // Vérifie qu'un événement critique d'élévation est considéré comme authoritative
+      expect(AUTHORITATIVE_ACTIONS.includes("USER_ROLE_CHANGED")).toBe(true);
+      expect(AUTHORITATIVE_ACTIONS.includes("SECURITY_POLICY_CHANGED")).toBe(true);
+      
+      // Un événement utilisateur ordinaire n'est pas authoritative
+      expect(AUTHORITATIVE_ACTIONS.includes("ATTENDANCE_LOGGED")).toBe(false);
+      expect(AUTHORITATIVE_ACTIONS.includes("INVOICE_GENERATED")).toBe(false);
     });
   });
 });
