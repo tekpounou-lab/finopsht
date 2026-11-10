@@ -9,6 +9,7 @@ interface BICostCenterTabProps {
   cashflowTimeline: any[];
   expenseCategoryChartData: any[];
   totalExpenses: number;
+  selectedCurrency?: string;
 }
 
 export const BICostCenterTab: React.FC<BICostCenterTabProps> = ({
@@ -16,7 +17,9 @@ export const BICostCenterTab: React.FC<BICostCenterTabProps> = ({
   cashflowTimeline,
   expenseCategoryChartData,
   totalExpenses,
+  selectedCurrency = "HTG",
 }) => {
+  const curr = selectedCurrency || "HTG";
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="graphs-analytics-panel">
       {/* Cashflow timeline & expense category graph */}
@@ -49,7 +52,7 @@ export const BICostCenterTab: React.FC<BICostCenterTabProps> = ({
                           <p className="font-extrabold text-slate-200 mb-1 font-mono">{label}</p>
                           <p className="text-cyan-400 font-mono font-bold flex justify-between gap-4">
                             <span>Solde cumulé:</span>
-                            <span>{(payload[0]?.value || 0).toLocaleString()} HTG</span>
+                            <span>{(payload[0]?.value || 0).toLocaleString()} {curr}</span>
                           </p>
                         </div>
                       );
@@ -101,7 +104,7 @@ export const BICostCenterTab: React.FC<BICostCenterTabProps> = ({
                           <p className="font-extrabold text-slate-200 font-mono border-b border-slate-800 pb-1 mb-1">{data.name}</p>
                           <p className="text-rose-400 font-mono font-bold flex justify-between gap-3">
                             <span>Total:</span>
-                            <span>{(data.value || 0).toLocaleString()} HTG</span>
+                            <span>{(data.value || 0).toLocaleString()} {curr}</span>
                           </p>
                           <p className="text-slate-400 font-mono text-[9px] flex justify-between gap-3">
                             <span>Part:</span>
@@ -117,7 +120,7 @@ export const BICostCenterTab: React.FC<BICostCenterTabProps> = ({
             </SafeChartContainer>
             <div className="absolute text-center mt-[-8px]">
               <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-tight">Dépenses</span>
-              <span className="text-xs font-mono font-black text-slate-200">En HTG</span>
+              <span className="text-xs font-mono font-black text-slate-200">En {curr}</span>
             </div>
           </div>
 
@@ -129,7 +132,7 @@ export const BICostCenterTab: React.FC<BICostCenterTabProps> = ({
                   <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
                   {entry.name}
                 </span>
-                <span className="font-mono text-slate-300 font-bold">{(entry.value || 0).toLocaleString()} HTG</span>
+                <span className="font-mono text-slate-300 font-bold">{(entry.value || 0).toLocaleString()} {curr}</span>
               </div>
             ))}
           </div>

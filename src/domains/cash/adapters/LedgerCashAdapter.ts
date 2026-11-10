@@ -483,6 +483,64 @@ export class LedgerCashAdapter {
 
     // Case 3: Debit is Treasury, Credit is NOT Treasury (Cash Inflow)
     if (isDebitTreasury && !isCreditTreasury) {
+      // DEF-CASH-01: Strictly forbid non-revenue transactions (payroll, payroll clearing/liabilities,
+      // social tax liabilities, penalties, one-sided transfers, expense refunds/adjustments)
+      // from being classified as Cash INFLOW / operating revenue.
+      // Explicit REVERSED / REVERSAL audit records remain preserved with status="REVERSED" (0 cash impact).
+      if (!isReversed) {
+        const creditAccUpper = (creditAccount || "").toString().trim().toUpperCase();
+        const isEmployeeRepayment =
+          catUpper === "PAYROLL_RECOVERY" ||
+          catUpper === "REPAYMENT" ||
+          catUpper === "RECOUVREMENT";
+
+        const isPayrollOrSocialEntry =
+          txTypeUpper === "PAYROLL" ||
+          txTypeUpper === "BONUS" ||
+          txTypeUpper === "PENALTY" ||
+          txTypeUpper === "COMPENSATION" ||
+          (isPayrollEngine && !isEmployeeRepayment) ||
+          (!isEmployeeRepayment &&
+            (catUpper.includes("PAYROLL") ||
+              catUpper.includes("SALAIRE") ||
+              catUpper.includes("PAIE") ||
+              catUpper.includes("ONA") ||
+              catUpper.includes("OFATMA") ||
+              catUpper.includes("CNSS") ||
+              catUpper.includes("CNS")));
+
+        const isNonRevenueCreditAccount =
+          /^2\d*/.test(creditAccUpper) ||
+          /^4[2-9]\d*/.test(creditAccUpper) ||
+          /^[56]\d*/.test(creditAccUpper) ||
+          creditAccUpper.includes("PAYROLL") ||
+          creditAccUpper.includes("SALAIRE") ||
+          creditAccUpper.includes("ONA") ||
+          creditAccUpper.includes("OFATMA") ||
+          creditAccUpper.includes("CLEARING") ||
+          creditAccUpper.includes("PAYABLE") ||
+          creditAccUpper.includes("TAX");
+
+        const isNonRevenueLedgerType = [
+          "TRANSFER",
+          "EXPENSE",
+          "REFUND",
+          "CORRECTION",
+          "ADJUSTMENT",
+          "ADVANCE",
+        ].includes(txTypeUpper);
+
+        if (isPayrollOrSocialEntry || isNonRevenueCreditAccount || isNonRevenueLedgerType) {
+          return {
+            status: "IGNORED",
+            sourceModule: "LEDGER",
+            sourceId,
+            rejectionReason: `Non-revenue ledger entry (${txTypeUpper || "UNKNOWN"}, credit: ${creditAccount || "none"}) with treasury debit cannot be classified as Cash Inflow.`,
+            metadata,
+          };
+        }
+      }
+
       const id = generateCashMovementId({
         businessId,
         sourceModule: "LEDGER",

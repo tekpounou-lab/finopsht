@@ -1,4 +1,4 @@
-import { doc, updateDoc, collection, query, where, addDoc, deleteDoc, getDocs } from "firebase/firestore";
+import { doc, setDoc, updateDoc, collection, query, where, addDoc, deleteDoc, getDocs } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { Business, Branch, Department, Role, BusinessSettings, BusinessUnit, CostCenter } from "../../types/organization";
 import { 
@@ -543,8 +543,17 @@ export const BusinessSettingsRepository: IBusinessSettingsRepository = {
     return snap.exists() ? { id: snap.id, ...snap.data() } as BusinessSettings : null;
   },
   async update(businessId: string, data: Partial<BusinessSettings>): Promise<void> {
-    await updateDoc(doc(db, "business_settings", businessId), { ...data, updated_at: new Date().toISOString() });
+    await setDoc(doc(db, "business_settings", businessId), { ...data, updated_at: new Date().toISOString() }, { merge: true });
     
+    EventBus.publish(EventBus.createEvent({
+      correlationId: `update_settings_${businessId}`,
+      businessId: businessId,
+      module: "ORGANIZATION",
+      aggregate: "SETTINGS",
+      type: "SETTINGS_Synced",
+      payload: data
+    }));
+
     EventBus.publish(EventBus.createEvent({
       correlationId: `update_settings_${businessId}`,
       businessId: businessId,

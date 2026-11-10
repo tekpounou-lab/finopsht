@@ -1,5 +1,80 @@
 # FINOPS ERP — Architectural Changelog
 
+## [4.6.0] - 2026-11-06
+### Enacted & Verified (BI-P1.5 — PIC Financial Integrity & Temporal Filter Remediation)
+- **DEF-TF-01 (Temporal Filter Unbounded / Open-Ended Semantics & Caller Propagation)**:
+  - Added `"ALL"` to `AnalyticsPeriod` (`src/domains/analytics/types/index.ts`) and removed the silent current-calendar-month fallback in `AnalyticsEngine.getPeriodRanges` (`src/domains/analytics/services/AnalyticsEngine.ts`) when `period` is `"CUSTOM"` or `"ALL"` with empty or partial `startDate`/`endDate`.
+  - Updated `AnalyticsEngine.generateSnapshot` and `computeOperationalExpenses` to support unbounded (`""`..`""`) and single-bound open-ended ranges, guard previous-period comparisons via `hasPreviousPeriod` (preventing duplicate prior-period fabrication), and derive dataset-scoped effective cash, attendance, and trend bounds while preserving `NO_DATA` semantics on empty datasets.
+  - Preserved cleared `""` date bounds across `AnalyticsContext.tsx`, `useBIDataAggregation.ts`, `usePerformanceData.ts`, and `ExecutiveFilterContext.tsx` (`filterPayrolls`), and aligned `selectExpertMetrics` (`src/domains/performance/selectors/index.ts`) and `usePerformanceData.ts` with `selectSimplifiedMetrics` so both `CASH` and `ACCRUAL` accounting modes propagate consistently to `AnalyticsEngine.generateSnapshot`.
+- **DEF-REV-01 (Subledger Department Revenue Isolation)**:
+  - Removed `salesFromPayroll` (`payroll_records.sales_cents` / `salesHtg`) from `departmentPerformance[].revenue` in `AnalyticsEngine.ts` while preserving commercial sales attribution on `employeeScorecards[].salesVolume`, and aligned `departmentPerformance[].revenue` with mode-aware accounting SSOT (`CanonicalCashEngine` inflows in `CASH` mode; all posted non-reversed `isIncomeTx(t)` entries in `ACCRUAL` mode).
+- **DEF-CASH-01 (Cash-Basis & Accrual Inflow Guardrails)**:
+  - Hardened `LedgerCashAdapter.adaptTransaction` (`src/domains/cash/adapters/LedgerCashAdapter.ts`) so non-revenue Treasury debits (payroll/social/bonus/penalty/compensation entries, `2xxx`/`42x–49x`/`5xxx`/`6xxx`/clearing/payable/tax credit accounts, and non-revenue types such as `TRANSFER`, `EXPENSE`, `REFUND`, `CORRECTION`, `ADJUSTMENT`, `ADVANCE`) are classified as `IGNORED` instead of `INFLOW`, while preserving `REVERSED` audit records (`0` net cash impact) and legitimate `PAYROLL_RECOVERY` repayments against `1310_EMPLOYEE_RECEIVABLES`.
+  - Hardened `AnalyticsEngine.isIncomeTx` to exclude payroll/non-revenue types and restrict Class 4 credit account matching to `^4[01]\d*` (excluding PCG `421`/`431`/`44x`).
+- **DEF-LS-01 (Session-Scoped & Validated `localStorage` Filter Persistence)**:
+  - Hardened `ExecutiveFilterContext.tsx` (`createDefaultExecutiveFilters`, `loadPersistedExecutiveFilters`, `resetFilters`, `clearPersistedFilters`) with 12-hour TTL, cross-day expiration, legacy `v2` cleanup, ISO calendar & `startDate <= endDate` validation, and preservation of active same-day custom and cleared `"All Dates"` selections.
+
+## [4.5.1] - 2026-10-29
+### Enacted & Verified (Phase D3.1 — Post-D3-R Targeted Security & Financial Integrity Remediation)
+- **D3.1-A (Remediates `D3-R-01` — Operator & Approver Anti-Spoofing)**:
+  - Hardened `POST /api/cash/sessions/close` and `POST /api/cash/sessions/reopen` (`server.ts`) and `TillSessionEngine.evaluateClosure` / `evaluateReopen` (`src/domains/cash/services/TillSessionEngine.ts`) to reject any client-supplied `body.operatorId !== req.user.uid` or `body.approverId !== req.user.uid` with `403 IDENTITY_SPOOFING_DETECTED`, deriving `operatorId` and `approverId` strictly from `req.user.uid`.
+- **D3.1-B, D3.1-C & D3.1-D (Remediates `D3-R-02` — Frontend Server API Migration, Transactional Reads & Outbox Synchronization)**:
+  - Migrated `TillSessionModal.tsx` (`src/components/cash/TillSessionModal.tsx`) from client-side `TillSessionEngine.closeSession(...)` to `TillSessionEngine.closeSessionViaApi(...)` (`POST /api/cash/sessions/close` with Bearer token and `x-business-id` header).
+  - Updated `TillSessionEngine.closeSessionWithAdmin` so all document and collection queries (`sessionRef`, `tillRef`, `varianceGlRef`, `outboxRef`, `teller_transactions`, `internal_transfers`, `customer_transfers`) run via `tx.get(...)` before any `tx.set(...)` inside `adminDb.runTransaction`.
+  - Synchronized `varianceLedgerTx` enrichment (`sanitizeAndEnrichLedgerTransaction`, `validateLedgerForeignKeys`) and deterministic `businesses/${businessId}/event_outbox/evt_tx_gl_variance_${sessionId}` creation across both Admin SDK and client paths (with deterministic outbox cleanup on client rollback).
+- **D3.1-E & D3.1-F (Remediates `D3-R-03` — Mandatory Denomination Breakdown & Canonical HTG/USD Matrix)**:
+  - Updated `TillSessionEngine.validateDenominationBreakdown` to reject `denominationBreakdown === undefined` with `400 INVALID_DENOMINATION_BREAKDOWN` whenever `actualClosingCents > 0`, while allowing `undefined` or `{}` when `actualClosingCents === 0`.
+  - Exported `CANONICAL_HTG_DENOMINATIONS` (`[1000, 500, 250, 100, 50, 25, 10, 5, 2, 1]`) and `CANONICAL_USD_DENOMINATIONS` (`[100, 50, 20, 10, 5, 2, 1]`) from `TillSessionEngine.ts` and wired them into `TillSessionModal.tsx` so `2` and `1` HTG coins are supported in UI and backend.
+- **D3.1-G & D3.1-H (Remediates `D3-R-04` — Requester Identity Verification & Signed Forensic Audit Trail)**:
+  - Verified `requesterId` in `reopenSessionWithAdmin` / `reopenSession` against `employees/${requesterId}` and `users/${requesterId}` for existence (`404 REQUESTER_NOT_FOUND`), tenant isolation (`403 TENANT_ISOLATION_VIOLATION`), active status (`403 INACTIVE_REQUESTER`), and allowed role (`403 UNAUTHORIZED_REQUESTER_ROLE`).
+  - Added `TillSessionEngine.recordAdminForensicEvent` emitting cryptographically signed `ForensicLog` records (`TILL_SESSION_CLOSED`, `TILL_SESSION_CLOSE_REFUSED`, `TILL_SESSION_REOPENED`, `TILL_SESSION_REOPEN_REFUSED`) via `ForensicLogRepository`.
+- **D3.1-I (Adversarial Security & Financial Integrity Verification)**:
+  - Expanded `src/tests/unit/security/PhaseD3TillClosureSecurityAndIntegrity.test.ts` to 21 test blocks covering all 33 mandatory adversarial cases (`88/88` tests passing across all 6 cash and security suites).
+
+## [4.5.0] - 2026-10-29
+### Enacted & Verified (Phase D3 — Transactional Till Session Closure, Pending Transfer Blockade & Variance Accounting Integrity)
+- **D3-A (Pending Operations & Transfers Blockade Before Closure)**:
+  - Hardened `TillSessionEngine.closeSession` and `TillSessionEngine.closeSessionWithAdmin` (`src/domains/cash/services/TillSessionEngine.ts`, `POST /api/cash/sessions/close` in `server.ts`) to inspect all `internal_transfers`, `customer_transfers`, and `teller_transactions` without swallowing Firestore read errors, blocking closure with `409 PENDING_TRANSFERS_BLOCKADE` whenever any relevant transfer or operation is still pending or in progress (`PENDING_APPROVAL`, `APPROVED`, `PENDING`, `PROCESSING`, `IN_PROGRESS`, `IN_TRANSIT`, `ON_HOLD`).
+- **D3-B (Transactional Atomicity, Concurrency Locks, RBAC & Idempotency)**:
+  - Added per-session and per-till concurrency locks, transactional verification (`runTransaction` / `adminDb.runTransaction`), and compensating rollback guarantees (`state_before === state_after`) across `till_sessions`, `cash_tills`, and `ledger_transactions`.
+  - Enforced multi-tenant ownership (`TENANT_ISOLATION_VIOLATION`), operator/supervisor RBAC (`FORBIDDEN_ROLE`, `UNAUTHORIZED_SESSION_OPERATOR`), active session status (`SESSION_ALREADY_CLOSED`), and deterministic variance GL ID (`gl_variance_${sessionId}`) preventing duplicate variance entries on retry or concurrent calls.
+- **D3-C (Denomination Breakdown, Currency Separation & SSOT Variance Validation)**:
+  - Added `TillSessionEngine.validateDenominationBreakdown` enforcing currency-specific denominations (`HTG` vs `USD`), safe integer counts, and exact equality between denomination sum and `actualClosingCents` (`400 DENOMINATION_TOTAL_MISMATCH`).
+  - Enforced server-side reconstruction of $S_{\text{theo}} = \text{opening\_balance\_cents} + \sum \text{inflows\_cents} - \sum \text{outflows\_cents}$, verified `till.balance_cents === expectedClosingCents` (`409 TILL_BALANCE_DIVERGENCE`), and posted balanced variance entries strictly to approved account `2910` against `1010` (`HTG`) or `1020` (`USD`).
+- **D3-D (Controlled Reopening & Historical GL Immutability)**:
+  - Hardened `TillSessionEngine.reopenSession` and `TillSessionEngine.reopenSessionWithAdmin` (`POST /api/cash/sessions/reopen`) with tenant isolation, Maker-Checker separation (`requesterId !== approverId` and `approverId !== prevSession.teller_id`), supervisor RBAC (`HEAD_TELLER`, `MANAGER`, `OWNER`, `SUPER_ADMIN`), mandatory justification, and deterministic reopened session ID (`sess_reopen_${previousSessionId}`), rejecting repeated reopen attempts (`409 SESSION_ALREADY_REOPENED`) while preserving historical closure data and `gl_variance_${previousSessionId}` immutable.
+- **D3-E & D3-F (Adversarial Security & Accounting Test Suite)**:
+  - Created `src/tests/unit/security/PhaseD3TillClosureSecurityAndIntegrity.test.ts` covering all 16 mandatory scenarios (16/16 passing; 83/83 passing across all 6 cash and security suites).
+
+## [4.4.0] - 2026-10-29
+### Enacted & Verified (Phase D2 — Controlled Server-Side Migration of Till Auto-Provisioning)
+- **D2-A (Authenticated Server Route & RBAC)**:
+  - Added `ServerTillProvisioningService` (`src/services/business/ServerTillProvisioningService.ts`) and `POST /api/cash/tills/auto-provision` (`server.ts`) using `authenticateToken`, `resolveServerRouteTenant`, `TILL_PROVISIONING_AUTHORIZED_ROLES` (`OWNER`, `ADMIN`, `MANAGER`, `HEAD_TELLER`, `SUPER_ADMIN`), and `getAdminFirestore()`.
+- **D2-B (Transactional Idempotency, Anti-Overwrite & Zero Financial Side Effects)**:
+  - Enforced per-tenant concurrency serialization and `db.runTransaction` read-before-write verification across `employees`, `cash_tills`, and `branch_safes`.
+  - Preserved existing tenant tills and safes without overwriting `balance_cents`, `status`, `active_session_id`, or timestamps; blocked cross-tenant document/employee ID overwrites (`403 TENANT_OVERWRITE_FORBIDDEN`); guaranteed zero fictitious cash movements or General Ledger entries.
+- **D2-C (Frontend & Repository Migration)**:
+  - Migrated `CashManagementRepository.autoProvisionTillsForBusiness` (`src/repositories/CashManagementRepository.ts`) and `CashConsole.tsx` to invoke `POST /api/cash/tills/auto-provision` with Bearer authentication and explicit error propagation, eliminating direct client-side Firestore writes for this flow.
+- **D2-D (Real-App Security & Idempotency Test Suite)**:
+  - Added `src/tests/unit/security/PhaseD2TillProvisioningSecurity.test.ts` mounted on the real `await createApp()` covering all 12 mandatory adversarial, RBAC, cross-tenant, idempotency, concurrency, and rollback scenarios.
+
+## [4.3.0] - 2026-10-29
+### Enacted & Verified (Phase D1 / D1.1 / D1.2 — Authentication, Authorization, IDOR & Multi-Tenant Hardening)
+- **D1.1-R-01 (Cross-Tenant Employee Overwrite Prevention)**:
+  - Hardened `ServerProvisioningService.provision` (`src/services/business/ServerProvisioningService.ts`) and `POST /api/provisioning/create-business` (`server.ts`) to validate `options.employeeId` and `options.businessId`, read `employees/${employeeId}` inside `db.runTransaction`, and block any cross-tenant or cross-user overwrite with `403 TENANT_OVERWRITE_FORBIDDEN`.
+- **D1.1-R-02 (Single-Tenant Membership Invariant via Custom Claims)**:
+  - Enforced single-tenant membership checks against `req.user.business_id` (Custom Claims) in `server.ts`, `ServerProvisioningService.provision`, and `InvitationService.acceptInvitation`, preventing tenant hopping even when `users/{uid}` is absent or `options.businessId` is omitted (`403 USER_ALREADY_BOUND_TO_TENANT`, `403 TENANT_CONFLICT_EXISTING_MEMBERSHIP`).
+- **D1.1-R-03 (AI CFO Authentication & Context Binding)**:
+  - Protected `POST /api/cfo/analyze` and `POST /api/cfo/narrative` with `authenticateToken`, removed unprefixed `/cfo/analyze` and `/cfo/narrative` route aliases, blocked `userContext.userId` spoofing (`403 IDENTITY_SPOOFING_DETECTED`) and cross-tenant `businessId` (`403 FORBIDDEN_TENANT_ACCESS`), and derived `resolvedUserContext` (`userId`, `userEmail`, `role`, `businessId`) strictly from `req.user`.
+- **D1.1-R-04 (Server-Side Firebase Admin SDK Execution)**:
+  - Migrated server execution paths in `EmployeeReceivableRepository.ts`, `SnapshotRetentionManager.ts`, `DataCleanupAndSSOTService.ts`, and `ForeignKeyIntegrityValidator.ts` from the unauthenticated Web SDK to `getAdminFirestore()`, supporting both root collections and `businesses/{businessId}/{collection}` subcollections with strict tenant ownership verification.
+- **D1.1-R-05 (Unified RBAC & Dual-Field `businessId` / `business_id` Consistency)**:
+  - Exported canonical `RECEIVABLE_READ_ROLES`, `RECEIVABLE_APPROVE_ROLES` (including `"ADMIN"`), `RECEIVABLE_REPAYMENT_ROLES` (including `"ACCOUNTANT"` and `"FINANCE"`, excluding `"TELLER"`/`"SENIOR_TELLER"`), and `resolveReceivableTenantId` from `EmployeeReceivableService.ts` and wired them into `server.ts`.
+  - Enforced dual-field `businessId` / `business_id` consistency across `server.ts`, `serverApprovalRoutes.ts`, `EmployeeReceivableService.ts`, `EmployeeReceivableRepository.ts`, `InvitationService.ts`, and `ForeignKeyIntegrityValidator.ts`.
+- **D1.1-R-06 (Error Response Sanitization & Real `createApp()` Security Test Suite)**:
+  - Sanitized 4xx/500 error responses in `serverApprovalRoutes.ts` and `server.ts` so raw `err.message` strings are never leaked to clients.
+  - Updated `src/tests/unit/security/PhaseD1AuthMultiTenant.test.ts` to mount and test the real `createApp()` from `server.ts` across 30 tests (75/75 passing across all 6 security/integration suites).
+
 ## [4.2.1] - 2026-10-07
 ### Enacted & Verified (Phase 15.2R — Independent Runtime Verification & Phase Closure)
 - **Official Phase Verdict**: `VERIFIED WITH LIMITATIONS`.

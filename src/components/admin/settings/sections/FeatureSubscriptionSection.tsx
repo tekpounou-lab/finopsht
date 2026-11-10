@@ -28,7 +28,8 @@ export default function FeatureSubscriptionSection() {
 
   const businessId = currentBusiness?.id;
   const userRole = PermissionService.getRole();
-  const canUpgrade = userRole === "OWNER" || userRole === "SUPER_ADMIN";
+  const isSuperAdmin = userRole === "SUPER_ADMIN";
+  const canUpgrade = userRole === "OWNER" || isSuperAdmin;
 
   // Active Plan determination
   const activePlanCode = (
@@ -72,8 +73,13 @@ export default function FeatureSubscriptionSection() {
   const isSeatExceeded = activeEmployeesCount > currentSeatLimit;
 
   const handleToggleFeature = async (id: string) => {
+    if (!isSuperAdmin) {
+      toast.error("L'activation des modules est réservée au Super Admin ou déterminée automatiquement par votre forfait d'abonnement.");
+      return;
+    }
     const newFeatures = { ...enabledFeatures, [id]: !enabledFeatures[id] };
     await updateFeatures(newFeatures);
+    toast.success("Surcharge du module mise à jour par le Super Admin.");
   };
 
   const handleConfirmUpgrade = async () => {
@@ -159,11 +165,21 @@ export default function FeatureSubscriptionSection() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Modules Toggle */}
         <div className="lg:col-span-8 space-y-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Package className="w-4 h-4 text-cyan-400" />
-              Catalogue des Modules Métier
-            </h4>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+            <div>
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Package className="w-4 h-4 text-cyan-400" />
+                Catalogue des Modules Métier
+              </h4>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Modules régis par votre forfait ({activePlanCode}) et administrés par le Super Admin de la plateforme.
+              </p>
+            </div>
+            {isSuperAdmin && (
+              <span className="px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-lg text-[10px] font-bold uppercase tracking-wider">
+                Mode Surcharge Super Admin
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -205,13 +221,26 @@ export default function FeatureSubscriptionSection() {
                         <ArrowUpRight className="w-3.5 h-3.5" />
                         <span className="text-[10px] font-bold uppercase tracking-wider">UPGRADE REQUIS</span>
                       </button>
-                    ) : (
+                    ) : isSuperAdmin ? (
                       <button
                         onClick={() => handleToggleFeature(feature.id)}
                         disabled={adminLoading}
                         className={`text-[10px] font-bold uppercase tracking-wider ${enabled ? "text-cyan-400" : "text-slate-500 hover:text-slate-300"}`}
                       >
-                        {enabled ? "DÉSACTIVER" : "ACTIVER"}
+                        {enabled ? "DÉSACTIVER (SUPER ADMIN)" : "ACTIVER (SUPER ADMIN)"}
+                      </button>
+                    ) : enabled ? (
+                      <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[10px]">
+                        <Check className="w-3.5 h-3.5" />
+                        <span className="uppercase tracking-wider">Inclus dans le Forfait</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setShowPlansModal(true)}
+                        className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors"
+                      >
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">NÉCESSITE SURCLASSEMENT</span>
                       </button>
                     )}
                     {enabled && <Check className="w-4 h-4 text-emerald-500" />}

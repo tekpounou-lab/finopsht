@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Filter, Database, Sparkles, Plus, Loader2, Layers, TrendingUp, Building2 } from 'lucide-react';
+import { Filter, Database, Sparkles, Plus, Loader2, Layers, TrendingUp, Building2, Vault, FileText } from 'lucide-react';
 import { Employee, LedgerTransaction, ERPEvent, ForensicLog, Role, Branch, Business, Department } from '../types';
 import LedgerHeader from '../components/ledger/LedgerHeader';
 import FilterToolbar from '../components/ledger/FilterToolbar';
@@ -11,6 +11,8 @@ import DataIntegrityDialog from '../components/ledger/DataIntegrityDialog';
 import AICFOAnalysisSheet from '../components/ledger/AICFOAnalysisSheet';
 import { FinancialDashboard } from '../components/ledger/FinancialDashboard';
 import { BankReconciliationConsole } from '../components/ledger/BankReconciliationConsole';
+import { CashConsole } from '../components/cash/CashConsole';
+import { ReportCenterConsole } from '../components/reports/ReportCenterConsole';
 import { LedgerRepository } from '../repositories/LedgerRepository';
 import { LedgerFilterParams } from '../components/ledger/types';
 import { generateSignature, getLocalIP } from '../data';
@@ -21,8 +23,11 @@ import { useI18n, useTranslate } from '../i18n';
 import { resolveDepartmentName } from '../utils/nameResolvers';
 import { filterLedgerTransactions, calculateLedgerSummary, LedgerFilterContext } from '../services/cfo/LedgerFilterEngine';
 import { LedgerSeedService } from '../services/cfo/LedgerSeedService';
-import { detectOrphanTransactions, COST_CENTER_DEFAULT } from '../services/AccountingEngine';
+import { detectOrphanTransactions, COST_CENTER_DEFAULT, sanitizeAndEnrichLedgerTransaction, TransactionSanitizationContext } from '../services/AccountingEngine';
 import { useFilters } from '../hooks/useFilters';
+import { useAuth } from '../hooks/useAuth';
+import { auth } from '../lib/firebase';
+import { TransactionMappingEngine } from '../services/cash/transactionMappingEngine';
 import { EventBus } from '../modules/runtime/EventBus';
 
 const DEFAULT_GL_FILTERS: LedgerFilterParams = {
@@ -51,6 +56,7 @@ interface FinanceLedgerProps {
   branches: Branch[];
   departments: Department[];
   selectedMonth: number | string;
+  initialView?: 'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION' | 'CASH_MANAGEMENT' | 'REPORT_CENTER';
 }
 
 export default function FinanceLedger({
@@ -66,10 +72,12 @@ export default function FinanceLedger({
   currentBusiness,
   branches,
   departments,
-  selectedMonth
+  selectedMonth,
+  initialView = 'TRANSACTIONS'
 }: FinanceLedgerProps) {
   const { language } = useI18n();
   const tText = useTranslate();
+  const { user: authUser } = useAuth();
   
   // Centralized SSOT Filter Store for General Ledger
   const {
@@ -122,7 +130,13 @@ export default function FinanceLedger({
   const [showCompensation, setShowCompensation] = useState(false);
   const [showAiCfo, setShowAiCfo] = useState(false);
   const [showDataIntegrity, setShowDataIntegrity] = useState(false);
-  const [currentView, setCurrentView] = useState<'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION'>('TRANSACTIONS');
+  const [currentView, setCurrentView] = useState<'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION' | 'CASH_MANAGEMENT' | 'REPORT_CENTER'>(initialView);
+
+  useEffect(() => {
+    if (initialView) {
+      setCurrentView(initialView);
+    }
+  }, [initialView]);
   const [isSeeding, setIsSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -139,11 +153,19 @@ export default function FinanceLedger({
     }
     try {
       setIsCleaningOrphans(true);
-      const defaultBranch = (branches.find(b => b.business_id === current_business_id) as any)?.cost_center_id || COST_CENTER_DEFAULT;
+      const defaultBranch = (branches.find(b => b.business_id === current_business_id) as any)?.cost_center_id || branches[0]?.id || COST_CENTER_DEFAULT;
       const res = await LedgerRepository.cleanOrphanTransactions(
         current_business_id,
         defaultBranch,
-        { role: currentRole, business_id: current_business_id }
+        { role: currentRole, business_id: current_business_id },
+        {
+          branches,
+          departments,
+          employees,
+          defaultBranchId: branches[0]?.id || "main",
+          defaultDepartmentId: departments[0]?.id || "operations",
+          defaultCostCenter: defaultBranch
+        }
       );
       toast.success(tText(`${res.fixedCount} transaction(s) orpheline(s) corrigée(s) et réaffectée(s) avec succès !`));
     } catch (err: any) {
@@ -396,17 +418,62 @@ export default function FinanceLedger({
   };
 
   const handleSaveTransaction = async (txData: Partial<LedgerTransaction>) => {
-    if (currentRole !== 'OWNER' && currentRole !== 'MANAGER') {
+    const roleUpper = (currentRole || '').toUpperCase();
+    const canSave = ['OWNER', 'MANAGER', 'SUPER_ADMIN', 'ACCOUNTANT', 'HEAD_TELLER', 'SENIOR_TELLER', 'JUNIOR_TELLER'].includes(roleUpper);
+    if (!canSave) {
       toast.error(tText("Accès refusé."));
       return;
     }
+
+    // Defense-in-depth: Validate operational profile boundaries for operational staff
+    if (roleUpper !== 'OWNER' && roleUpper !== 'SUPER_ADMIN' && roleUpper !== 'MANAGER') {
+      const opProfile = TransactionMappingEngine.resolveOperationalProfile(currentRole);
+      if (txData.transaction_type_code || txData.category) {
+        const check = TransactionMappingEngine.isOperationAllowedForProfile(
+          {
+            code: txData.transaction_type_code,
+            category: txData.category as any,
+            name: txData.description
+          },
+          opProfile
+        );
+        if (!check.isAllowed) {
+          toast.error(tText(check.reason || "Opération non autorisée pour votre profil RH."));
+          return;
+        }
+      }
+    }
     
-    const newTx = {
-      ...txData,
-      id: "tx_" + Math.random().toString(36).substring(2, 9),
-    } as LedgerTransaction;
+    const context: TransactionSanitizationContext = {
+      branches,
+      departments,
+      employees,
+      defaultBranchId: branches[0]?.id || "main",
+      defaultDepartmentId: departments[0]?.id || "operations",
+      defaultCostCenter: branches[0]?.id || "main"
+    };
+
+    const enrichedTx = sanitizeAndEnrichLedgerTransaction(
+      {
+        ...txData,
+        id: txData.id || "tx_" + Math.random().toString(36).substring(2, 9),
+        business_id: current_business_id,
+        businessId: current_business_id
+      },
+      current_business_id,
+      context
+    );
+
+    try {
+      await LedgerRepository.save(enrichedTx);
+      onAddTransaction(enrichedTx);
+      toast.success(tText("Transaction enregistrée et imputée avec succès."));
+    } catch (saveErr: any) {
+      console.error("[FinanceLedger] Error saving transaction:", saveErr);
+      toast.error(tText(`Erreur d'enregistrement: ${saveErr.message || 'Erreur inconnue'}`));
+      return;
+    }
     
-    onAddTransaction(newTx);
     onAddForensicLog({
       id: "f_" + Math.random().toString(36).substring(2, 9),
       timestamp: new Date().toISOString(),
@@ -416,10 +483,10 @@ export default function FinanceLedger({
       business_id: current_business_id,
       action: txData.type === 'COMPENSATION' ? "COMPENSATION_CREATED" : "TRANSACTION_CREATED",
       beforeState: "{}",
-      afterState: JSON.stringify(newTx),
+      afterState: JSON.stringify(enrichedTx),
       ipAddress: getLocalIP(),
       userAgent: window.navigator.userAgent,
-      signature: generateSignature({ newTx })
+      signature: generateSignature({ newTx: enrichedTx })
     });
   };
 
@@ -435,12 +502,28 @@ export default function FinanceLedger({
     setIsBatchImporting(true);
     setImportProgress(0);
     
-    // Map partials to full transactions
-    const mappedTxs: LedgerTransaction[] = txs.map(txData => ({
-      ...txData,
-      id: "tx_imp_" + Math.random().toString(36).substring(2, 9),
-      business_id: current_business_id
-    } as LedgerTransaction));
+    const context: TransactionSanitizationContext = {
+      branches,
+      departments,
+      employees,
+      defaultBranchId: branches[0]?.id || "main",
+      defaultDepartmentId: departments[0]?.id || "operations",
+      defaultCostCenter: branches[0]?.id || "main"
+    };
+
+    // Canonical zero-orphan relational enrichment prior to bulk write
+    const mappedTxs: LedgerTransaction[] = txs.map(txData => 
+      sanitizeAndEnrichLedgerTransaction(
+        {
+          ...txData,
+          id: txData.id || "tx_imp_" + Math.random().toString(36).substring(2, 9),
+          business_id: current_business_id,
+          businessId: current_business_id
+        },
+        current_business_id,
+        context
+      )
+    );
 
     const forensicLog: ForensicLog = {
       id: "f_" + Math.random().toString(36).substring(2, 9),
@@ -464,7 +547,8 @@ export default function FinanceLedger({
         (completed, total) => {
           const percentage = Math.round((completed / total) * 100);
           setImportProgress(percentage);
-        }
+        },
+        context
       );
 
       if (result.failed > 0) {
@@ -589,6 +673,7 @@ export default function FinanceLedger({
         employees={employees}
         current_business_id={current_business_id}
         onSave={handleSaveTransaction}
+        currentRole={currentRole}
       />
 
       <BulkTransactionImportDialog 
@@ -724,10 +809,57 @@ export default function FinanceLedger({
             <Building2 className="w-3.5 h-3.5" />
             {tText("Rapprochement Bancaire")}
           </button>
+          <button
+            onClick={() => setCurrentView('CASH_MANAGEMENT')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              currentView === 'CASH_MANAGEMENT'
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-sm shadow-amber-950/40 ring-1 ring-amber-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+            }`}
+            id="btn_view_cash_management"
+            title={tText("Caisses & Coffres (également accessible via le menu latéral)")}
+          >
+            <Vault className="w-3.5 h-3.5 text-amber-400" />
+            <span>{tText("Caisses & Coffres (Cash Management)")}</span>
+          </button>
+          <button
+            onClick={() => setCurrentView('REPORT_CENTER')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              currentView === 'REPORT_CENTER'
+                ? 'bg-gradient-to-r from-cyan-500/20 to-teal-500/20 text-cyan-400 border border-cyan-500/40 shadow-sm shadow-cyan-950/40'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+            }`}
+            id="btn_view_report_center"
+          >
+            <FileText className="w-3.5 h-3.5 text-cyan-400" />
+            {tText("Centre des Rapports FINOPS")}
+          </button>
         </div>
       </div>
 
-      {currentView === 'BANK_RECONCILIATION' ? (
+      {currentView === 'REPORT_CENTER' ? (
+        <ReportCenterConsole
+          businessId={current_business_id}
+          businessName={currentBusiness?.name || "Entreprise FINOPS"}
+          currentRole={currentRole}
+          currentBranchId={currentBranchId || undefined}
+          transactions={ledgerTransactions}
+          branches={branches.filter(b => b.business_id === current_business_id)}
+          departments={departments}
+          employees={employees.filter(e => e.business_id === current_business_id)}
+        />
+      ) : currentView === 'CASH_MANAGEMENT' ? (
+        <CashConsole
+          businessId={current_business_id}
+          branchId={currentBranchId || "MAIN_BRANCH"}
+          currentUser={{
+            id: authUser?.uid || auth.currentUser?.uid || "user_current",
+            name: authUser?.displayName || currentBusiness?.name || "Responsable Caisse",
+            role: currentRole
+          }}
+          employees={employees}
+        />
+      ) : currentView === 'BANK_RECONCILIATION' ? (
         <BankReconciliationConsole
           businessId={current_business_id}
           ledgerTransactions={ledgerTransactions}

@@ -13,9 +13,9 @@ export function useAccrualBasisSnapshot(overrideFilters?: Record<string, any>) {
   const resolvedFilters = {
     startDate: overrideFilters?.startDate || globalFilters.dateRange.startDate,
     endDate: overrideFilters?.endDate || globalFilters.dateRange.endDate,
-    branchId: overrideFilters?.branchId || globalFilters.branchId,
-    departmentId: overrideFilters?.departmentId || globalFilters.departmentId,
-    employeeId: overrideFilters?.employeeId || globalFilters.employeeId,
+    branchId: (overrideFilters?.branchId && overrideFilters.branchId !== "ALL") ? overrideFilters.branchId : (globalFilters.branchId || "ALL"),
+    departmentId: (overrideFilters?.departmentId && overrideFilters.departmentId !== "ALL") ? overrideFilters.departmentId : (globalFilters.departmentId || "ALL"),
+    employeeId: (overrideFilters?.employeeId && overrideFilters.employeeId !== "ALL") ? overrideFilters.employeeId : (globalFilters.employeeId || "ALL"),
   };
 
   const filterKey = JSON.stringify(resolvedFilters);

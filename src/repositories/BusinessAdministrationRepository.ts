@@ -103,11 +103,25 @@ export const BusinessAdministrationRepository = {
               : data.enable_social_taxes !== undefined
               ? Boolean(data.enable_social_taxes)
               : defaultPolicies.enableTaxes;
+            const enableSurvivalFloor = data.enableSurvivalFloor !== undefined
+              ? Boolean(data.enableSurvivalFloor)
+              : data.enable_survival_floor !== undefined
+              ? Boolean(data.enable_survival_floor)
+              : defaultPolicies.enableSurvivalFloor;
+            const requireAttendanceForPayroll = data.requireAttendanceForPayroll !== undefined
+              ? Boolean(data.requireAttendanceForPayroll)
+              : data.require_attendance_for_payroll !== undefined
+              ? Boolean(data.require_attendance_for_payroll)
+              : defaultPolicies.requireAttendanceForPayroll;
             return {
               ...defaultPolicies,
               ...data,
               enableTaxes,
               enableSocialTaxes: enableTaxes,
+              enableSurvivalFloor,
+              enable_survival_floor: enableSurvivalFloor,
+              requireAttendanceForPayroll,
+              require_attendance_for_payroll: requireAttendanceForPayroll,
               survivalFloorHTG: data.survivalFloorHTG ?? data.survivalFloor ?? defaultPolicies.survivalFloorHTG,
               standardHoursPerCycle: data.standardHoursPerCycle ?? data.standardQuinzaineHours ?? defaultPolicies.standardHoursPerCycle,
               attendanceToleranceHours: data.attendanceToleranceHours ?? defaultPolicies.attendanceToleranceHours,

@@ -8,6 +8,7 @@ import {
   TrendDataPoint,
   EmployeePerformanceRanking,
   CrossTableMatrixCell,
+  TillDiscrepancyAlert,
 } from "../types";
 import { AnalyticsEngine } from "../../analytics/services/AnalyticsEngine";
 import {
@@ -37,6 +38,7 @@ export function selectFilteredDataSet(
   filters: PICFilters
 ) {
   const { branchId, departmentId, startDate, endDate, searchQuery, metricType } = filters;
+  const filterBusinessId = (filters as any).businessId || (filters as any).business_id;
   const normalizedQuery = normalize(searchQuery);
 
   console.info(`[PIC] [Selectors] Filtering dataset with:`, {
@@ -50,6 +52,7 @@ export function selectFilteredDataSet(
 
   // 1. Filter Employees
   const filteredEmployees = (raw.employees || []).filter((emp) => {
+    if (filterBusinessId && emp.business_id && emp.business_id !== filterBusinessId) return false;
     // Branch Filter
     if (branchId && branchId !== "ALL") {
       const empBranch = emp.branchId || emp.branch_id;
@@ -76,6 +79,10 @@ export function selectFilteredDataSet(
 
   // 2. Filter Ledger Transactions
   const filteredTransactions = (raw.transactions || []).filter((tx) => {
+    if (filterBusinessId) {
+      const txBiz = tx.business_id || (tx as any).businessId;
+      if (txBiz && txBiz !== filterBusinessId) return false;
+    }
     if (tx.status === "REVERSED" || tx.status === "VOID" || tx.status === "CANCELLED") return false;
 
     // Branch Filter
@@ -122,6 +129,10 @@ export function selectFilteredDataSet(
 
   // 3. Filter Payroll Records
   const filteredPayrollRecords = (raw.payrollRecords || []).filter((p) => {
+    if (filterBusinessId) {
+      const pBiz = p.business_id || (p as any).businessId;
+      if (pBiz && pBiz !== filterBusinessId) return false;
+    }
     // Branch Filter
     if (branchId && branchId !== "ALL") {
       const pBranch = p.branchId || p.branch_id;
@@ -139,20 +150,21 @@ export function selectFilteredDataSet(
       if (!matchesDateFilter(pDate, startDate, endDate)) {
         return false;
       }
-    } else if (startDate && endDate) {
+    } else if (startDate || endDate) {
       const pStart = normalizeDateStr(p.period_start || p.periodStart || p.startDate);
       const pEnd = normalizeDateStr(p.period_end || p.periodEnd || p.periodEndDate || p.endDate);
       const paymentDate = normalizeDateStr(p.paymentDate || p.effectiveAccountingDate);
 
-      if (paymentDate && paymentDate >= startDate && paymentDate <= endDate) {
+      if (paymentDate && matchesDateFilter(paymentDate, startDate, endDate)) {
         // Explicit payment date in period
       } else if (pStart && pEnd) {
         // Range overlap: !(recEnd < startDate || recStart > endDate)
-        if (pEnd < startDate || pStart > endDate) return false;
+        if (startDate && pEnd < startDate) return false;
+        if (endDate && pStart > endDate) return false;
       } else {
         const rawPDate = paymentDate || pEnd || pStart || p.createdAt || p.created_at || p.date;
         const pDate = normalizeDateStr(rawPDate);
-        if (!pDate || pDate < startDate || pDate > endDate) return false;
+        if (!matchesDateFilter(pDate, startDate, endDate)) return false;
       }
     }
     // Employee Match Filter
@@ -208,7 +220,8 @@ export function selectFilteredDataSet(
  */
 export function selectSimplifiedMetrics(
   raw: RawPerformanceDataSet,
-  filters: PICFilters
+  filters: PICFilters,
+  normalizationContext?: any
 ): SimplifiedMetrics {
   const filtered = selectFilteredDataSet(raw, filters);
   const { employees, transactions, payrollRecords, attendanceRecords, branches, departments } = filtered;
@@ -222,26 +235,27 @@ export function selectSimplifiedMetrics(
     "";
 
   // Generate SSOT snapshot via AnalyticsEngine
-  const snap = AnalyticsEngine.generateSnapshot(
-    "CUSTOM",
-    { startDate: filters.startDate, endDate: filters.endDate },
+  const snap = AnalyticsEngine.generateSnapshot({
+    period: "CUSTOM",
+    customRange: { startDate: filters.startDate, endDate: filters.endDate },
     employees,
     transactions,
-    attendanceRecords,
+    attendanceLogs: attendanceRecords,
     payrollRecords,
     branches,
     departments,
-    [],
     businessId,
-    "fr"
-  );
+    language: "fr",
+    accountingMode: filters.accountingBasis || (filters as any).accountingMode || "CASH",
+    normalizationContext,
+  });
 
   const totalRevenue = Math.round(snap.revenue.currentValue);
   const totalExpenses = Math.round(snap.expenses.currentValue);
   const netProfit = Math.round(snap.profit.currentValue);
   const profitMargin = Math.round(snap.profitMargin);
   const totalPayroll = Math.round(snap.payrollCost.currentValue);
-  const activeHeadcount = snap.activeStaff.currentValue || employees.filter((e) => e.status === "ACTIVE" || !e.status).length;
+  const activeHeadcount = snap.activeStaff.currentValue ?? (employees.filter((e) => e.status === "ACTIVE" || !e.status).length);
   const attendanceRate = snap.attendanceRate.currentValue;
   const averageHoursWorked = snap.avgHoursWorked.currentValue;
 
@@ -255,8 +269,9 @@ export function selectSimplifiedMetrics(
     overtimeHoursTotal += (p.overtimeHours150 || 0) + (p.overtimeHours200 || 0);
   });
 
-  const totalRecordsCount = employees.length + transactions.length + payrollRecords.length + attendanceRecords.length;
-  const isDataAvailable = totalRecordsCount > 0;
+  const activityRecordsCount = transactions.length + payrollRecords.length + attendanceRecords.length;
+  const totalRecordsCount = employees.length + activityRecordsCount;
+  const isDataAvailable = activityRecordsCount > 0;
 
   const metrics: SimplifiedMetrics = {
     totalPayroll,
@@ -272,6 +287,7 @@ export function selectSimplifiedMetrics(
     totalCommissions: Math.round(totalCommissions),
     isDataAvailable,
     totalRecordsCount,
+    incompleteConfigCount: (snap as any).incompleteConfigCount || 0,
   };
 
   console.info(`[PIC] [Selectors] selectSimplifiedMetrics output (SSOT):`, metrics);
@@ -283,9 +299,10 @@ export function selectSimplifiedMetrics(
  */
 export function selectExpertMetrics(
   raw: RawPerformanceDataSet,
-  filters: PICFilters
+  filters: PICFilters,
+  normalizationContext?: any
 ): ExpertMetrics {
-  const kpis = selectSimplifiedMetrics(raw, filters);
+  const kpis = selectSimplifiedMetrics(raw, filters, normalizationContext);
   const filtered = selectFilteredDataSet(raw, filters);
   const { employees, transactions, payrollRecords, attendanceRecords, departments: allDepts, branches: allBranches } = filtered;
 
@@ -298,19 +315,21 @@ export function selectExpertMetrics(
     "";
 
   // Generate SSOT snapshot via AnalyticsEngine
-  const snap = AnalyticsEngine.generateSnapshot(
-    "CUSTOM",
-    { startDate: filters.startDate, endDate: filters.endDate },
+  const snap = AnalyticsEngine.generateSnapshot({
+    period: "CUSTOM",
+    customRange: { startDate: filters.startDate, endDate: filters.endDate },
     employees,
     transactions,
-    attendanceRecords,
+    attendanceLogs: attendanceRecords,
     payrollRecords,
-    allBranches,
-    allDepts,
-    [],
+    branches: allBranches,
+    departments: allDepts,
+    contracts: [],
     businessId,
-    "fr"
-  );
+    language: "fr",
+    accountingMode: filters.accountingBasis || (filters as any).accountingMode || "CASH",
+    normalizationContext,
+  });
 
   // 1. Department Breakdown
   const departments: DepartmentMetricBreakdown[] = (snap.departmentPerformance || []).map((d: any) => {
@@ -322,7 +341,7 @@ export function selectExpertMetrics(
       departmentName: d.departmentName || d.name || "Département",
       headcount: d.employeeCount || 0,
       payroll: Math.round(d.payrollCost ?? d.payroll ?? d.expenses ?? 0),
-      attendanceRate: d.attendanceRate || 95,
+      attendanceRate: d.attendanceRate ?? null,
       revenue: Math.round(rev),
       expenses: Math.round(exp),
       netMargin: d.margin !== undefined ? Math.round(d.margin) : margin,
@@ -337,7 +356,7 @@ export function selectExpertMetrics(
       branchName: b.branchName || b.name || "Succursale",
       headcount: b.employeeCount || 0,
       payroll: Math.round(b.payrollCost ?? b.payroll ?? b.expenses ?? 0),
-      attendanceRate: b.attendanceRate || 95,
+      attendanceRate: b.attendanceRate ?? null,
       revenue: Math.round(b.revenue || 0),
       efficiencyScore: b.efficiencyScore || 80,
     };
@@ -351,7 +370,7 @@ export function selectExpertMetrics(
       payroll: Math.round(t.payroll || 0),
       revenue: Math.round(t.gross || 0),
       headcount: t.headcount || 0,
-      attendanceRate: t.attendanceRate || 95,
+      attendanceRate: t.attendanceRate ?? null,
       expenses: Math.round(t.expenses || 0),
     };
   });
@@ -366,7 +385,7 @@ export function selectExpertMetrics(
       branchId: s.branchId || "",
       branchName: s.branchName || "Siège",
       totalHours: s.totalHours ?? s.hoursWorked ?? 0,
-      attendanceScore: s.attendanceConsistencyScore ?? s.attendanceScore ?? 95,
+      attendanceScore: s.attendanceConsistencyScore !== undefined ? s.attendanceConsistencyScore : (s.attendanceScore ?? null),
       salesVolume: Math.round(s.salesVolume || 0),
       commission: Math.round(s.commissions ?? s.commissionEarned ?? 0),
       productivityIndex: s.productivityIndex || 85,
@@ -389,9 +408,15 @@ export function selectExpertMetrics(
         );
         const matrixRev = empScorecards.reduce((sum: number, s: any) => sum + (s.salesVolume || 0), 0);
         const matrixPayroll = empScorecards.reduce((sum: number, s: any) => sum + (s.payrollCost || s.baseSalary || 0), 0);
-        const matrixAtt = empScorecards.length > 0
-          ? Math.round(empScorecards.reduce((sum: number, s: any) => sum + (s.attendanceConsistencyScore || 0), 0) / empScorecards.length)
-          : 95;
+        const computableMatrixScorecards = empScorecards.filter(
+          (s: any) => typeof s.attendanceConsistencyScore === "number" && !isNaN(s.attendanceConsistencyScore)
+        );
+        const matrixAtt = computableMatrixScorecards.length > 0
+          ? Math.round(
+              computableMatrixScorecards.reduce((sum: number, s: any) => sum + s.attendanceConsistencyScore, 0) /
+                computableMatrixScorecards.length
+            )
+          : null;
         crossTableMatrix.push({
           departmentId: dept.id,
           departmentName: dept.name || dept.id,
@@ -406,6 +431,36 @@ export function selectExpertMetrics(
     });
   });
 
+  // 6. Till Closure Operational Risk Discrepancy Alerts (Zero P&L/EBITDA Impact)
+  const operationalAuditAlerts: TillDiscrepancyAlert[] = [];
+  (transactions || []).forEach((tx: any) => {
+    const catUpper = (tx.category || tx.category_name || "").toString().toUpperCase();
+    const typeUpper = (tx.type || "").toString().toUpperCase();
+    const descUpper = (tx.description || tx.memo || "").toString().toUpperCase();
+    if (
+      catUpper.includes("TILL_DISCREPANCY") ||
+      catUpper.includes("CASH_SHORTAGE") ||
+      catUpper.includes("FLOAT_VARIANCE") ||
+      typeUpper.includes("TILL_DISCREPANCY") ||
+      descUpper.includes("ÉCART DE CAISSE") ||
+      descUpper.includes("ECART DE CAISSE")
+    ) {
+      operationalAuditAlerts.push({
+        id: tx.id,
+        tillId: tx.till_id || tx.tillId || "till_gen",
+        tillName: tx.till_name || tx.tillName || "Caisse",
+        branchId: tx.branch_id || tx.branchId,
+        branchName: tx.branch_name || tx.branchName,
+        tellerName: tx.created_by_name || tx.teller_name || "Caissier",
+        discrepancyAmount: tx.amount || (tx.amount_cents ? tx.amount_cents / 100 : 0),
+        currency: tx.currency || "HTG",
+        closedAt: tx.created_at || tx.createdAt || tx.date,
+        sessionId: tx.till_session_id || tx.tillSessionId || tx.id,
+        notes: tx.memo || tx.description
+      });
+    }
+  });
+
   return {
     kpis,
     departments,
@@ -414,6 +469,7 @@ export function selectExpertMetrics(
     employeeRankings,
     crossTableMatrix,
     isDataAvailable: kpis.isDataAvailable,
+    operationalAuditAlerts,
   };
 }
 
@@ -422,7 +478,8 @@ export function selectExpertMetrics(
  */
 export function selectCashBasisExpertMetrics(
   raw: RawPerformanceDataSet,
-  filters: PICFilters
+  filters: PICFilters,
+  normalizationContext?: any
 ): ExpertMetrics {
   const { startDate, endDate } = filters;
   const filtered = selectFilteredDataSet(raw, filters);
@@ -484,6 +541,7 @@ export function selectCashBasisExpertMetrics(
     businessId,
     language: "fr",
     accountingMode: "CASH",
+    normalizationContext,
   });
 
   const netProfit = Math.round(snap.profit.currentValue);
@@ -495,7 +553,7 @@ export function selectCashBasisExpertMetrics(
       .reduce((acc, m) => acc + m.amount, 0)
   );
 
-  const activeHeadcount = snap.activeStaff.currentValue || employees.filter((e) => e.status === "ACTIVE" || !e.status).length;
+  const activeHeadcount = snap.activeStaff.currentValue ?? (employees.filter((e) => e.status === "ACTIVE" || !e.status).length);
   const attendanceRate = snap.attendanceRate.currentValue;
   const averageHoursWorked = snap.avgHoursWorked.currentValue;
 
@@ -510,8 +568,9 @@ export function selectCashBasisExpertMetrics(
     overtimeHoursTotal += (p.overtimeHours150 || 0) + (p.overtimeHours200 || 0);
   });
 
-  const totalRecordsCount = employees.length + transactions.length + payrollRecords.length + attendanceRecords.length;
-  const isDataAvailable = totalRecordsCount > 0;
+  const activityRecordsCount = transactions.length + payrollRecords.length + attendanceRecords.length;
+  const totalRecordsCount = employees.length + activityRecordsCount;
+  const isDataAvailable = activityRecordsCount > 0;
 
   const cashBasisKpis: SimplifiedMetrics = {
     totalPayroll,
@@ -540,7 +599,7 @@ export function selectCashBasisExpertMetrics(
       departmentName: d.departmentName || d.name || "Département",
       headcount: d.employeeCount || 0,
       payroll: Math.round(d.payrollCost ?? d.payroll ?? d.expenses ?? 0),
-      attendanceRate: d.attendanceRate || 95,
+      attendanceRate: d.attendanceRate ?? null,
       revenue: Math.round(rev),
       expenses: Math.round(exp),
       netMargin: d.margin !== undefined ? Math.round(d.margin) : margin,
@@ -554,7 +613,7 @@ export function selectCashBasisExpertMetrics(
       branchName: b.branchName || b.name || "Succursale",
       headcount: b.employeeCount || 0,
       payroll: Math.round(b.payrollCost ?? b.payroll ?? b.expenses ?? 0),
-      attendanceRate: b.attendanceRate || 95,
+      attendanceRate: b.attendanceRate ?? null,
       revenue: Math.round(b.revenue || 0),
       efficiencyScore: b.efficiencyScore || 80,
     };
@@ -567,7 +626,7 @@ export function selectCashBasisExpertMetrics(
       payroll: Math.round(t.payroll || 0),
       revenue: Math.round(t.gross || 0),
       headcount: t.headcount || 0,
-      attendanceRate: t.attendanceRate || 95,
+      attendanceRate: t.attendanceRate ?? null,
       expenses: Math.round(t.expenses || 0),
     };
   });
@@ -581,7 +640,7 @@ export function selectCashBasisExpertMetrics(
       branchId: s.branchId || "",
       branchName: s.branchName || "Siège",
       totalHours: s.totalHours ?? s.hoursWorked ?? 0,
-      attendanceScore: s.attendanceConsistencyScore ?? s.attendanceScore ?? 95,
+      attendanceScore: s.attendanceConsistencyScore !== undefined ? s.attendanceConsistencyScore : (s.attendanceScore ?? null),
       salesVolume: Math.round(s.salesVolume || 0),
       commission: Math.round(s.commissions ?? s.commissionEarned ?? 0),
       productivityIndex: s.productivityIndex || 85,
@@ -603,9 +662,15 @@ export function selectCashBasisExpertMetrics(
         );
         const matrixRev = empScorecards.reduce((sum: number, s: any) => sum + (s.salesVolume || 0), 0);
         const matrixPayroll = empScorecards.reduce((sum: number, s: any) => sum + (s.payrollCost || s.baseSalary || 0), 0);
-        const matrixAtt = empScorecards.length > 0
-          ? Math.round(empScorecards.reduce((sum: number, s: any) => sum + (s.attendanceConsistencyScore || 0), 0) / empScorecards.length)
-          : 95;
+        const computableMatrixScorecards = empScorecards.filter(
+          (s: any) => typeof s.attendanceConsistencyScore === "number" && !isNaN(s.attendanceConsistencyScore)
+        );
+        const matrixAtt = computableMatrixScorecards.length > 0
+          ? Math.round(
+              computableMatrixScorecards.reduce((sum: number, s: any) => sum + s.attendanceConsistencyScore, 0) /
+                computableMatrixScorecards.length
+            )
+          : null;
         crossTableMatrix.push({
           departmentId: dept.id,
           departmentName: dept.name || dept.id,

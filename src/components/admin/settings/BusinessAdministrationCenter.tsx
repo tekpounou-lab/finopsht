@@ -130,7 +130,7 @@ export const SETTINGS_CATEGORIES: CategoryGroup[] = [
     label: "Finance & Opérations",
     icon: Settings,
     items: [
-      { id: "FEATURES", label: "Modules & fonctionnalités", description: "Activation des briques fonctionnelles", icon: Settings },
+      { id: "FEATURES", label: "Modules & Habilitations", description: "Modules souscrits & matrice RBAC (Super Admin & Forfait)", icon: Settings },
       { id: "DATA", label: "Gestion des données", description: "Import, export & sauvegarde", icon: Database },
       { id: "AUDIT", label: "Audit & transparence", description: "Journal immuable des activités", icon: Activity },
       { id: "HEALTH", label: "Santé entreprise", description: "Indicateurs de performance globale", icon: ShieldCheck },

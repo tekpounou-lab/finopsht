@@ -8,3 +8,9 @@ coverage/
 !.env.example
 service-account-key*.json
 tek-pou-nou-tpn-*.json
+
+# Temporary scratch and render outputs
+scratch/
+.aistudio/
+*.debug.log
+phase3_cleanup_report_*.json

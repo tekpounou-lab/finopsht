@@ -11,7 +11,7 @@ import type {
   EmployeeDepartmentLink 
 } from "./types/organization";
 
-export type Role = "OWNER" | "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "SUPER_ADMIN" | "UNASSIGNED";
+export type Role = "OWNER" | "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "SUPER_ADMIN" | "UNASSIGNED" | "JUNIOR_TELLER" | "SENIOR_TELLER" | "HEAD_TELLER" | "ACCOUNTANT" | "AUDITOR";
 export type UserRole = Role;
 
 export type { 
@@ -141,6 +141,8 @@ export interface Employee {
   departmentName?: string;
 
   // Backward compatibility legacy fields
+  userId?: string;
+  companyId?: string;
   business_id?: string;
   branch_id?: string;
   department_id?: string;
@@ -251,6 +253,69 @@ export interface PayrollCycle {
   total_net_cents?: number;
   total_deductions_cents?: number;
   recordsCount?: number;
+  currency?: string;
+}
+
+export type EmployeeReceivableStatus =
+  | "PENDING_HUMAN_APPROVAL"
+  | "APPROVED_PENDING_RECOVERY"
+  | "PARTIALLY_RECOVERED"
+  | "RECOVERED"
+  | "CANCELLED"
+  | "WRITTEN_OFF";
+
+export interface EmployeeReceivableRepayment {
+  id: string;
+  receivableId: string;
+  businessId: string;
+  employeeId: string;
+  amount: number;
+  amountCents: number;
+  currency: "HTG" | "USD";
+  repaymentDate: string;
+  paymentMethod: "CASH" | "BANK" | "MONCASH" | "NATCASH" | "CARD" | "WIRE" | "DEDUCTION";
+  sourceTransactionId?: string;
+  receiptNumber?: string;
+  status: "CONFIRMED" | "REVERSED" | "VOID";
+  recordedBy: string;
+  recordedAt: string;
+  notes?: string;
+}
+
+export interface EmployeeReceivable {
+  id: string;
+  businessId: string;
+  employeeId: string;
+  employeeName?: string;
+  originalPayrollCycleId: string;
+  originalPayrollRecordId: string;
+  reversalCycleId?: string;
+  reversalPayrollRecordId?: string;
+  currency: "HTG" | "USD";
+  approvedRecoverableAmount: number;
+  approvedRecoverableCents: number;
+  recoveredAmount: number;
+  recoveredCents: number;
+  outstandingAmount: number;
+  outstandingCents: number;
+  status: EmployeeReceivableStatus;
+  createdById: string;
+  createdByName?: string;
+  createdAt: string;
+  approverId?: string;
+  approverName?: string;
+  approverRole?: string;
+  approvedAt?: string;
+  approvalReason?: string;
+  rejectionReason?: string;
+  lastReconciledAt?: string;
+  lastReconciledBy?: string;
+  repayments: EmployeeReceivableRepayment[];
+  receivableAccount: string;
+  journalEntryId?: string;
+  idempotencyKey?: string;
+  notes?: string;
+  updatedAt: string;
 }
 
 export interface PayrollRecord {
@@ -274,7 +339,11 @@ export interface PayrollRecord {
   survivalFloorApplied?: boolean;
   globalPerformanceScore?: number;
   attendanceScore?: number;
-  productivityRatio?: number;
+  policyId?: string;
+  policyVersion?: number | string;
+  employerContributionsTotal?: number;
+  employerPayrollCostTotal?: number;
+  employeeContributionsTotal?: number;
   theoretical_quincena_base_cents?: number;
   attendance_adjustment_cents?: number;
   overtime_cents?: number;
@@ -291,7 +360,11 @@ export interface PayrollRecord {
   cnss_employee_cents?: number;
   cnss_employer_cents?: number;
   cns_employee_cents?: number;
+  cns_employer_cents?: number;
   ofatma_employer_cents?: number;
+  tax_employee_cents?: number;
+  employer_tax_cents?: number;
+  employer_deductions_cents?: number;
   gross_salary_cents?: number;
   net_salary_cents?: number;
   projected_net_salary_cents?: number;
@@ -299,11 +372,17 @@ export interface PayrollRecord {
   grossSalary: number; // base salary matching the cycle/pay schema
   cnssDeduction: number; // 6% CNSS employer/employee distribution
   cnsDeduction: number; // 2% CNS
+  taxDeduction?: number;
+  onaEmployer?: number;
+  ofatmaEmployer?: number;
   commissions: number;
   advancesTreated: number; // Ledger advances subtracted
   advances?: number;
   penalty?: number;
   absencePenalties?: number;
+  bonuses?: number;
+  bonusesAddition?: number;
+  prime_cents?: number;
   enableTaxes?: boolean;
   netPaid: number; // Integer: Gross + Commissions - deductions - advances
   status: "PENDING" | "APPROVED" | "PAID" | "DRAFT" | "VALIDATED" | "LOCKED" | "CORRECTED" | "SEALED";
@@ -312,6 +391,9 @@ export interface PayrollRecord {
   performance_bonus_cents?: number;
   custom_override_bonus_cents?: number;
   custom_override_commission_cents?: number;
+  reversalOfPayrollRecordId?: string;
+  reversalOfRecordId?: string;
+  isReversal?: boolean;
   generated_at?: any;
   created_at?: any;
   updated_at?: any;
@@ -327,6 +409,10 @@ export interface LedgerTransaction {
   id: string;
   businessId?: string;
   business_id?: string;
+  payroll_cycle_id?: string;
+  payrollCycleId?: string;
+  isReversal?: boolean;
+  is_reversal?: boolean;
   branchId: string;
   branch_id?: string;
   departmentId?: string;
@@ -368,6 +454,13 @@ export interface LedgerTransaction {
   source: "MANUAL" | "CSV_IMPORT" | "PAYROLL_ENGINE" | "SYSTEM" | "AI_AUTOMATION";
   debit_account?: string; // Double entry tracking
   credit_account?: string; // Double entry tracking
+  debit_account_code?: string;
+  credit_account_code?: string;
+  debit_amount_cents?: number;
+  credit_amount_cents?: number;
+  transaction_type_code?: string; // Mapped transaction type code (e.g. 1001, 3001)
+  till_id?: string; // Associated physical cash till ID
+  till_session_id?: string; // Associated active till session ID
   debitAccount?: string;
   creditAccount?: string;
   debit?: number; // Debit leg amount (e.g. Gourdes)
@@ -440,6 +533,7 @@ export interface ForensicLog {
   entityId?: string;
   metadata?: any;
   severity?: "info" | "warning" | "critical" | "AUDIT_GRADE";
+  keyVersion?: number | string;
   hash?: string;
 }
 

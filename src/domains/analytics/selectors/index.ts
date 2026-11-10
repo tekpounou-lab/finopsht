@@ -24,8 +24,8 @@ export const getPayroll = (snapshot: AnalyticsSnapshot): ComparisonDetails => {
   return AnalyticsComparisonEngine.wrap(snapshot.payrollCost);
 };
 
-export const getAttendance = (snapshot: AnalyticsSnapshot): ComparisonDetails => {
-  return AnalyticsComparisonEngine.wrap(snapshot.attendanceRate);
+export const getAttendance = (snapshot: AnalyticsSnapshot): ComparisonDetails<number | null> => {
+  return AnalyticsComparisonEngine.wrap<number | null>(snapshot.attendanceRate);
 };
 
 export const getDepartments = (snapshot: AnalyticsSnapshot): DepartmentPerformance[] => {
@@ -64,7 +64,7 @@ export const getTopDepartments = (
   limitCount = 3
 ): DepartmentPerformance[] => {
   return [...(snapshot.departmentPerformance || [])]
-    .sort((a, b) => b.attendanceRate - a.attendanceRate)
+    .sort((a, b) => (b.attendanceRate ?? -1) - (a.attendanceRate ?? -1))
     .slice(0, limitCount);
 };
 

@@ -352,6 +352,7 @@ describe("PHASE 15.2R — Independent Forensic Runtime Verification Suite", () =
         endDate: "2026-09-30",
         searchQuery: "",
         metricType: "all" as const,
+        accountingBasis: "ACCRUAL" as const,
       };
 
       // 1. Canonical snapshot from AnalyticsEngine directly
@@ -370,7 +371,7 @@ describe("PHASE 15.2R — Independent Forensic Runtime Verification Suite", () =
       // 3. Performance Selector (Mode Expert / Performance BI)
       const expertMetrics = selectExpertMetrics(rawDataSet, picFilters);
 
-      // Cross-BI Invariant Check:
+      // Cross-BI Invariant Check (ACCRUAL scope):
       expect(simpleMetrics.totalExpenses).toBe(canonicalSnap.expenses.currentValue);
       expect(simpleMetrics.totalPayroll).toBe(canonicalSnap.payrollCost.currentValue);
       expect(expertMetrics.kpis.totalExpenses).toBe(canonicalSnap.expenses.currentValue);
@@ -381,6 +382,22 @@ describe("PHASE 15.2R — Independent Forensic Runtime Verification Suite", () =
       expect(simpleMetrics.totalPayroll).toBe(109000);
       expect(expertMetrics.kpis.totalExpenses).toBe(109000);
       expect(expertMetrics.kpis.totalPayroll).toBe(109000);
+
+      // Cross-BI Invariant Check (CASH scope: 92,000 HTG bank disbursement; ONA/OFATMA payables settled in Oct):
+      const canonicalCashSnap = AnalyticsEngine.generateSnapshot({
+        period: "CUSTOM",
+        customRange: { startDate: "2026-09-01", endDate: "2026-09-30" },
+        businessId: tenantAlpha,
+        accountingMode: "CASH",
+        payrollRecords: [septRecord],
+        transactions: septGlTxs,
+      });
+      const simpleCashMetrics = selectSimplifiedMetrics(rawDataSet, {
+        ...picFilters,
+        accountingBasis: "CASH",
+      });
+      expect(simpleCashMetrics.totalExpenses).toBe(canonicalCashSnap.expenses.currentValue);
+      expect(simpleCashMetrics.totalExpenses).toBe(92000);
     });
   });
 

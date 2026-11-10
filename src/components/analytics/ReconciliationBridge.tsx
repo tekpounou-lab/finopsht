@@ -11,27 +11,27 @@ export const ReconciliationBridge: React.FC<ReconciliationBridgeProps> = ({ snap
   const { reconciliation } = snapshot;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
+    <div className="bg-slate-900/80 border border-slate-800/80 backdrop-blur-md rounded-2xl shadow-xl p-6 mb-8">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-3">
-          <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-lg">
+          <div className="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
             <Scale className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Pont de Réconciliation (Constaté vs Engagé)</h3>
-            <p className="text-sm text-slate-500">Analyse des écarts entre comptabilité de caisse et comptabilité d'engagement</p>
+            <h3 className="text-lg font-bold text-slate-100">Pont de Réconciliation (Constaté vs Engagé)</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Analyse des écarts entre comptabilité de caisse et comptabilité d'engagement</p>
           </div>
         </div>
-        <div className="flex items-center space-x-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-200">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Réconcilié</span>
+        <div className="flex items-center space-x-2 px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded-full text-xs font-mono font-bold border border-emerald-500/30">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+          <span>RÉCONCILIÉ (SSOT)</span>
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-xl border border-slate-800/80">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
+            <tr className="border-b border-slate-800 text-xs font-bold text-slate-400 uppercase tracking-wider bg-slate-950/80 font-mono">
               <th className="py-3 px-4">Indicateur Financier</th>
               <th className="py-3 px-4 text-right">Constaté (Cash)</th>
               <th className="py-3 px-4 text-right">Engagé (Accrual)</th>
@@ -39,44 +39,44 @@ export const ReconciliationBridge: React.FC<ReconciliationBridgeProps> = ({ snap
               <th className="py-3 px-4">Analyse</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-sm">
-            <tr>
-              <td className="py-3.5 px-4 font-medium text-slate-900">Revenus / Encaissements</td>
-              <td className="py-3.5 px-4 text-right text-slate-700">{reconciliation.cashRevenue.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right text-slate-700">{reconciliation.accrualRevenue.toLocaleString()} HTG</td>
-              <td className={`py-3.5 px-4 text-right font-semibold ${reconciliation.varianceRevenue >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+          <tbody className="divide-y divide-slate-800/60 text-xs font-mono">
+            <tr className="hover:bg-slate-800/30 transition-colors">
+              <td className="py-3.5 px-4 font-semibold text-slate-200 font-sans">Revenus / Encaissements</td>
+              <td className="py-3.5 px-4 text-right text-emerald-400 font-bold">{reconciliation.cashRevenue.toLocaleString()} HTG</td>
+              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualRevenue.toLocaleString()} HTG</td>
+              <td className={`py-3.5 px-4 text-right font-bold ${reconciliation.varianceRevenue >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                 {reconciliation.varianceRevenue > 0 ? `+${reconciliation.varianceRevenue.toLocaleString()}` : reconciliation.varianceRevenue.toLocaleString()} HTG
               </td>
-              <td className="py-3.5 px-4 text-slate-500 text-xs">Factures émises non encore encaissées (AR)</td>
+              <td className="py-3.5 px-4 text-slate-400 font-sans text-xs">Factures émises non encore encaissées (AR)</td>
             </tr>
-            <tr>
-              <td className="py-3.5 px-4 font-medium text-slate-900">Masse Salariale / Personnel</td>
-              <td className="py-3.5 px-4 text-right text-slate-700">{reconciliation.cashPayroll.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right text-slate-700">{reconciliation.accrualPayroll.toLocaleString()} HTG</td>
-              <td className={`py-3.5 px-4 text-right font-semibold ${reconciliation.variancePayroll >= 0 ? "text-indigo-600" : "text-emerald-600"}`}>
+            <tr className="hover:bg-slate-800/30 transition-colors">
+              <td className="py-3.5 px-4 font-semibold text-slate-200 font-sans">Masse Salariale / Personnel</td>
+              <td className="py-3.5 px-4 text-right text-indigo-400 font-bold">{reconciliation.cashPayroll.toLocaleString()} HTG</td>
+              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualPayroll.toLocaleString()} HTG</td>
+              <td className={`py-3.5 px-4 text-right font-bold ${reconciliation.variancePayroll >= 0 ? "text-indigo-400" : "text-emerald-400"}`}>
                 +{reconciliation.variancePayroll.toLocaleString()} HTG
               </td>
-              <td className="py-3.5 px-4 text-slate-500 text-xs">Salaires et charges sociales engagés mais non encore virés</td>
+              <td className="py-3.5 px-4 text-slate-400 font-sans text-xs">Salaires et charges sociales engagés mais non encore virés</td>
             </tr>
-            <tr>
-              <td className="py-3.5 px-4 font-medium text-slate-900">Charges & Dépenses</td>
-              <td className="py-3.5 px-4 text-right text-slate-700">{reconciliation.cashExpenses.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right text-slate-700">{reconciliation.accrualExpenses.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right font-semibold text-slate-700">
+            <tr className="hover:bg-slate-800/30 transition-colors">
+              <td className="py-3.5 px-4 font-semibold text-slate-200 font-sans">Charges & Dépenses</td>
+              <td className="py-3.5 px-4 text-right text-rose-400 font-bold">{reconciliation.cashExpenses.toLocaleString()} HTG</td>
+              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualExpenses.toLocaleString()} HTG</td>
+              <td className="py-3.5 px-4 text-right font-bold text-amber-400">
                 +{reconciliation.varianceExpenses.toLocaleString()} HTG
               </td>
-              <td className="py-3.5 px-4 text-slate-500 text-xs">Factures fournisseurs reçues en attente de décaissement (AP)</td>
+              <td className="py-3.5 px-4 text-slate-400 font-sans text-xs">Factures fournisseurs reçues en attente de décaissement (AP)</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200 flex items-start space-x-3">
-        <AlertCircle className="w-5 h-5 text-indigo-600 mt-0.5 flex-shrink-0" />
+      <div className="mt-6 p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 flex items-start space-x-3">
+        <AlertCircle className="w-5 h-5 text-cyan-400 mt-0.5 flex-shrink-0" />
         <div>
-          <h4 className="text-sm font-semibold text-slate-900">Note d'analyse de l'IA CFO</h4>
-          <p className="text-sm text-slate-600 mt-1">
-            « {reconciliation.variancePayroll.toLocaleString()} HTG de coûts de personnel sont engagés mais n'ont pas encore été décaissés. Votre encours créances (AR) dépasse vos dettes fournisseurs (AP), maintenant un fonds de roulement solide de 185 000 HTG. »
+          <h4 className="text-xs uppercase font-extrabold text-cyan-300 tracking-wider">Note d'analyse de l'IA CFO</h4>
+          <p className="text-xs text-slate-300 mt-1 font-sans leading-relaxed">
+            « {reconciliation.variancePayroll.toLocaleString()} HTG de coûts de personnel sont engagés mais n'ont pas encore été décaissés. Votre encours créances (AR) dépasse vos dettes fournisseurs (AP), maintenant un fonds de roulement solide. »
           </p>
         </div>
       </div>

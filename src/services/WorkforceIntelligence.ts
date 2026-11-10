@@ -3,7 +3,7 @@ import { filterOperationalEmployees } from "./workforce/EmployeeEligibilityServi
 
 export interface WorkforceMetrics {
   employeeId: string;
-  attendanceConsistencyScore: number; 
+  attendanceConsistencyScore: number | null; 
   latenessScore: number; 
   productivityIndex: number; 
   overtimeDetection: boolean;
@@ -13,7 +13,7 @@ export interface WorkforceMetrics {
 export interface BranchEfficiency {
   branchId: string;
   avgProductivityIndex: number;
-  overallAttendanceRate: number;
+  overallAttendanceRate: number | null;
 }
 
 export const generateWorkforceIntelligence = (
@@ -38,11 +38,14 @@ export const generateWorkforceIntelligence = (
     const overtime = empAttendance.filter(a => a.status === "OVERTIME").length;
     
     const totalHours = empAttendance.reduce((sum, a) => sum + (a.realHours || 0), 0);
-    const mustWorkHours = empAttendance.reduce((sum, a) => sum + (a.plannedHours || 8), 0);
+    const mustWorkHours = empAttendance.reduce(
+      (sum, a) => sum + (typeof a.plannedHours === "number" && a.plannedHours > 0 ? a.plannedHours : 0),
+      0
+    );
 
     const latenessScore = totalDays > 0 ? (lates / totalDays) * 100 : 0;
-    const attendanceConsistencyScore = mustWorkHours > 0 ? Math.min(100, (totalHours / mustWorkHours) * 100) : 0;
-    const hourRatio = mustWorkHours > 0 ? (totalHours / mustWorkHours) * 100 : 0;
+    const attendanceConsistencyScore: number | null = mustWorkHours > 0 ? Math.min(100, (totalHours / mustWorkHours) * 100) : null;
+    const hourRatio = attendanceConsistencyScore ?? 0;
     
     // Productivity Index incorporates commissions/performance and attendance reliability
     const totalCommissions = payrollRecords
@@ -58,7 +61,7 @@ export const generateWorkforceIntelligence = (
     
     // Signals
     const overtimeDetection = overtime > 3; // Arbitrary threshold for pattern
-    const underperformanceSignal = hasWorked && (latenessScore > 20 || attendanceConsistencyScore < 80);
+    const underperformanceSignal = hasWorked && (latenessScore > 20 || (attendanceConsistencyScore !== null && attendanceConsistencyScore < 80));
 
     return {
       employeeId: emp.id,
@@ -86,10 +89,14 @@ export const generateBranchEfficiency = (
     const avgProductivityIndex = branchMetrics.length > 0 
       ? branchMetrics.reduce((sum, m) => sum + m.productivityIndex, 0) / branchMetrics.length
       : 0;
-      
-    const overallAttendanceRate = branchMetrics.length > 0
-      ? branchMetrics.reduce((sum, m) => sum + m.attendanceConsistencyScore, 0) / branchMetrics.length
-      : 0;
+
+    const computableAtt = branchMetrics.filter(
+      (m): m is WorkforceMetrics & { attendanceConsistencyScore: number } =>
+        typeof m.attendanceConsistencyScore === "number" && !isNaN(m.attendanceConsistencyScore)
+    );
+    const overallAttendanceRate = computableAtt.length > 0
+      ? computableAtt.reduce((sum, m) => sum + m.attendanceConsistencyScore, 0) / computableAtt.length
+      : null;
 
     return {
       branchId: branch.id,

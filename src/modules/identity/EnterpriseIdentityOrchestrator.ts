@@ -579,6 +579,7 @@ export class EnterpriseIdentityOrchestrator {
           email: activeEmail,
           normalizedEmail: activeEmail,
           employeeId: employeeId,
+          uid: user.uid,
           updatedAt: new Date().toISOString()
         }));
 
@@ -600,7 +601,9 @@ export class EnterpriseIdentityOrchestrator {
           normalizedEmail: activeEmail,
           email_history: empHistory,
           uid: user.uid,
+          firebase_uid: user.uid,
           businessId: targetBizId,
+          business_id: targetBizId,
           role: invitation.role || existingEmp.role || "EMPLOYEE",
           updatedAt: new Date().toISOString()
         }), { merge: true });

@@ -18,9 +18,9 @@ export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
   const resolvedFilters = {
     startDate: overrideFilters?.startDate || globalFilters.dateRange.startDate,
     endDate: overrideFilters?.endDate || globalFilters.dateRange.endDate,
-    branchId: overrideFilters?.branchId || globalFilters.branchId,
-    departmentId: overrideFilters?.departmentId || globalFilters.departmentId,
-    employeeId: overrideFilters?.employeeId || globalFilters.employeeId,
+    branchId: (overrideFilters?.branchId && overrideFilters.branchId !== "ALL") ? overrideFilters.branchId : (globalFilters.branchId || "ALL"),
+    departmentId: (overrideFilters?.departmentId && overrideFilters.departmentId !== "ALL") ? overrideFilters.departmentId : (globalFilters.departmentId || "ALL"),
+    employeeId: (overrideFilters?.employeeId && overrideFilters.employeeId !== "ALL") ? overrideFilters.employeeId : (globalFilters.employeeId || "ALL"),
     currency: overrideFilters?.currency || (globalFilters as any).currency || "HTG",
     cashAccountId: overrideFilters?.cashAccountId,
   };
@@ -46,14 +46,14 @@ export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
         const departmentId = resolvedFilters.departmentId;
 
         const filteredLedger = (ledgerTransactions || []).filter((tx: any) => {
-          if (branchId && branchId !== "ALL" && tx.branchId && tx.branchId !== branchId) return false;
-          if (departmentId && departmentId !== "ALL" && tx.departmentId && tx.departmentId !== departmentId) return false;
+          if (branchId && branchId !== "ALL" && (!tx.branchId || tx.branchId !== branchId)) return false;
+          if (departmentId && departmentId !== "ALL" && (!tx.departmentId || tx.departmentId !== departmentId)) return false;
           return true;
         });
 
         const filteredPayroll = (payrollRecords || []).filter((p: any) => {
-          if (branchId && branchId !== "ALL" && p.branchId && p.branchId !== branchId) return false;
-          if (departmentId && departmentId !== "ALL" && p.departmentId && p.departmentId !== departmentId) return false;
+          if (branchId && branchId !== "ALL" && (!p.branchId || p.branchId !== branchId)) return false;
+          if (departmentId && departmentId !== "ALL" && (!p.departmentId || p.departmentId !== departmentId)) return false;
           return true;
         });
 

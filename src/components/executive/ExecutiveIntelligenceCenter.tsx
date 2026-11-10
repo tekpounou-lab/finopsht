@@ -85,7 +85,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6" id="executive-intelligence-center">
+    <div className="space-y-6 bg-slate-950/40 p-6 rounded-2xl border border-slate-800/80 shadow-2xl backdrop-blur-sm" id="executive-intelligence-center">
       {/* HEADER KPI GRID */}
       {activeSnapshot && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

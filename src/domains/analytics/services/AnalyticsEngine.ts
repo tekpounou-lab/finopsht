@@ -24,6 +24,7 @@ import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 import { CashBasisEngine as CanonicalCashEngine } from "../../cash/engine/CashBasisEngine";
 import { CHART_OF_ACCOUNTS } from "../../../constants/finance";
 import { TreasuryClassification } from "../../cash/classification/TreasuryClassification";
+import { NormalizationContext, NormalizedAmountResolver } from "../utils/NormalizedAmountResolver";
 import {
   AnalyticsPeriod,
   AnalyticsSnapshot,
@@ -39,6 +40,57 @@ import {
 export interface DateRange {
   startDate: string;
   endDate: string;
+}
+
+export interface EmployeeContractualHoursResolution {
+  dailyHours: number | null;
+  weeklyHours: number | null;
+  workingDaysPerWeek: number;
+  isIncompleteConfig: boolean;
+  resolutionSource: "CONTRACT_DAILY" | "CONTRACT_WEEKLY" | "INCOMPLETE_CONFIG";
+}
+
+export function resolveEmployeeContractualHours(
+  employee: Employee,
+  contract?: EmployeeContract,
+  businessSettings?: any
+): EmployeeContractualHoursResolution {
+  const tenantWorkingDays = (businessSettings?.workingDays && Array.isArray(businessSettings.workingDays) && businessSettings.workingDays.length > 0)
+    ? businessSettings.workingDays.length
+    : 6;
+
+  const contractDaily = (contract as any)?.dailyHours ?? (employee as any)?.dailyHours ?? (employee as any)?.daily_hours ?? (contract as any)?.daily_hours;
+  if (typeof contractDaily === "number" && !isNaN(contractDaily) && contractDaily > 0) {
+    const empDays = (contract as any)?.workingDaysPerWeek || (employee as any)?.workingDaysPerWeek || tenantWorkingDays;
+    return {
+      dailyHours: contractDaily,
+      weeklyHours: contractDaily * empDays,
+      workingDaysPerWeek: empDays,
+      isIncompleteConfig: false,
+      resolutionSource: "CONTRACT_DAILY",
+    };
+  }
+
+  const contractWeekly = (contract as any)?.weeklyHours ?? (employee as any)?.weeklyHours ?? (employee as any)?.weekly_hours ?? (contract as any)?.weekly_hours ?? (employee as any)?.contractualHoursPerWeek ?? (contract as any)?.contractualHoursPerWeek;
+  if (typeof contractWeekly === "number" && !isNaN(contractWeekly) && contractWeekly > 0) {
+    const empDays = (contract as any)?.workingDaysPerWeek || (employee as any)?.workingDaysPerWeek || tenantWorkingDays;
+    const derivedDaily = Number((contractWeekly / Math.max(1, empDays)).toFixed(2));
+    return {
+      dailyHours: derivedDaily,
+      weeklyHours: contractWeekly,
+      workingDaysPerWeek: empDays,
+      isIncompleteConfig: false,
+      resolutionSource: "CONTRACT_WEEKLY",
+    };
+  }
+
+  return {
+    dailyHours: null,
+    weeklyHours: null,
+    workingDaysPerWeek: tenantWorkingDays,
+    isIncompleteConfig: true,
+    resolutionSource: "INCOMPLETE_CONFIG",
+  };
 }
 
 /**
@@ -491,12 +543,21 @@ export class AnalyticsEngine {
         prevEnd.setHours(23, 59, 59, 999);
         break;
 
-      case "CUSTOM":
-        if (customRange && customRange.startDate && customRange.endDate) {
-          const cleanStart = String(customRange.startDate).split("T")[0];
-          const cleanEnd = String(customRange.endDate).split("T")[0];
-          const s = new Date(cleanStart + "T00:00:00");
-          const e = new Date(cleanEnd + "T23:59:59");
+      case "ALL":
+      case "CUSTOM": {
+        const cleanStart =
+          period === "ALL"
+            ? ""
+            : (customRange?.startDate ? String(customRange.startDate).split("T")[0].trim() : "");
+        const cleanEnd =
+          period === "ALL"
+            ? ""
+            : (customRange?.endDate ? String(customRange.endDate).split("T")[0].trim() : "");
+
+        if (cleanStart && cleanEnd) {
+          const s = AnalyticsEngine.parseLocalYMD(cleanStart) || new Date(cleanStart + "T00:00:00");
+          const e = AnalyticsEngine.parseLocalYMD(cleanEnd) || new Date(cleanEnd + "T23:59:59");
+          e.setHours(23, 59, 59, 999);
           const duration = Math.max(86400000, (isNaN(e.getTime()) ? 0 : e.getTime()) - (isNaN(s.getTime()) ? 0 : s.getTime()));
           const prevE = new Date((isNaN(s.getTime()) ? Date.now() : s.getTime()) - 86400000);
           const prevS = new Date(prevE.getTime() - duration + 86400000);
@@ -504,21 +565,19 @@ export class AnalyticsEngine {
           return {
             current: { startDate: cleanStart, endDate: cleanEnd },
             previous: {
-              startDate: prevS.toISOString().split("T")[0],
-              endDate: prevE.toISOString().split("T")[0],
+              startDate: formatDate(prevS),
+              endDate: formatDate(prevE),
             },
           };
-        } else {
-          // Fallback to current calendar month default range if CUSTOM filter is chosen with no payload
-          const now = new Date();
-          const fallbackStart = new Date(now.getFullYear(), now.getMonth(), 1);
-          const fallbackEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-          currentStart.setTime(fallbackStart.getTime());
-          currentEnd.setTime(fallbackEnd.getTime());
-          prevStart.setTime(fallbackStart.getTime() - 31 * 86400000);
-          prevEnd.setTime(fallbackStart.getTime() - 86400000);
         }
-        break;
+
+        // DEF-TF-01: Never silently fall back to current calendar month when CUSTOM/ALL range is unbounded or partial.
+        // Return exact bounded/open boundaries and empty previous range so no prior period is fabricated.
+        return {
+          current: { startDate: cleanStart, endDate: cleanEnd },
+          previous: { startDate: "", endDate: "" },
+        };
+      }
     }
 
     return {
@@ -571,6 +630,112 @@ export class AnalyticsEngine {
     } catch {
       return standardQuinzaineHours;
     }
+  }
+
+  /**
+   * Parses YYYY-MM-DD strings in local calendar coordinates to prevent UTC timezone shifts.
+   */
+  static parseLocalYMD(raw: string): Date | null {
+    if (!raw || typeof raw !== "string") return null;
+    const clean = raw.split("T")[0].trim();
+    const match = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10) - 1;
+      const d = parseInt(match[3], 10);
+      const dt = new Date(y, m, d, 0, 0, 0, 0);
+      return isNaN(dt.getTime()) ? null : dt;
+    }
+    const fallback = new Date(raw);
+    if (isNaN(fallback.getTime())) return null;
+    fallback.setHours(0, 0, 0, 0);
+    return fallback;
+  }
+
+  /**
+   * Helper to compute expected working days for an employee over a date range.
+   * Respects workingDaysPerWeek or specific workingDays list, and explicitly configured business holidays.
+   * Does NOT inject hardcoded holidays.
+   */
+  static getEmployeeExpectedWorkingDays(
+    startDateStr: string,
+    endDateStr: string,
+    workingDaysPerWeek = 6,
+    holidays?: any[],
+    specificWorkingDays?: any[]
+  ): number {
+    if (!startDateStr || !endDateStr) return 0;
+    const start = AnalyticsEngine.parseLocalYMD(startDateStr);
+    const end = AnalyticsEngine.parseLocalYMD(endDateStr);
+    if (!start || !end || start > end) return 0;
+
+    // Build holiday lookup set (YYYY-MM-DD)
+    const holidaySet = new Set<string>();
+    if (Array.isArray(holidays)) {
+      holidays.forEach((h: any) => {
+        if (!h) return;
+        const dStr = typeof h === "string" ? h.split("T")[0] : (h?.date ? String(h.date).split("T")[0] : "");
+        if (dStr) holidaySet.add(dStr);
+      });
+    }
+
+    // Normalized specific working days (0=Sunday, 1=Monday, ..., 6=Saturday)
+    let allowedDaysSet: Set<number> | null = null;
+    if (Array.isArray(specificWorkingDays) && specificWorkingDays.length > 0) {
+      allowedDaysSet = new Set<number>();
+      specificWorkingDays.forEach((item) => {
+        if (typeof item === "number" && !isNaN(item) && item >= 0 && item <= 6) {
+          allowedDaysSet!.add(item);
+        } else if (typeof item === "string") {
+          const s = item.trim().toLowerCase();
+          if (s.startsWith("dim") || s.startsWith("sun")) allowedDaysSet!.add(0);
+          else if (s.startsWith("lun") || s.startsWith("mon")) allowedDaysSet!.add(1);
+          else if (s.startsWith("mar") || s.startsWith("tue")) allowedDaysSet!.add(2);
+          else if (s.startsWith("mer") || s.startsWith("wed")) allowedDaysSet!.add(3);
+          else if (s.startsWith("jeu") || s.startsWith("thu")) allowedDaysSet!.add(4);
+          else if (s.startsWith("ven") || s.startsWith("fri")) allowedDaysSet!.add(5);
+          else if (s.startsWith("sam") || s.startsWith("sat")) allowedDaysSet!.add(6);
+        }
+      });
+    }
+
+    let workingDays = 0;
+    const cur = new Date(start);
+    let guard = 0;
+    while (cur <= end && guard < 1000) {
+      guard++;
+      const y = cur.getFullYear();
+      const m = String(cur.getMonth() + 1).padStart(2, "0");
+      const d = String(cur.getDate()).padStart(2, "0");
+      const dateKey = `${y}-${m}-${d}`;
+
+      // Check holidays
+      if (!holidaySet.has(dateKey)) {
+        const dow = cur.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+        if (allowedDaysSet) {
+          if (allowedDaysSet.has(dow)) {
+            workingDays++;
+          }
+        } else {
+          // Standard weekly schedule based on workingDaysPerWeek
+          if (workingDaysPerWeek === 5) {
+            // Monday through Friday
+            if (dow >= 1 && dow <= 5) workingDays++;
+          } else if (workingDaysPerWeek === 7) {
+            workingDays++;
+          } else if (workingDaysPerWeek >= 6) {
+            // Monday through Saturday
+            if (dow >= 1 && dow <= 6) workingDays++;
+          } else if (workingDaysPerWeek > 0) {
+            // 1 to 4 days: Mon to workingDaysPerWeek
+            if (dow >= 1 && dow <= workingDaysPerWeek) workingDays++;
+          }
+        }
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    return workingDays;
   }
 
   /**
@@ -641,7 +806,8 @@ export class AnalyticsEngine {
     txs: LedgerTransaction[],
     range?: DateRange,
     businessId?: string,
-    includePayrollTransactions: boolean = false
+    includePayrollTransactions: boolean = false,
+    normalizationContext?: NormalizationContext
   ): number {
     const validTxs = (txs || []).filter((t) => {
       if (businessId && t.business_id && t.business_id !== businessId && (t as any).businessId !== businessId) {
@@ -651,7 +817,7 @@ export class AnalyticsEngine {
       if (statusUpper === "REVERSED" || statusUpper === "VOID" || statusUpper === "CANCELLED") {
         return false;
       }
-      if (range && range.startDate && range.endDate) {
+      if (range && (range.startDate || range.endDate)) {
         const rawDate =
           t.date ||
           (t as any).transaction_date ||
@@ -663,13 +829,34 @@ export class AnalyticsEngine {
           (t as any).created_at ||
           (t as any).createdAt;
         const txDate = toDateOnly(rawDate);
-        if (!txDate || txDate < range.startDate || txDate > range.endDate) {
+        if (!txDate) {
+          return false;
+        }
+        if (range.startDate && txDate < range.startDate) {
+          return false;
+        }
+        if (range.endDate && txDate > range.endDate) {
           return false;
         }
       }
 
       const typeUpper = (t.type || "").toUpperCase();
       if (typeUpper === "INCOME" || typeUpper === "TRANSFER" || typeUpper === "EXCHANGE" || typeUpper === "ADVANCE" || typeUpper === "REVENUE" || typeUpper === "SALES" || typeUpper === "VENTE" || typeUpper === "VENTES") {
+        return false;
+      }
+
+      // Exclude till closure operational risk discrepancies (Zero P&L impact by design)
+      const catUpper = (t.category || (t as any).category_name || "").toString().toUpperCase();
+      const descUpper = (t.description || (t as any).memo || "").toString().toUpperCase();
+      if (
+        typeUpper.includes("TILL_DISCREPANCY") ||
+        catUpper.includes("TILL_DISCREPANCY") ||
+        catUpper.includes("CASH_SHORTAGE") ||
+        catUpper.includes("FLOAT_VARIANCE") ||
+        catUpper.includes("CASH_VARIANCE") ||
+        descUpper.includes("ÉCART DE CAISSE") ||
+        descUpper.includes("ECART DE CAISSE")
+      ) {
         return false;
       }
 
@@ -687,19 +874,48 @@ export class AnalyticsEngine {
       return true;
     });
 
-    const getAmount = (t: LedgerTransaction): number => {
+    const getAmount = (t: LedgerTransaction | any): number => {
       if (!t) return 0;
-      if (typeof t.amount === "number" && !isNaN(t.amount) && t.amount !== 0) return Math.abs(t.amount);
-      if (typeof (t as any).amount_htg === "number" && !isNaN((t as any).amount_htg) && (t as any).amount_htg !== 0) return Math.abs((t as any).amount_htg);
-      if (typeof (t as any).amountHtg === "number" && !isNaN((t as any).amountHtg) && (t as any).amountHtg !== 0) return Math.abs((t as any).amountHtg);
-      if (typeof (t as any).amount_cents === "number" && !isNaN((t as any).amount_cents) && (t as any).amount_cents !== 0) return Math.abs((t as any).amount_cents) / 100;
-      if (typeof (t as any).amountCents === "number" && !isNaN((t as any).amountCents) && (t as any).amountCents !== 0) return Math.abs((t as any).amountCents) / 100;
-      if (typeof (t as any).total === "number" && !isNaN((t as any).total) && (t as any).total !== 0) return Math.abs((t as any).total);
-      if (typeof (t as any).debit === "number" && !isNaN((t as any).debit) && (t as any).debit > 0) return (t as any).debit;
-      if (typeof (t as any).credit === "number" && !isNaN((t as any).credit) && (t as any).credit > 0) return (t as any).credit;
-      if (typeof (t as any).debit_cents === "number" && !isNaN((t as any).debit_cents) && (t as any).debit_cents > 0) return (t as any).debit_cents / 100;
-      if (typeof (t as any).credit_cents === "number" && !isNaN((t as any).credit_cents) && (t as any).credit_cents > 0) return (t as any).credit_cents / 100;
-      return 0;
+      const rawDate = t.date || t.transactionDate || t.effectiveAccountingDate || t.dateStr;
+      const txDate = toDateOnly(rawDate);
+      
+      let amt = 0;
+      let isAlreadyHtg = false;
+      if (t.amount !== undefined && t.amount !== null && !isNaN(t.amount) && t.amount !== 0) {
+        amt = t.amount;
+      } else if (t.amount_htg !== undefined && t.amount_htg !== null && !isNaN(t.amount_htg) && t.amount_htg !== 0) {
+        amt = t.amount_htg;
+        isAlreadyHtg = true;
+      } else if (t.amountHtg !== undefined && t.amountHtg !== null && !isNaN(t.amountHtg) && t.amountHtg !== 0) {
+        amt = t.amountHtg;
+        isAlreadyHtg = true;
+      } else if (t.amount_cents !== undefined && t.amount_cents !== null && !isNaN(t.amount_cents) && t.amount_cents !== 0) {
+        amt = t.amount_cents / 100;
+        isAlreadyHtg = true;
+      } else if (t.amountCents !== undefined && t.amountCents !== null && !isNaN(t.amountCents) && t.amountCents !== 0) {
+        amt = t.amountCents / 100;
+        isAlreadyHtg = true;
+      } else if (t.total !== undefined && t.total !== null && !isNaN(t.total) && t.total !== 0) {
+        amt = t.total;
+      } else if (t.debit !== undefined && t.debit !== null && !isNaN(t.debit) && t.debit !== 0) {
+        amt = t.debit;
+        isAlreadyHtg = true;
+      } else if (t.credit !== undefined && t.credit !== null && !isNaN(t.credit) && t.credit !== 0) {
+        amt = t.credit;
+        isAlreadyHtg = true;
+      } else if (t.debit_cents !== undefined && t.debit_cents !== null && !isNaN(t.debit_cents) && t.debit_cents !== 0) {
+        amt = t.debit_cents / 100;
+        isAlreadyHtg = true;
+      } else if (t.credit_cents !== undefined && t.credit_cents !== null && !isNaN(t.credit_cents) && t.credit_cents !== 0) {
+        amt = t.credit_cents / 100;
+        isAlreadyHtg = true;
+      }
+
+      if (normalizationContext && amt !== 0) {
+        const currency = isAlreadyHtg ? "HTG" : (t.currency || t.currency_code || t.currencyCode || "HTG");
+        return NormalizedAmountResolver.resolveToHTG(amt, currency, txDate, normalizationContext);
+      }
+      return amt;
     };
 
     return validTxs.reduce((sum, t) => {
@@ -721,7 +937,8 @@ export class AnalyticsEngine {
     payrolls: PayrollRecord[],
     range: DateRange,
     isSocialTaxEnabled: boolean = true,
-    cycleMap?: Map<string, PayrollCycle>
+    cycleMap?: Map<string, PayrollCycle>,
+    normalizationContext?: NormalizationContext
   ): number {
     return (payrolls || []).reduce((sum, pr: any) => {
       const statusUpper = (pr.status || "").toUpperCase();
@@ -732,13 +949,22 @@ export class AnalyticsEngine {
       const factor = AnalyticsEngine.getRecordProrationFactor(pr, range, cycleMap);
       if (factor <= 0) return sum;
 
+      const isAlreadyHtg = pr.grossSalaryHtg !== undefined && pr.grossSalaryHtg !== null;
       const rawGross =
+        pr.grossSalaryHtg ??
         (pr.gross_salary_cents !== undefined && pr.gross_salary_cents !== null ? pr.gross_salary_cents / 100 : undefined) ??
         pr.grossSalary ??
-        pr.grossSalaryHtg ??
         pr.gross ??
         pr.baseSalary ??
         0;
+
+      const currency = isAlreadyHtg ? "HTG" : (pr.currency || pr.currency_code || pr.currencyCode || "HTG");
+      const paymentDate = pr.paymentDate || pr.effectiveAccountingDate || pr.created_at || pr.createdAt;
+      const normDate = toDateOnly(paymentDate);
+
+      const normalizedGross = normalizationContext && rawGross !== 0
+        ? NormalizedAmountResolver.resolveToHTG(rawGross, currency, normDate, normalizationContext)
+        : rawGross;
 
       // Employer taxes (ONA / OFATMA)
       let employerTaxes = 0;
@@ -752,7 +978,11 @@ export class AnalyticsEngine {
         }
       }
 
-      return sum + (rawGross + employerTaxes) * factor;
+      const normalizedEmployerTaxes = normalizationContext && employerTaxes !== 0
+        ? NormalizedAmountResolver.resolveToHTG(employerTaxes, "HTG", normDate, normalizationContext)
+        : employerTaxes;
+
+      return sum + (normalizedGross + normalizedEmployerTaxes) * factor;
     }, 0);
   }
 
@@ -815,6 +1045,59 @@ export class AnalyticsEngine {
   }
 
   /**
+   * Helper to build structured KPI comparisons for nullable metrics where
+   * non-computable cases (null) map to NO_DATA rather than VALID_ZERO (0).
+   */
+  static compareNullableValues(
+    current: number | null,
+    previous: number | null,
+    directionInverted: boolean = false
+  ): KPIComparison<number | null> {
+    if (current === null) {
+      return {
+        currentValue: null,
+        previousValue: previous !== null ? parseFloat(previous.toFixed(1)) : null,
+        difference: null,
+        differencePercentage: null,
+        trend: "STABLE",
+        direction: "NEUTRAL",
+        state: "NO_DATA",
+      };
+    }
+
+    const difference = previous !== null ? current - previous : null;
+    const differencePercentage =
+      previous !== null && previous !== 0 && difference !== null
+        ? parseFloat(((difference / Math.abs(previous)) * 100).toFixed(1))
+        : 0;
+
+    let trend: "UP" | "DOWN" | "STABLE" = "STABLE";
+    if (difference !== null) {
+      if (difference > 0.01) trend = "UP";
+      else if (difference < -0.01) trend = "DOWN";
+    }
+
+    let direction: "UP" | "DOWN" | "NEUTRAL" = "NEUTRAL";
+    if (trend === "UP") {
+      direction = directionInverted ? "DOWN" : "UP";
+    } else if (trend === "DOWN") {
+      direction = directionInverted ? "UP" : "DOWN";
+    }
+
+    const state = current === 0 ? ("VALID_ZERO" as const) : ("VALID_VALUE" as const);
+
+    return {
+      currentValue: parseFloat(current.toFixed(1)),
+      previousValue: previous !== null ? parseFloat(previous.toFixed(1)) : null,
+      difference: difference !== null ? parseFloat(difference.toFixed(1)) : null,
+      differencePercentage,
+      trend,
+      direction,
+      state,
+    };
+  }
+
+  /**
    * Generates a fully calculated, immutable AnalyticsSnapshot.
    * Supports options object or positional arguments.
    */
@@ -836,6 +1119,7 @@ export class AnalyticsEngine {
       payrollCycles?: PayrollCycle[];
       referenceDate?: Date;
       accountingMode?: "CASH" | "ACCRUAL";
+      normalizationContext?: NormalizationContext;
     },
     customRange?: { startDate: string; endDate: string } | undefined,
     employees?: Employee[],
@@ -850,7 +1134,8 @@ export class AnalyticsEngine {
     activities?: EmployeeDepartmentActivity[],
     businessSettings?: any,
     payrollCycles?: PayrollCycle[],
-    referenceDate?: Date
+    referenceDate?: Date,
+    normalizationContext?: NormalizationContext
   ): AnalyticsSnapshot {
     let period: AnalyticsPeriod;
     let actualCustomRange = customRange;
@@ -887,6 +1172,7 @@ export class AnalyticsEngine {
       actualCycles = opts.payrollCycles;
       actualRefDate = opts.referenceDate;
       actualAccountingMode = opts.accountingMode || "ACCRUAL";
+      normalizationContext = opts.normalizationContext;
     } else {
       period = periodOrOptions as AnalyticsPeriod;
     }
@@ -911,6 +1197,7 @@ export class AnalyticsEngine {
 
     // 1. Resolve date boundaries deterministically using anchored referenceDate
     const { current, previous } = this.getPeriodRanges(period, actualCustomRange, actualRefDate);
+    const hasPreviousPeriod = Boolean(previous.startDate || previous.endDate);
 
     const normalizeDateStr = (rawDate: any): string => toDateOnly(rawDate);
 
@@ -923,9 +1210,12 @@ export class AnalyticsEngine {
     };
 
     const isInPeriod = (rawDate: any, range: DateRange) => {
+      if (!range.startDate && !range.endDate) return true;
       const dateOnly = normalizeDateStr(rawDate);
       if (!dateOnly) return false;
-      return dateOnly >= range.startDate && dateOnly <= range.endDate;
+      if (range.startDate && dateOnly < range.startDate) return false;
+      if (range.endDate && dateOnly > range.endDate) return false;
+      return true;
     };
 
     const matchesBusiness = (item: any) => {
@@ -943,6 +1233,8 @@ export class AnalyticsEngine {
     }
 
     const isPayrollInPeriod = (p: PayrollRecord, range: DateRange): boolean => {
+      if (!range.startDate && !range.endDate) return true;
+
       const cycleId = p.cycleId || p.payroll_cycle_id;
       const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
 
@@ -950,7 +1242,11 @@ export class AnalyticsEngine {
       const paymentDate = (p as any).paymentDate || (p as any).effectiveAccountingDate;
       if (paymentDate) {
         const normPayment = normalizeDateStr(paymentDate);
-        if (normPayment && normPayment >= range.startDate && normPayment <= range.endDate) {
+        if (
+          normPayment &&
+          (!range.startDate || normPayment >= range.startDate) &&
+          (!range.endDate || normPayment <= range.endDate)
+        ) {
           return true;
         }
       }
@@ -977,7 +1273,9 @@ export class AnalyticsEngine {
         const endStr = normalizeDateStr(pEnd || pStart);
         if (startStr && endStr) {
           // Range overlap: recStart <= range.endDate && recEnd >= range.startDate
-          return !(endStr < range.startDate || startStr > range.endDate);
+          if (range.startDate && endStr < range.startDate) return false;
+          if (range.endDate && startStr > range.endDate) return false;
+          return true;
         }
       }
 
@@ -988,24 +1286,76 @@ export class AnalyticsEngine {
     const curTxs = actualTxs.filter(
       (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(getTxDate(t), current)
     );
-    const prevTxs = actualTxs.filter(
-      (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(getTxDate(t), previous)
-    );
+    const prevTxs = hasPreviousPeriod
+      ? actualTxs.filter(
+          (t) => matchesBusiness(t) && t.status !== "REVERSED" && isInPeriod(getTxDate(t), previous)
+        )
+      : [];
 
     const curAttendance = actualAttendance.filter(
       (a) => matchesBusiness(a) && isInPeriod(getAttendanceDate(a), current)
     );
-    const prevAttendance = actualAttendance.filter(
-      (a) => matchesBusiness(a) && isInPeriod(getAttendanceDate(a), previous)
-    );
+    const prevAttendance = hasPreviousPeriod
+      ? actualAttendance.filter(
+          (a) => matchesBusiness(a) && isInPeriod(getAttendanceDate(a), previous)
+        )
+      : [];
 
     // Filter payroll records with cycle-aware date matching
     const curPayroll = actualPayroll.filter(
       (p) => matchesBusiness(p) && isPayrollInPeriod(p, current)
     );
-    const prevPayroll = actualPayroll.filter(
-      (p) => matchesBusiness(p) && isPayrollInPeriod(p, previous)
-    );
+    const prevPayroll = hasPreviousPeriod
+      ? actualPayroll.filter(
+          (p) => matchesBusiness(p) && isPayrollInPeriod(p, previous)
+        )
+      : [];
+
+    // Compute dataset-derived date bounds when current period is unbounded or open-ended
+    let minActivityDate = "";
+    let maxActivityDate = "";
+    const recordActivityDate = (raw: any) => {
+      const d = normalizeDateStr(raw);
+      if (!d) return;
+      if (!minActivityDate || d < minActivityDate) minActivityDate = d;
+      if (!maxActivityDate || d > maxActivityDate) maxActivityDate = d;
+    };
+    if (!current.startDate || !current.endDate) {
+      curTxs.forEach((t) => recordActivityDate(getTxDate(t)));
+      curAttendance.forEach((a) => recordActivityDate(getAttendanceDate(a)));
+      curPayroll.forEach((p: any) => {
+        const cycleId = p.cycleId || p.payroll_cycle_id;
+        const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
+        recordActivityDate(p.paymentDate || p.effectiveAccountingDate);
+        recordActivityDate(p.period_start || p.periodStart || p.startDate || cycle?.startDate || (cycle as any)?.start_date);
+        recordActivityDate(p.period_end || p.periodEnd || p.endDate || cycle?.endDate || (cycle as any)?.end_date);
+        recordActivityDate(p.generated_at || p.createdAt || p.created_at);
+      });
+    }
+
+    const effectiveCashRange: DateRange = (() => {
+      const s = current.startDate || minActivityDate || "1900-01-01";
+      const e = current.endDate || maxActivityDate || "2099-12-31";
+      return s > e ? { startDate: s, endDate: s } : { startDate: s, endDate: e };
+    })();
+
+    const refDateForFallback = actualRefDate || new Date();
+    const fallbackTodayStr = `${refDateForFallback.getFullYear()}-${String(refDateForFallback.getMonth() + 1).padStart(2, "0")}-${String(refDateForFallback.getDate()).padStart(2, "0")}`;
+
+    const effectiveAttendanceRange: DateRange = (() => {
+      if (current.startDate && current.endDate) return current;
+      if (!minActivityDate && !maxActivityDate) return { startDate: "", endDate: "" };
+      const s = current.startDate || minActivityDate || fallbackTodayStr;
+      const e = current.endDate || maxActivityDate || fallbackTodayStr;
+      return s > e ? { startDate: s, endDate: s } : { startDate: s, endDate: e };
+    })();
+
+    const effectiveTrendRange: DateRange = (() => {
+      if (current.startDate && current.endDate) return current;
+      const s = current.startDate || minActivityDate || fallbackTodayStr;
+      const e = current.endDate || maxActivityDate || fallbackTodayStr;
+      return s > e ? { startDate: s, endDate: s } : { startDate: s, endDate: e };
+    })();
 
     // Business scope active operational staff (excludes OWNER / SUPER_ADMIN)
     const matchedEmployees = filterOperationalEmployees(actualEmployees.filter((e) => matchesBusiness(e)));
@@ -1035,17 +1385,24 @@ export class AnalyticsEngine {
     // 3. Financial KPI Calculations
     const getTxAmount = (t: LedgerTransaction): number => {
       if (!t) return 0;
-      if (typeof t.amount === "number" && !isNaN(t.amount) && t.amount !== 0) return Math.abs(t.amount);
-      if (typeof (t as any).amount_htg === "number" && !isNaN((t as any).amount_htg) && (t as any).amount_htg !== 0) return Math.abs((t as any).amount_htg);
-      if (typeof (t as any).amountHtg === "number" && !isNaN((t as any).amountHtg) && (t as any).amountHtg !== 0) return Math.abs((t as any).amountHtg);
-      if (typeof (t as any).amount_cents === "number" && !isNaN((t as any).amount_cents) && (t as any).amount_cents !== 0) return Math.abs((t as any).amount_cents) / 100;
-      if (typeof (t as any).amountCents === "number" && !isNaN((t as any).amountCents) && (t as any).amountCents !== 0) return Math.abs((t as any).amountCents) / 100;
-      if (typeof (t as any).total === "number" && !isNaN((t as any).total) && (t as any).total !== 0) return Math.abs((t as any).total);
-      if (typeof (t as any).credit === "number" && (t as any).credit > 0) return (t as any).credit;
-      if (typeof (t as any).debit === "number" && (t as any).debit > 0) return (t as any).debit;
-      if (typeof (t as any).credit_cents === "number" && (t as any).credit_cents > 0) return (t as any).credit_cents / 100;
-      if (typeof (t as any).debit_cents === "number" && (t as any).debit_cents > 0) return (t as any).debit_cents / 100;
-      return 0;
+      let amt = 0;
+      if (typeof t.amount === "number" && !isNaN(t.amount) && t.amount !== 0) amt = Math.abs(t.amount);
+      else if (typeof (t as any).amount_htg === "number" && !isNaN((t as any).amount_htg) && (t as any).amount_htg !== 0) amt = Math.abs((t as any).amount_htg);
+      else if (typeof (t as any).amountHtg === "number" && !isNaN((t as any).amountHtg) && (t as any).amountHtg !== 0) amt = Math.abs((t as any).amountHtg);
+      else if (typeof (t as any).amount_cents === "number" && !isNaN((t as any).amount_cents) && (t as any).amount_cents !== 0) amt = Math.abs((t as any).amount_cents) / 100;
+      else if (typeof (t as any).amountCents === "number" && !isNaN((t as any).amountCents) && (t as any).amountCents !== 0) amt = Math.abs((t as any).amountCents) / 100;
+      else if (typeof (t as any).total === "number" && !isNaN((t as any).total) && (t as any).total !== 0) amt = Math.abs((t as any).total);
+      else if (typeof (t as any).credit === "number" && (t as any).credit > 0) amt = (t as any).credit;
+      else if (typeof (t as any).debit === "number" && (t as any).debit > 0) amt = (t as any).debit;
+      else if (typeof (t as any).credit_cents === "number" && (t as any).credit_cents > 0) amt = (t as any).credit_cents / 100;
+      else if (typeof (t as any).debit_cents === "number" && (t as any).debit_cents > 0) amt = (t as any).debit_cents / 100;
+
+      if (normalizationContext && amt > 0) {
+        const currency = t.currency || (t as any).currency_code || (t as any).currencyCode || "HTG";
+        const date = resolveAnalyticsTxDate(t, actualAccountingMode === "CASH");
+        return NormalizedAmountResolver.resolveToHTG(amt, currency, date, normalizationContext);
+      }
+      return amt;
     };
 
     const isIncomeTx = (t: LedgerTransaction): boolean => {
@@ -1060,13 +1417,52 @@ export class AnalyticsEngine {
       ) {
         return false;
       }
-      const typeUpper = (t.type || "").toUpperCase();
-      if (typeUpper === "INCOME" || typeUpper === "REVENUE" || typeUpper === "SALES" || typeUpper === "VENTE" || typeUpper === "VENTES" || typeUpper === "CREDIT") return true;
       const catUpper = (t.category || (t as any).category_name || (t as any).categoryName || "").toUpperCase();
+      const isEmployeeRepayment =
+        catUpper === "PAYROLL_RECOVERY" ||
+        catUpper === "REPAYMENT" ||
+        catUpper === "RECOUVREMENT";
+      if (AnalyticsEngine.isPayrollRelatedTransaction(t) && !isEmployeeRepayment) {
+        return false;
+      }
+
+      const typeUpper = (t.type || "").toUpperCase();
+      if (
+        typeUpper === "EXPENSE" ||
+        typeUpper === "PAYROLL" ||
+        typeUpper === "TRANSFER" ||
+        typeUpper === "EXCHANGE" ||
+        typeUpper === "ADVANCE" ||
+        typeUpper === "PENALTY" ||
+        typeUpper === "BONUS" ||
+        typeUpper === "COMPENSATION" ||
+        typeUpper === "CORRECTION" ||
+        typeUpper === "ADJUSTMENT" ||
+        typeUpper === "REFUND"
+      ) {
+        return false;
+      }
+
+      const creditAcc = ((t as any).credit_account || (t as any).creditAccount || "").toString().trim().toUpperCase();
+      if (
+        creditAcc &&
+        (/^[256]\d*/.test(creditAcc) ||
+          /^4[2-9]\d*/.test(creditAcc) ||
+          creditAcc.includes("PAYROLL") ||
+          creditAcc.includes("SALAIRE") ||
+          creditAcc.includes("ONA") ||
+          creditAcc.includes("OFATMA") ||
+          creditAcc.includes("CLEARING") ||
+          creditAcc.includes("PAYABLE") ||
+          creditAcc.includes("TAX"))
+      ) {
+        return false;
+      }
+
+      if (typeUpper === "INCOME" || typeUpper === "REVENUE" || typeUpper === "SALES" || typeUpper === "VENTE" || typeUpper === "VENTES" || typeUpper === "CREDIT") return true;
       if (catUpper.includes("INCOME") || catUpper.includes("REVENUE") || catUpper.includes("VENTE") || catUpper.includes("RECETTE") || catUpper.includes("SALES")) return true;
-      const creditAcc = ((t as any).credit_account || (t as any).creditAccount || "").toString().toUpperCase();
-      if (creditAcc.startsWith("4") || creditAcc.startsWith("7")) return true;
-      if (typeof (t as any).credit === "number" && (t as any).credit > 0 && !(t as any).debit && typeUpper !== "EXPENSE" && typeUpper !== "PAYROLL") return true;
+      if (creditAcc && (/^4[01]\d*/.test(creditAcc) || creditAcc.startsWith("7"))) return true;
+      if (typeof (t as any).credit === "number" && (t as any).credit > 0 && !(t as any).debit) return true;
       return false;
     };
 
@@ -1157,8 +1553,8 @@ export class AnalyticsEngine {
     const rawIncomeTxs = curTxs.filter((t) => t.type === "INCOME");
     const totalIncomeBeforeStatusFilter = rawIncomeTxs.reduce((sum, t) => sum + getTxAmount(t), 0);
 
-    const curRevVal = calculateTotalRevenue(curPayroll, curTxs, current);
-    const prevRevVal = calculateTotalRevenue(prevPayroll, prevTxs, previous);
+    const curRevVal = calculateTotalRevenue(curPayroll, curTxs, effectiveCashRange);
+    const prevRevVal = hasPreviousPeriod ? calculateTotalRevenue(prevPayroll, prevTxs, previous) : 0;
     const revenue = this.compareValues(curRevVal, prevRevVal);
 
     console.debug("[KPI:Revenue] Pipeline step breakdown:", {
@@ -1187,22 +1583,24 @@ export class AnalyticsEngine {
       96;
 
     // GL Expenses: includes ALL expense and payroll transactions in General Ledger (GL)
-    const curGlExpenses = AnalyticsEngine.computeOperationalExpenses(curTxs, current, actualBizId, true);
-    const prevGlExpenses = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, actualBizId, true);
+    const curGlExpenses = AnalyticsEngine.computeOperationalExpenses(curTxs, current, actualBizId, true, normalizationContext);
+    const prevGlExpenses = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, actualBizId, true, normalizationContext);
 
-    const curNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(curTxs, current, actualBizId, false);
-    const prevNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, actualBizId, false);
+    const curNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(curTxs, current, actualBizId, false, normalizationContext);
+    const prevNonPayrollExp = AnalyticsEngine.computeOperationalExpenses(prevTxs, previous, actualBizId, false, normalizationContext);
 
-    const sumExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, true);
-    const sumNonPayrollExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, false);
+    const sumExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, true, normalizationContext);
+    const sumNonPayrollExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, false, normalizationContext);
 
     // Payroll cost: EXCLUSIVELY from sealed / validated payroll_records with proration (SSOT)
-    const curPayrollCost = AnalyticsEngine.computePayrollCost(curPayroll, current, isSocialTaxEnabled, cycleMap);
-    const prevPayrollCost = AnalyticsEngine.computePayrollCost(prevPayroll, previous, isSocialTaxEnabled, cycleMap);
+    const curPayrollCost = AnalyticsEngine.computePayrollCost(curPayroll, effectiveTrendRange, isSocialTaxEnabled, cycleMap, normalizationContext);
+    const prevPayrollCost = hasPreviousPeriod
+      ? AnalyticsEngine.computePayrollCost(prevPayroll, previous, isSocialTaxEnabled, cycleMap, normalizationContext)
+      : 0;
     const payrollCost = this.compareValues(curPayrollCost, prevPayrollCost, true);
 
     const sumPayrollDetails = (payrolls: PayrollRecord[], txs: LedgerTransaction[], range: DateRange) =>
-      AnalyticsEngine.computePayrollCost(payrolls, range, isSocialTaxEnabled, cycleMap);
+      AnalyticsEngine.computePayrollCost(payrolls, range, isSocialTaxEnabled, cycleMap, normalizationContext);
 
     // Detailed instrumentation for Expenses & Payroll
     const cycleLogDetails: any[] = [];
@@ -1211,7 +1609,7 @@ export class AnalyticsEngine {
     let totalTaxesAmount = 0;
 
     curPayroll.forEach((pr: any) => {
-      const factor = AnalyticsEngine.getRecordProrationFactor(pr, current, cycleMap);
+      const factor = AnalyticsEngine.getRecordProrationFactor(pr, effectiveTrendRange, cycleMap);
       const cycleId = pr.cycleId || pr.payroll_cycle_id;
       const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
       let pStart = pr.period_start || (pr as any).periodStart || (pr as any).startDate || cycle?.startDate || (cycle as any)?.start_date;
@@ -1270,22 +1668,59 @@ export class AnalyticsEngine {
       },
       {
         businessId: actualBizId,
-        startDate: current.startDate,
-        endDate: current.endDate,
+        startDate: effectiveCashRange.startDate,
+        endDate: effectiveCashRange.endDate,
       }
     );
 
-    const prevCashStatement = CanonicalCashEngine.executePipeline(
-      {
-        payrollRecords: prevPayroll,
-        ledgerTransactions: prevTxs,
-      },
-      {
-        businessId: actualBizId,
-        startDate: previous.startDate,
-        endDate: previous.endDate,
-      }
-    );
+    const prevCashStatement = hasPreviousPeriod
+      ? CanonicalCashEngine.executePipeline(
+          {
+            payrollRecords: prevPayroll,
+            ledgerTransactions: prevTxs,
+          },
+          {
+            businessId: actualBizId,
+            startDate: previous.startDate,
+            endDate: previous.endDate,
+          }
+        )
+      : {
+          businessId: actualBizId,
+          startDate: "",
+          endDate: "",
+          totalInflow: 0,
+          totalOutflow: 0,
+          netCashFlow: 0,
+          inflowsBySource: {
+            OPERATING_REVENUE: 0,
+            RECEIVABLE_COLLECTION: 0,
+            OTHER_INFLOW: 0,
+          },
+          outflowsByCategory: {
+            PAYROLL_NET_DISBURSEMENT: 0,
+            STATUTORY_TAX_REMITTANCE: 0,
+            SUPPLIER_PAYMENT: 0,
+            OPERATING_EXPENSE: 0,
+            ADVANCE_DISBURSEMENT: 0,
+            OTHER_OUTFLOW: 0,
+          },
+          movements: [],
+          ignoredTransactions: [],
+          trace: {
+            payrollRecordsEvaluated: 0,
+            payrollRecordsSettledCount: 0,
+            payrollSettlementLedgerTxsMatched: 0,
+            payrollOutflowSource: "NONE" as const,
+            ledgerTransactionsEvaluated: 0,
+            ledgerCashInflowCount: 0,
+            ledgerCashOutflowCount: 0,
+            internalTransfersExcludedCount: 0,
+            nonCashExcludedCount: 0,
+            reversedExcludedCount: 0,
+            outOfPeriodExcludedCount: 0,
+          },
+        };
 
     const totalCurExpenses = actualAccountingMode === "CASH" ? curCashStatement.totalOutflow : accrualCurExpenses;
     const totalPrevExpenses = actualAccountingMode === "CASH" ? prevCashStatement.totalOutflow : accrualPrevExpenses;
@@ -1329,16 +1764,18 @@ export class AnalyticsEngine {
       if (actualBizId && t.business_id !== actualBizId && (t as any).businessId !== actualBizId) return false;
       const txDate = getTxDate(t);
       if (!txDate) return false; // Undated transactions MUST NEVER leak into historical running balance
-      return txDate <= current.endDate;
+      return !current.endDate || txDate <= current.endDate;
     });
 
-    const allTxsUpToPrevious = actualTxs.filter((t) => {
-      if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
-      if (actualBizId && t.business_id !== actualBizId && (t as any).businessId !== actualBizId) return false;
-      const txDate = getTxDate(t);
-      if (!txDate) return false; // Undated transactions MUST NEVER leak into historical running balance
-      return txDate <= previous.endDate;
-    });
+    const allTxsUpToPrevious = hasPreviousPeriod
+      ? actualTxs.filter((t) => {
+          if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
+          if (actualBizId && t.business_id !== actualBizId && (t as any).businessId !== actualBizId) return false;
+          const txDate = getTxDate(t);
+          if (!txDate) return false; // Undated transactions MUST NEVER leak into historical running balance
+          return !previous.endDate || txDate <= previous.endDate;
+        })
+      : [];
 
     const calculateTotalCash = (txs: LedgerTransaction[]) => {
       let rev = 0;
@@ -1350,7 +1787,7 @@ export class AnalyticsEngine {
         if (t.payment_method === "NON_CASH" || (t as any).paymentMethod === "NON_CASH") return;
         
         const amt = getTxAmount(t);
-        if (t.type === "INCOME") rev += amt;
+        if (isIncomeTx(t)) rev += amt;
         else if (t.type === "EXPENSE" || t.type === "PAYROLL") exp += amt;
         else if (t.type === "ADVANCE") adv += amt;
       });
@@ -1371,40 +1808,56 @@ export class AnalyticsEngine {
 
     // Burn Rate (expenses per day)
     const getDays = (range: DateRange) => {
+      if (!range.startDate || !range.endDate) return 1;
       const d1 = new Date(range.startDate);
       const d2 = new Date(range.endDate);
+      if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return 1;
       const diff = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1);
       return diff;
     };
-    const curDays = getDays(current);
-    const prevDays = getDays(previous);
+    const curDays = getDays(effectiveTrendRange);
+    const prevDays = hasPreviousPeriod ? getDays(previous) : 1;
     const burnRate = this.compareValues(totalCurExpenses / curDays, totalPrevExpenses / prevDays, true);
 
     // 4. Workforce, Payroll & Attendance KPIs
     const getAttendanceHours = (r: AttendanceRecord | any): number => {
       if (!r) return 0;
+      const st = String(r.status || "").toUpperCase();
+      if (st === "ABSENT" || st === "CANCELLED" || st === "VOID" || st === "REJECTED") {
+        return 0;
+      }
       if (typeof r.realHours === "number" && !isNaN(r.realHours) && r.realHours > 0) return r.realHours;
       if (typeof r.hoursWorked === "number" && !isNaN(r.hoursWorked) && r.hoursWorked > 0) return r.hoursWorked;
       if (typeof r.hours_worked === "number" && !isNaN(r.hours_worked) && r.hours_worked > 0) return r.hours_worked;
       if (typeof r.totalHours === "number" && !isNaN(r.totalHours) && r.totalHours > 0) return r.totalHours;
       if (typeof r.workedHours === "number" && !isNaN(r.workedHours) && r.workedHours > 0) return r.workedHours;
       if (typeof r.totalMinutes === "number" && !isNaN(r.totalMinutes) && r.totalMinutes > 0) return Number((r.totalMinutes / 60).toFixed(2));
-      
-      if (r.checkIn && r.checkOut && typeof r.checkIn === "string" && typeof r.checkOut === "string") {
-        const [h1, m1] = r.checkIn.split(":").map(Number);
-        const [h2, m2] = r.checkOut.split(":").map(Number);
-        if (!isNaN(h1) && !isNaN(h2)) {
-          const mins1 = h1 * 60 + (m1 || 0);
-          const mins2 = h2 * 60 + (m2 || 0);
-          if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+
+      const rawIn = r.checkIn || r.check_in || r.checkInTime || r.check_in_time;
+      const rawOut = r.checkOut || r.check_out || r.checkOutTime || r.check_out_time;
+
+      if (rawIn && rawOut) {
+        const dIn = new Date(rawIn);
+        const dOut = new Date(rawOut);
+        if (!isNaN(dIn.getTime()) && !isNaN(dOut.getTime()) && dOut > dIn) {
+          const hrs = (dOut.getTime() - dIn.getTime()) / 3600000;
+          if (hrs > 0 && hrs <= 24) return Number(hrs.toFixed(2));
+        }
+
+        const strIn = typeof rawIn === "string" ? rawIn.split("T").pop() || "" : "";
+        const strOut = typeof rawOut === "string" ? rawOut.split("T").pop() || "" : "";
+        if (strIn.includes(":") && strOut.includes(":")) {
+          const [h1, m1] = strIn.split(":").map(Number);
+          const [h2, m2] = strOut.split(":").map(Number);
+          if (!isNaN(h1) && !isNaN(h2)) {
+            const mins1 = h1 * 60 + (m1 || 0);
+            const mins2 = h2 * 60 + (m2 || 0);
+            if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+          }
         }
       }
 
-      const st = String(r.status || "").toUpperCase();
-      if (st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID") {
-        if (typeof r.plannedHours === "number" && r.plannedHours > 0) return r.plannedHours;
-        return 8;
-      }
+      if (typeof r.plannedHours === "number" && r.plannedHours > 0) return r.plannedHours;
 
       return 0;
     };
@@ -1428,47 +1881,146 @@ export class AnalyticsEngine {
     const activeStaff = this.compareValues(curActiveStaffCount, prevActiveStaffCount);
 
     // Attendance calculations (Dynamic SSOT: Worked Hours / Expected Hours)
-    // Expected hours read from business settings (standardQuinzaineHours, default 96h)
-    // Retards et absences ne sont pas appliqués en pénalités soustractives directes
-    const computeAttendanceKPIs = (attendance: AttendanceRecord[], staffCount: number = curActiveStaffCount || activeEmployees.length, payrolls: PayrollRecord[] = curPayroll, range: DateRange = current) => {
-      const expectedHoursPerEmployee = AnalyticsEngine.getExpectedWorkingHours(range.startDate, range.endDate, 8, standardQuinzaineHours);
-      const empCount = staffCount > 0 ? staffCount : (activeEmployees.length > 0 ? activeEmployees.length : 1);
-      const expectedTotalHours = empCount * expectedHoursPerEmployee;
+    let globalIncompleteConfigCount = 0;
 
-      // 1. Worked hours from payroll_records if present (prorated), else attendance records
-      let workedHoursSum = 0;
-      const validPayrolls = (payrolls || []).filter((p: any) => !p.isExcluded && p.status !== "CANCELLED" && p.status !== "VOID" && p.status !== "REJECTED");
-      const payrollWorkedHours = validPayrolls.reduce((sum, pr: any) => {
-        const factor = AnalyticsEngine.getRecordProrationFactor(pr, range, cycleMap);
-        const hrs = pr.workedHours ?? pr.worked_hours ?? (pr.worked_minutes ? pr.worked_minutes / 60 : 0);
-        return sum + (hrs * factor);
-      }, 0);
+    const computeAttendanceKPIs = (
+      attendance: AttendanceRecord[],
+      staffCount: number = curActiveStaffCount || activeEmployees.length,
+      payrolls: PayrollRecord[] = curPayroll,
+      range: DateRange = effectiveAttendanceRange,
+      scopedEmployees: Employee[] = activeEmployees
+    ) => {
+      let expectedTotalHours = 0;
+      let expectedWorkingDaysTotal = 0;
+      let localIncompleteCount = 0;
+      let eligibleDaysPresentTotal = 0;
+      let eligibleAttendanceHoursSum = 0;
 
-      const presentRecords = attendance.filter((a) => (a.status as string) !== "ABSENT" && (a.status as string) !== "CANCELLED" && (a.status as string) !== "VOID" && (a.status as string) !== "REJECTED");
-      const attendanceWorkedHours = presentRecords.reduce((sum, r) => sum + getAttendanceHours(r), 0);
+      const holidaysList = actualSettings?.holidays || actualSettings?.business_settings?.holidays;
 
-      // Prioritize pointage / attendance records (module pointage et présences) as primary SSOT for attendance rate
-      if (attendanceWorkedHours > 0 || presentRecords.length > 0) {
-        workedHoursSum = attendanceWorkedHours;
-      } else if (payrollWorkedHours > 0) {
-        workedHoursSum = payrollWorkedHours;
+      // Filter eligible employees in scope
+      const eligibleEmployees: { emp: Employee; contract?: EmployeeContract; res: EmployeeContractualHoursResolution }[] = [];
+
+      (scopedEmployees || []).forEach((emp) => {
+        const stEmp = String(emp.status || "").toUpperCase();
+        if (
+          stEmp === "TERMINATED" ||
+          stEmp === "INACTIVE" ||
+          stEmp === "INACTIF" ||
+          stEmp === "SUSPENDED" ||
+          stEmp === "SUSPENDU" ||
+          emp.isActive === false ||
+          (emp as any).isActive === "false"
+        ) {
+          return;
+        }
+        const empContract = (actualContracts || []).find((c) => c.employeeId === emp.id || (c as any).employee_id === emp.id);
+        const res = resolveEmployeeContractualHours(emp, empContract, actualSettings);
+        if (res.isIncompleteConfig) {
+          localIncompleteCount++;
+        } else if (res.dailyHours && res.dailyHours > 0) {
+          eligibleEmployees.push({ emp, contract: empContract, res });
+          const specificDays =
+            (empContract as any)?.workingDays ||
+            (emp as any)?.workingDays ||
+            ((empContract as any)?.workingDaysPerWeek || (emp as any)?.workingDaysPerWeek
+              ? undefined
+              : actualSettings?.workingDays);
+          const wDays = AnalyticsEngine.getEmployeeExpectedWorkingDays(
+            range.startDate,
+            range.endDate,
+            res.workingDaysPerWeek,
+            holidaysList,
+            specificDays
+          );
+          expectedWorkingDaysTotal += wDays;
+          expectedTotalHours += wDays * res.dailyHours;
+        }
+      });
+
+      globalIncompleteConfigCount = Math.max(globalIncompleteConfigCount, localIncompleteCount);
+
+      // Strict enforcement of Zero-Fallback Rule:
+      // If expectedTotalHours <= 0 or expectedWorkingDaysTotal <= 0, no synthetic fallback is injected.
+
+      // Calculate attendance for eligible employees
+      eligibleEmployees.forEach(({ emp }) => {
+        const empAtt = attendance.filter((a) => {
+          const eId = a.employeeId || (a as any).employee_id;
+          const aEmail = ((a as any).employee_email || (a as any).email || "").toLowerCase().trim();
+          return eId === emp.id || (aEmail && emp.email && emp.email.toLowerCase().trim() === aEmail);
+        });
+
+        // Distinct present days in range for this eligible employee
+        const presentDates = new Set<string>();
+        empAtt.forEach((a) => {
+          const st = String(a.status || "").toUpperCase();
+          const hrs = getAttendanceHours(a);
+          const isPresent = st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID" && st !== "REJECTED";
+          if (isPresent || hrs > 0) {
+            const d = a.date ? a.date.split("T")[0] : "";
+            if (d && (!range.startDate || d >= range.startDate) && (!range.endDate || d <= range.endDate)) {
+              presentDates.add(d);
+            }
+            if (hrs > 0) {
+              eligibleAttendanceHoursSum += hrs;
+            }
+          }
+        });
+        eligibleDaysPresentTotal += presentDates.size;
+      });
+
+      // Also calculate payroll hours for eligible employees if attendance hours are missing
+      let eligiblePayrollWorkedHours = 0;
+      if (eligibleAttendanceHoursSum === 0 && payrolls && payrolls.length > 0) {
+        const eligibleEmpIds = new Set(eligibleEmployees.map((e) => e.emp.id));
+        const validPayrolls = (payrolls || []).filter((p: any) => {
+          const pEmpId = p.employeeId || p.employee_id;
+          return eligibleEmpIds.has(pEmpId) && !p.isExcluded && p.status !== "CANCELLED" && p.status !== "VOID" && p.status !== "REJECTED";
+        });
+        eligiblePayrollWorkedHours = validPayrolls.reduce((sum, pr: any) => {
+          const factor = AnalyticsEngine.getRecordProrationFactor(pr, range, cycleMap);
+          const hrs = pr.workedHours ?? pr.worked_hours ?? (pr.worked_minutes ? pr.worked_minutes / 60 : 0);
+          return sum + (hrs * factor);
+        }, 0);
       }
 
+      const workedHoursSum = eligibleAttendanceHoursSum > 0 ? eligibleAttendanceHoursSum : eligiblePayrollWorkedHours;
+
+      // Pure ratio: Eligible Worked Hours / Eligible Expected Contractual Hours (capped at 100%)
+      // Non-computable when expectedTotalHours <= 0 -> null (NO_DATA); 0 when expectedTotalHours > 0 && workedHoursSum === 0 -> 0 (VALID_ZERO).
+      let attRate: number | null = null;
+      if (expectedTotalHours > 0) {
+        attRate = workedHoursSum > 0
+          ? Math.min(100, Math.max(0, parseFloat(((workedHoursSum / expectedTotalHours) * 100).toFixed(1))))
+          : 0;
+      }
+
+      // Attendance Frequency: Eligible Days Present / Eligible Expected Working Days (capped at 100%)
+      // Non-computable when expectedWorkingDaysTotal <= 0 -> null (NO_DATA); 0 when expectedWorkingDaysTotal > 0 && eligibleDaysPresentTotal === 0 -> 0 (VALID_ZERO).
+      let attFreq: number | null = null;
+      if (expectedWorkingDaysTotal > 0) {
+        attFreq = eligibleDaysPresentTotal > 0
+          ? Math.min(100, Math.max(0, parseFloat(((eligibleDaysPresentTotal / expectedWorkingDaysTotal) * 100).toFixed(1))))
+          : 0;
+      }
+
+      // Lateness and Absence rates across recorded logs
       const total = attendance.length;
       const lates = attendance.filter((a) => a.status === "LATE").length;
       const absents = attendance.filter((a) => a.status === "ABSENT").length;
-
-      // Pure ratio: Worked Hours / Expected Hours (capped at 100%)
-      let attRate = 0;
-      if (expectedTotalHours > 0 && workedHoursSum > 0) {
-        attRate = Math.min(100, Math.max(0, parseFloat(((workedHoursSum / expectedTotalHours) * 100).toFixed(1))));
-      } else if (total > 0 && presentRecords.length > 0) {
-        attRate = Math.min(100, Math.max(0, Math.round((presentRecords.length / total) * 100)));
-      }
-
       const explicitAbsenceRate = total > 0 ? Math.round((absents / total) * 100) : 0;
-      const hoursDeficitAbsenceRate = Math.max(0, 100 - attRate);
-      const computedAbsenceRate = Math.max(0, Math.min(100, Math.max(explicitAbsenceRate, hoursDeficitAbsenceRate)));
+      const hoursDeficitAbsenceRate = (expectedTotalHours > 0 && attRate !== null && workedHoursSum > 0)
+        ? Math.max(0, 100 - attRate)
+        : 0;
+      const computedAbsenceRate = (total > 0 || workedHoursSum > 0)
+        ? Math.max(0, Math.min(100, Math.max(explicitAbsenceRate, hoursDeficitAbsenceRate)))
+        : 0;
+
+      // Operational total worked hours across ALL employees (for avgHours reporting)
+      const allPresentRecords = attendance.filter((a) => (a.status as string) !== "ABSENT" && (a.status as string) !== "CANCELLED" && (a.status as string) !== "VOID" && (a.status as string) !== "REJECTED");
+      const allAttendanceWorkedHours = allPresentRecords.reduce((sum, r) => sum + getAttendanceHours(r), 0);
+      const totalReportedWorkedHours = allAttendanceWorkedHours > 0 ? allAttendanceWorkedHours : workedHoursSum;
 
       console.debug("[KPI:Attendance] Pipeline step breakdown:", {
         filterParameters: {
@@ -1479,25 +2031,32 @@ export class AnalyticsEngine {
           departmentsCount: actualDepts?.length || 0,
           standardQuinzaineHours,
         },
-        activeOperationalEmployeesCount: empCount,
+        activeOperationalEmployeesCount: staffCount,
+        eligibleEmployeesCount: eligibleEmployees.length,
+        incompleteConfigCount: localIncompleteCount,
         actualWorkedHoursSum: workedHoursSum,
-        expectedHoursPerEmployee,
+        expectedHoursPerEmployee: eligibleEmployees.length > 0 ? Number((expectedTotalHours / eligibleEmployees.length).toFixed(1)) : 0,
         expectedTotalHours,
+        expectedWorkingDaysTotal,
+        eligibleDaysPresentTotal,
         computedAttendanceRate: attRate,
+        computedAttendanceFrequency: attFreq,
       });
 
       return {
         attendanceRate: attRate,
+        attendanceFrequency: attFreq,
         latenessRate: total > 0 ? Math.max(0, Math.min(100, Math.round((lates / total) * 100))) : 0,
         absenceRate: computedAbsenceRate,
-        avgHours: total > 0 ? Number((workedHoursSum / total).toFixed(1)) : 0.0,
+        avgHours: total > 0 ? Number((totalReportedWorkedHours / total).toFixed(1)) : 0.0,
       };
     };
 
     const curAttStats = computeAttendanceKPIs(curAttendance, curActiveStaffCount || activeEmployees.length, curPayroll, current);
     const prevAttStats = computeAttendanceKPIs(prevAttendance, prevActiveStaffCount || activeEmployees.length, prevPayroll, previous);
 
-    const attendanceRate = this.compareValues(curAttStats.attendanceRate, prevAttStats.attendanceRate);
+    const attendanceRate = this.compareNullableValues(curAttStats.attendanceRate, prevAttStats.attendanceRate);
+    const attendanceFrequency = this.compareNullableValues(curAttStats.attendanceFrequency, prevAttStats.attendanceFrequency);
     const latenessRate = this.compareValues(curAttStats.latenessRate, prevAttStats.latenessRate, true);
     const absenceRate = this.compareValues(curAttStats.absenceRate, prevAttStats.absenceRate, true);
     const avgHoursWorked = this.compareValues(curAttStats.avgHours, prevAttStats.avgHours);
@@ -1554,8 +2113,8 @@ export class AnalyticsEngine {
             },
             {
               businessId: actualBizId,
-              startDate: current.startDate,
-              endDate: current.endDate,
+              startDate: effectiveCashRange.startDate,
+              endDate: effectiveCashRange.endDate,
             }
           );
           brRev = cashStatement.totalInflow;
@@ -1564,21 +2123,21 @@ export class AnalyticsEngine {
             .filter((t) => isIncomeTx(t))
             .reduce((sum, t) => sum + getTxAmount(t), 0);
         }
-        const brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, current);
+        const brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, effectiveTrendRange);
         const brNonPayrollExp = sumNonPayrollExpenses(brTxs);
 
         const brExpenses = brPayrollCost + brNonPayrollExp;
         const brProfit = brRev - brExpenses;
         const brMargin = brRev > 0 ? (brProfit / brRev) * 100 : 0;
 
-        const attStats = computeAttendanceKPIs(brAttendance, brEmployees.length);
+        const attStats = computeAttendanceKPIs(brAttendance, brEmployees.length, brPayrolls, effectiveAttendanceRange, brEmployees);
         const attRate = attStats.attendanceRate;
 
         const efficiencyScore = Math.max(
           10,
           Math.min(
             100,
-            attRate * 0.4 + (brMargin > 0 ? Math.min(60, brMargin) : 10) + brEmployees.length * 2
+            (attRate !== null ? attRate * 0.4 : 0) + (brMargin > 0 ? Math.min(60, brMargin) : 10) + brEmployees.length * 2
           )
         );
 
@@ -1592,20 +2151,24 @@ export class AnalyticsEngine {
           profit: parseFloat(brProfit.toFixed(2)),
           margin: parseFloat(brMargin.toFixed(2)),
           attendanceRate: attRate,
+          attendanceFrequency: attStats.attendanceFrequency,
           employeeCount: brEmployees.length,
           efficiencyScore: Math.round(efficiencyScore),
         };
       });
 
     // 6. Segment breakdown (Departments & Cost Centers)
+    // DEF-REV-01: Department accounting revenue originates strictly from posted GL Income (or Cash inflows in CASH mode),
+    // NEVER from payroll_records commercial sales attribution (sales_cents / salesHtg).
     const deptMap = new Map<string, { 
       name: string; 
       payrollCost: number; 
       nonPayrollExp: number; 
-      salesFromPayroll: number;
       glIncome: number;
+      txs: LedgerTransaction[];
       empCount: number; 
-      attList: AttendanceRecord[] 
+      employees: Employee[];
+      attList: AttendanceRecord[];
     }>();
     
     // Helper to resolve department using ReferenceResolver / DepartmentAliasEngine SSOT
@@ -1629,14 +2192,15 @@ export class AnalyticsEngine {
           name: dept.name,
           payrollCost: 0,
           nonPayrollExp: 0,
-          salesFromPayroll: 0,
           glIncome: 0,
+          txs: [],
           empCount: deptEmployees.length,
+          employees: deptEmployees,
           attList: [],
         });
       });
 
-    // Attribute payroll expenses & sales to departments
+    // Attribute payroll expenses to departments
     curPayroll.forEach((p: any) => {
       const statusUpper = (p.status || "").toUpperCase();
       if (statusUpper === "CANCELLED" || statusUpper === "VOID" || statusUpper === "REJECTED" || p.isExcluded) {
@@ -1651,7 +2215,7 @@ export class AnalyticsEngine {
       const resolvedDept = resolveDeptObj(rawDeptStr);
       const deptId = resolvedDept ? resolvedDept.id : (rawDeptStr || "general");
 
-      const factor = AnalyticsEngine.getRecordProrationFactor(p, current, cycleMap);
+      const factor = AnalyticsEngine.getRecordProrationFactor(p, effectiveTrendRange, cycleMap);
       if (factor <= 0) return;
 
       const rawGross = (p.gross_salary_cents !== undefined && p.gross_salary_cents !== null ? p.gross_salary_cents / 100 : undefined) ?? p.grossSalary ?? p.grossSalaryHtg ?? p.gross ?? p.baseSalary ?? 0;
@@ -1667,22 +2231,20 @@ export class AnalyticsEngine {
       }
       const pCost = (rawGross + erTaxes) * factor;
 
-      const pSales = (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || p.sales || 0)) * factor;
-
       if (!deptMap.has(deptId)) {
         deptMap.set(deptId, {
           name: resolvedDept?.name || (deptId === "general" ? "Administration Générale" : deptId),
           payrollCost: 0,
           nonPayrollExp: 0,
-          salesFromPayroll: 0,
           glIncome: 0,
+          txs: [],
           empCount: 0,
+          employees: [],
           attList: [],
         });
       }
       const entry = deptMap.get(deptId)!;
       entry.payrollCost += pCost;
-      entry.salesFromPayroll += pSales;
     });
 
     // Attribute transaction expenses & income to departments
@@ -1708,20 +2270,18 @@ export class AnalyticsEngine {
             name: deptName,
             payrollCost: 0,
             nonPayrollExp: 0,
-            salesFromPayroll: 0,
             glIncome: 0,
+            txs: [],
             empCount: 0,
+            employees: [],
             attList: [],
           });
         }
         const entry = deptMap.get(deptId)!;
+        entry.txs.push(t);
 
-        if (t.type === "INCOME") {
-          if (!t.employeeId && !(t as any).employee_id && !tEmail) {
-            entry.glIncome += tAmount;
-          } else if (entry.salesFromPayroll === 0) {
-            entry.glIncome += tAmount;
-          }
+        if (isIncomeTx(t)) {
+          entry.glIncome += tAmount;
         } else if (!AnalyticsEngine.isPayrollRelatedTransaction(t)) {
           // EXCLUSION STRICTE : Ne jamais mélanger les écritures de paie avec les dépenses d'exploitation
           if (t.type === "EXPENSE" || t.type === "BONUS" || t.type === "COMPENSATION" || (t.type as any) === "PENALTY") {
@@ -1745,8 +2305,24 @@ export class AnalyticsEngine {
     });
 
     const departmentPerformance: DepartmentPerformance[] = Array.from(deptMap.entries()).map(([deptId, data]) => {
-      const attStats = computeAttendanceKPIs(data.attList, data.empCount || 1);
-      const rev = data.salesFromPayroll + data.glIncome;
+      const attStats = computeAttendanceKPIs(data.attList, data.empCount || 1, curPayroll, effectiveAttendanceRange, data.employees);
+      let rev = 0;
+      if (actualAccountingMode === "CASH") {
+        const cashStatement = CanonicalCashEngine.executePipeline(
+          {
+            payrollRecords: [],
+            ledgerTransactions: data.txs,
+          },
+          {
+            businessId: actualBizId,
+            startDate: effectiveCashRange.startDate,
+            endDate: effectiveCashRange.endDate,
+          }
+        );
+        rev = cashStatement.totalInflow;
+      } else {
+        rev = data.glIncome;
+      }
       const exp = data.payrollCost + data.nonPayrollExp;
       const margin = rev > 0 ? Math.round(((rev - exp) / rev) * 100) : 0;
 
@@ -1760,6 +2336,7 @@ export class AnalyticsEngine {
         margin,
         employeeCount: data.empCount,
         attendanceRate: attStats.attendanceRate,
+        attendanceFrequency: attStats.attendanceFrequency,
         averageHours: attStats.avgHours,
       };
     }).sort((a, b) => b.expenses - a.expenses);
@@ -1808,9 +2385,19 @@ export class AnalyticsEngine {
       const lates = empAttendance.filter((a) => a.status === "LATE").length;
       const absents = empAttendance.filter((a) => a.status === "ABSENT").length;
       const overtimeLogs = empAttendance.filter((a) => a.status === "OVERTIME");
-
       const presentRecords = empAttendance.filter((a) => a.status !== "ABSENT" || getAttendanceHours(a) > 0);
-      const overtimeHours = overtimeLogs.reduce((sum, a) => sum + Math.max(0, getAttendanceHours(a) - (a.plannedHours || 8)), 0);
+
+      const empContract = (actualContracts || []).find((c) => c.employeeId === emp.id || (c as any).employee_id === emp.id);
+      const res = resolveEmployeeContractualHours(emp, empContract, actualSettings);
+      const holidaysList = actualSettings?.holidays || actualSettings?.business_settings?.holidays;
+      const specificDays =
+        (empContract as any)?.workingDays ||
+        (emp as any)?.workingDays ||
+        ((empContract as any)?.workingDaysPerWeek || (emp as any)?.workingDaysPerWeek
+          ? undefined
+          : actualSettings?.workingDays);
+
+      const overtimeHours = overtimeLogs.reduce((sum, a) => sum + Math.max(0, getAttendanceHours(a) - (typeof a.plannedHours === "number" && a.plannedHours > 0 ? a.plannedHours : (res.dailyHours || 0))), 0);
       let totalHours = presentRecords.reduce((sum, a) => sum + getAttendanceHours(a), 0);
       if (totalHours === 0 && relevantPayrolls.length > 0) {
         totalHours = relevantPayrolls.reduce((sum, p: any) => {
@@ -1819,17 +2406,20 @@ export class AnalyticsEngine {
           return sum + (hrs * factor);
         }, 0);
       }
-      const mustWorkHours = AnalyticsEngine.getExpectedWorkingHours(current.startDate, current.endDate, 8, standardQuinzaineHours);
+      
+      const empWDays = (res.dailyHours && res.dailyHours > 0)
+        ? AnalyticsEngine.getEmployeeExpectedWorkingDays(effectiveAttendanceRange.startDate, effectiveAttendanceRange.endDate, res.workingDaysPerWeek, holidaysList, specificDays)
+        : 0;
+      const mustWorkHours = (res.dailyHours && res.dailyHours > 0) ? empWDays * res.dailyHours : 0;
 
       const hasWorked = (presentRecords.length > 0 && totalHours > 0) || totalHours > 0 || commissions > 0 || empSalesVolume > 0;
 
       const latenessScore = totalDays > 0 ? (lates / totalDays) * 100 : 0;
-      const attendanceConsistencyScore = mustWorkHours > 0 ? Math.min(100, Math.round((totalHours / mustWorkHours) * 100)) : 100;
-      const hourRatio = mustWorkHours > 0 ? (totalHours / mustWorkHours) * 100 : 0;
+      const attendanceConsistencyScore: number | null = mustWorkHours > 0 ? Math.min(100, Math.round((totalHours / mustWorkHours) * 100)) : null;
 
       const commissionBonus = Math.min(20, (commissions / (emp.baseSalary || 1)) * 100);
       const productivityIndex = hasWorked
-        ? Math.max(0, Math.min(100, Math.round(attendanceConsistencyScore + commissionBonus)))
+        ? Math.max(0, Math.min(100, Math.round((attendanceConsistencyScore ?? 0) + commissionBonus)))
         : 0;
 
       const empBaseSalary = emp.baseSalary 
@@ -1847,7 +2437,7 @@ export class AnalyticsEngine {
         : (hasWorked ? (empBaseSalary + commissions) : 0);
 
       const empPayrollCost = sumPayrollDetails(relevantPayrolls, empTxs, current);
-      const underperformanceSignal = hasWorked && (latenessScore > 20 || attendanceConsistencyScore < 80);
+      const underperformanceSignal = hasWorked && (latenessScore > 20 || (attendanceConsistencyScore !== null && attendanceConsistencyScore < 80));
 
       const resolvedDeptObj = resolveDeptObj(emp.departmentId || (emp as any).department_id);
 
@@ -1856,7 +2446,7 @@ export class AnalyticsEngine {
         employeeName: emp.name,
         branchId: emp.branchId || (emp as any).branch_id,
         departmentId: resolvedDeptObj ? resolvedDeptObj.id : (emp.departmentId || (emp as any).department_id),
-        attendanceConsistencyScore: Math.round(attendanceConsistencyScore),
+        attendanceConsistencyScore: attendanceConsistencyScore !== null ? Math.round(attendanceConsistencyScore) : null,
         latenessScore: Math.round(latenessScore),
         productivityIndex: Math.round(productivityIndex),
         overtimeHours: parseFloat(overtimeHours.toFixed(1)),
@@ -1936,8 +2526,8 @@ export class AnalyticsEngine {
       endDate: string;
     }
 
-    const sParts = current.startDate.split("-").map(p => parseInt(p, 10));
-    const eParts = current.endDate.split("-").map(p => parseInt(p, 10));
+    const sParts = effectiveTrendRange.startDate.split("-").map(p => parseInt(p, 10));
+    const eParts = effectiveTrendRange.endDate.split("-").map(p => parseInt(p, 10));
     const sDate = new Date(sParts[0], (sParts[1] || 1) - 1, sParts[2] || 1);
     const eDate = new Date(eParts[0], (eParts[1] || 1) - 1, eParts[2] || 1);
     const diffDays = Math.max(1, Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
@@ -2078,8 +2668,8 @@ export class AnalyticsEngine {
 
             const cycleId = p.cycleId || p.payroll_cycle_id;
             const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
-            let pStart = normalizeDateStr(p.period_start || cycle?.startDate || cycle?.start_date || (p as any).generated_at || current.startDate);
-            let pEnd = normalizeDateStr(p.period_end || cycle?.endDate || cycle?.end_date || cycle?.effectiveAccountingDate || (p as any).generated_at || current.endDate);
+            let pStart = normalizeDateStr(p.period_start || cycle?.startDate || cycle?.start_date || (p as any).generated_at || effectiveTrendRange.startDate);
+            let pEnd = normalizeDateStr(p.period_end || cycle?.endDate || cycle?.end_date || cycle?.effectiveAccountingDate || (p as any).generated_at || effectiveTrendRange.endDate);
 
             if (!pStart || !pEnd) {
               return sum + rawGross / Math.max(1, diffDays);
@@ -2171,9 +2761,10 @@ export class AnalyticsEngine {
       actualDepts,
       actualBranches,
       actualActivities,
-      current.startDate,
-      current.endDate,
-      actualSettings
+      effectiveAttendanceRange.startDate,
+      effectiveAttendanceRange.endDate,
+      actualSettings,
+      normalizationContext
     );
 
     const profitMargin = revenue.currentValue > 0 ? (profit.currentValue / revenue.currentValue) * 100 : 0;
@@ -2187,7 +2778,7 @@ export class AnalyticsEngine {
     let employerCharges = 0;
 
     curPayroll.forEach((p: any) => {
-      const factor = AnalyticsEngine.getRecordProrationFactor(p, current, cycleMap);
+      const factor = AnalyticsEngine.getRecordProrationFactor(p, effectiveTrendRange, cycleMap);
       if (factor <= 0) return;
 
       const pGross = ((p.gross_salary_cents !== undefined && p.gross_salary_cents !== null ? p.gross_salary_cents / 100 : undefined) ?? p.grossSalary ?? p.grossSalaryHtg ?? p.gross ?? p.baseSalary ?? 0) * factor;
@@ -2235,6 +2826,7 @@ export class AnalyticsEngine {
       payrollCost,
       activeStaff,
       attendanceRate,
+      attendanceFrequency,
       latenessRate,
       absenceRate,
       avgHoursWorked,
@@ -2249,6 +2841,7 @@ export class AnalyticsEngine {
       anomalies,
       workforceProfitability,
       payrollAggregates,
+      incompleteConfigCount: globalIncompleteConfigCount,
       isSocialTaxEnabled,
       hrROI,
       payrollReconciliation: {

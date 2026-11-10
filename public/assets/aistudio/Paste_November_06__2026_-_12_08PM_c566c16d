@@ -1,0 +1,1024 @@
+# FINOPS — BI-P1.7.0
+# GLOBAL SEARCH SSOT & CROSS-VIEW FILTERING ARCHITECTURE AUDIT
+
+**Project:** FINOPS ERP / FINAYITI FUSION  
+**Role:** Independent Principal BI Architect, Senior Financial Data Engineer, Accounting Systems Auditor and QA Authority  
+**Mode:** STRICT READ-ONLY ARCHITECTURAL AUDIT  
+**Priority:** P0 — FINANCIAL DATA INTEGRITY / SSOT  
+**Date:** 2026-11-06  
+**Target Component:** `BusinessIntelligence.tsx`  
+**Primary Module ID:** `performance-intelligence-module`  
+**Required Report:** `FINOPS_BI_P1_7_0_GLOBAL_SEARCH_SSOT_CROSS_VIEW_FILTERING_ARCHITECTURE_AUDIT.md`
+
+---
+
+# 0. MISSION
+
+Conduct a complete, evidence-based architectural audit of the global search and filtering system used by the FINOPS Business Intelligence module.
+
+The business objective is to establish ONE centralized search and filtering architecture shared by:
+
+- Vue Simplifiée (CASH).
+- Vue Expert (ACCRUAL).
+- Executive Dashboard.
+- Workforce.
+- Payroll.
+- Cost Centers.
+- AI Reports.
+- Predictive Analytics.
+- Charts.
+- Tables.
+- KPI cards.
+- Financial exports.
+
+The target architecture must guarantee:
+
+1. One global search state.
+2. One authoritative filter context.
+3. One canonical filtering pipeline.
+4. Consistent organizational and textual scope across all views.
+5. Consistent underlying population between CASH and ACCRUAL.
+6. Accounting-mode-specific financial recognition without corrupting the shared population.
+7. No duplicated or contradictory local search logic.
+8. No accidental changes to accounting calculations.
+9. No fabricated results or silent fallback behavior.
+10. Traceable, testable data lineage.
+
+**Important distinction:**
+
+Vue Simplifiée and Vue Expert must use the same search criteria and organizational population. Their financial amounts may legitimately differ because CASH and ACCRUAL apply different accounting recognition rules.
+
+The goal is not to make CASH and ACCRUAL totals identical.
+
+The goal is to guarantee that differences are explainable by accounting semantics, not by inconsistent filtering.
+
+This phase must define the architecture and acceptance contract. It must not implement it.
+
+---
+
+# 1. STRICT READ-ONLY RULES
+
+## Forbidden operations
+
+Do not:
+
+- Modify source code.
+- Modify tests.
+- Modify Firestore rules.
+- Modify database records.
+- Modify schemas or interfaces.
+- Add a search field.
+- Change filter behavior.
+- Change localStorage behavior.
+- Modify financial calculations.
+- Modify accounting mode logic.
+- Refactor components.
+- Install dependencies.
+- Deploy.
+- Commit or push.
+- Execute migrations.
+- Implement any proposed recommendation.
+
+Only inspect existing code, tests, documentation, and available execution evidence.
+
+If the workspace is unavailable or incomplete, stop and report the exact limitation.
+
+Do not reconstruct missing files or invent source evidence.
+
+Do not treat an audit report as proof of current source behavior without checking the actual available source.
+
+**NO EVIDENCE = NOT VERIFIED.**
+
+No Firestore Emulator execution is required.
+
+---
+
+# 2. PROJECT BASELINE AND REGRESSION PROTECTION
+
+Inspect the available project documentation and relevant reports:
+
+- `FINOPS_BI_P1_5_1_INDEPENDENT_FINANCIAL_INTEGRITY_CLOSURE_AUDIT.md`
+- `FINOPS_BI_P1_6_0_COA_GOVERNANCE_FX_SCALABILITY_DESIGN_AUDIT.md`
+- `FINOPS_BI_P1_6_1_BUSINESS_DECISION_SIGN_OFF_AND_ACCOUNTING_POLICY_DESIGN.md`, if available.
+- BI architecture decision records.
+- Relevant changelog entries.
+- Existing BI tests.
+
+Inspect the actual status of:
+
+- BI-P1.3 — Currency normalization.
+- BI-P1.4 — Attendance and aggregation SSOT.
+- BI-P1.5 — PIC financial integrity and temporal filtering.
+- BI-P1.6 — COA governance and FX policy design, if implemented or approved.
+
+Do not assume BI-P1.6.1 has been completed or approved.
+
+Do not reopen closed phases without specific regression evidence.
+
+## Regression invariants
+
+The proposed global search architecture must preserve:
+
+- Historical FX normalization.
+- Sign preservation in currency conversion.
+- No fabricated FX rate when historical conversion is unavailable.
+- Null and `NO_DATA` semantics.
+- Contractual attendance hours.
+- Attendance Frequency versus Contractual Hours Utilization distinction.
+- Cash-versus-accrual accounting separation.
+- Exclusion of payroll sales from accounting revenue.
+- Exclusion of non-revenue treasury movements from accounting revenue.
+- Correct temporal filtering.
+- Tenant isolation.
+- Existing financial auditability.
+
+Any observed regression must be reported separately.
+
+---
+
+# 3. SOURCE DISCOVERY AND ARCHITECTURE MAPPING
+
+Inspect the following components and their actual dependencies.
+
+## A. Main Business Intelligence module
+
+- `BusinessIntelligence.tsx`
+- `BIFiltersHeader.tsx`
+- `ExecutiveFilterContext.tsx`
+- `useBIDataAggregation.ts`
+- `AnalyticsContext.tsx`
+- `usePerformanceData.ts`
+- Relevant selectors.
+- Relevant shared types and filter interfaces.
+
+Locate the exact component:
+
+`main#finops-workspace-content`
+
+Locate:
+
+`div#bi-header > div#bi-filter-panel`
+
+Locate the mode controls:
+
+- `div#bi-mode-toggle > button:nth-of-type(1)` — Vue Simplifiée.
+- `div#bi-mode-toggle > button:nth-of-type(2)` — Vue Expert.
+
+Verify actual DOM structure if browser or component tests are available.
+
+Do not claim browser verification when only source code has been inspected.
+
+## B. Existing PIC filtering architecture
+
+Inspect:
+
+- `src/domains/performance/selectors/index.ts`
+- `selectFilteredDataSet`
+- `PerformanceIntelligenceCenter.tsx`
+- `FilterToolbar.tsx`
+- `usePerformanceData.ts`
+- Related selector tests.
+
+Determine whether `selectFilteredDataSet` can be safely reused by BusinessIntelligence or whether its current behavior is specific to PIC.
+
+Do not assume that two components using similar filter names share the same filtering semantics.
+
+## C. Local search implementations
+
+Find every occurrence of:
+
+- `searchTerm`
+- `searchQuery`
+- `searchText`
+- `globalSearch`
+- `filterText`
+- Similar search-related state.
+
+Determine:
+
+- Which component owns each state.
+- Which datasets it filters.
+- Whether it filters before or after aggregation.
+- Whether it is applied to the complete dataset or only displayed rows.
+- Whether it is persisted.
+- Whether it survives tab changes.
+- Whether it survives switching between CASH and ACCRUAL.
+- Whether it creates double filtering.
+
+Produce a complete search-state inventory.
+
+---
+
+# 4. CURRENT FILTER SSOT AUDIT
+
+Inspect `ExecutiveFilterContext.tsx` and establish the actual ownership of:
+
+- `startDate`
+- `endDate`
+- `selectedBranchId`
+- `selectedDeptId`
+- `accountingBasis`
+- `presentationMode`
+- `transactionType`
+- Other global filters.
+- Existing search states.
+
+For each state, document:
+
+| Property | Required evidence |
+|---|---|
+| State owner | Exact context or component |
+| Initial value | Actual implementation |
+| Update mechanism | Setter/action |
+| Persistence | Actual storage mechanism |
+| Consumers | Components and hooks |
+| Filtering stage | Before/after aggregation |
+| Mode behavior | CASH / ACCRUAL |
+| Reset behavior | Clear/reset semantics |
+
+Verify whether the existing localStorage key:
+
+`finops_executive_filters_v3`
+
+contains the actual global filter state.
+
+Inspect:
+
+- Serialization.
+- Deserialization.
+- Date validation.
+- Expiration.
+- Tenant separation.
+- Versioning.
+- Backward compatibility.
+- Clear behavior.
+- Invalid or malformed stored values.
+
+Do not modify persistence.
+
+## Required finding
+
+Determine whether the existing context is already a genuine SSOT or whether multiple independent sources of truth remain.
+
+A shared filter label does not prove a shared filtering pipeline.
+
+---
+
+# 5. GLOBAL SEARCH CONTRACT DESIGN
+
+Define the target `searchQuery` contract without implementing it.
+
+The proposed global search must be:
+
+- Owned by `ExecutiveFilterContext`.
+- Available in both accounting modes.
+- Independent of active tab.
+- Preserved when switching tabs.
+- Preserved when switching CASH/ACCRUAL.
+- Reset only through an explicit clear action or an explicitly approved lifecycle rule.
+- Tenant-scoped where persistence or caching is involved.
+- Applied through one canonical filtering pipeline.
+
+## Required conceptual state
+
+Evaluate the following proposed state:
+
+```ts
+interface GlobalSearchState {
+  searchQuery: string;
+}
+```
+
+This is a conceptual target only. Do not add it to production types.
+
+Evaluate:
+
+- Leading and trailing whitespace.
+- Empty query.
+- Case-insensitive matching.
+- Unicode and accented characters.
+- Haitian Creole, French and English text.
+- Diacritics normalization.
+- Multiple words.
+- Partial matches.
+- Exact reference matching.
+- Punctuation.
+- Special characters.
+- Search query length limits.
+- Debouncing, if required.
+- Clear action.
+- No-result state.
+- Invalid or unsupported input.
+
+Do not invent a universal search algorithm if different entity types require distinct matching rules.
+
+Clearly distinguish:
+
+- Search input normalization.
+- Search predicate.
+- Entity matching.
+- Related-record expansion.
+- Financial aggregation.
+
+---
+
+# 6. ENTITY SEARCH AND RELATIONSHIP CONTRACT
+
+This section is P0.
+
+The system must not blindly apply the same substring predicate to every dataset.
+
+Analyze the actual entity model and relationships for:
+
+1. Employees.
+2. Ledger transactions.
+3. Payroll records.
+4. Attendance records.
+5. Invoices.
+6. Customers.
+7. Branches.
+8. Departments.
+9. Cost centers.
+10. Accounting references.
+
+For each entity, identify:
+
+- Primary identifier.
+- Tenant identifier.
+- Branch relationship.
+- Department relationship.
+- Employee relationship.
+- Invoice/customer relationship.
+- Searchable fields.
+- Sensitive fields that must not be exposed.
+- Source-of-truth repository.
+- Related-record linkage.
+- Existing indexes or query constraints.
+
+## Required search matrix
+
+Produce a verified matrix in this format:
+
+| Search target | Searchable fields | Primary entity | Related records | Financial impact |
+|---|---|---|---|---|
+| Employee name | Verified employee fields | Employee | Payroll, attendance, attributed transactions | Indirect |
+| Employee email | Verified fields | Employee | Related employee records | Indirect |
+| Transaction reference | Verified reference fields | Ledger transaction | Related invoice or payment if linked | Direct |
+| Transaction description | Verified description/memo fields | Ledger transaction | Only verified linked records | Direct |
+| Invoice reference | Verified invoice fields | Invoice | Payment and ledger entries | Direct |
+| Customer name | Verified customer fields | Customer | Verified invoice/payment relationships | Direct |
+| Department name | Verified department fields | Department | Members and related records | Scope |
+| Branch name | Verified branch fields | Branch | Operational and financial records | Scope |
+
+Do not assume all these fields exist.
+
+Mark unverified fields explicitly.
+
+## Critical rule: relationship integrity
+
+Searching for an employee must not include transactions merely because the employee's name appears in a free-text description.
+
+Only include transactions through a verified structured relationship or an explicitly documented attribution rule.
+
+Likewise:
+
+- Searching for an invoice must not accidentally include unrelated transactions.
+- Searching for a customer must not include unrelated payments.
+- Searching for a department must not attribute financial amounts based on display labels alone.
+- Searching for an employee must not duplicate payroll records or ledger transactions.
+
+If no reliable relationship exists, document the limitation.
+
+Use:
+
+`RELATIONSHIP NOT VERIFIED`
+
+Do not invent a relationship.
+
+---
+
+# 7. CANONICAL FILTERING PIPELINE
+
+Trace the existing data flow from repository to UI.
+
+The target conceptual pipeline should be evaluated as:
+
+```text
+Tenant-scoped source datasets
+        |
+        v
+Structural filters
+(Dates / Branch / Department)
+        |
+        v
+Global search predicate
+        |
+        v
+Verified relationship expansion
+        |
+        v
+Canonical filtered dataset
+        |
+        +-------------------------+
+        |                         |
+        v                         v
+CASH financial projection    ACCRUAL financial projection
+        |                         |
+        v                         v
+KPI / Charts / Tables        KPI / Charts / Tables
+        |                         |
+        +-------------+-----------+
+                      |
+                      v
+            Exports / AI Reports
+```
+
+This is a target model, not proof of current implementation.
+
+Determine:
+
+1. Where tenant filtering occurs.
+2. Where date filtering occurs.
+3. Where branch filtering occurs.
+4. Where department filtering occurs.
+5. Where text search should occur.
+6. Where linked records are expanded.
+7. Where accounting recognition occurs.
+8. Where aggregation occurs.
+9. Whether any components bypass the canonical dataset.
+10. Whether filtering is repeated by child components.
+
+## Required output
+
+Produce a data lineage diagram based on actual code.
+
+For every important transition include:
+
+- Source file.
+- Function or selector.
+- Input.
+- Output.
+- Filter applied.
+- Accounting impact.
+
+Identify every alternative or bypass path.
+
+---
+
+# 8. CASH / ACCRUAL CROSS-VIEW CONSISTENCY
+
+Audit the behavior of:
+
+- `div#bi-mode-toggle > button:nth-of-type(1)`
+- `div#bi-mode-toggle > button:nth-of-type(2)`
+
+Determine how the two modes change:
+
+- `accountingBasis`.
+- `presentationMode`.
+- Transaction types.
+- Dataset selection.
+- Revenue.
+- Expenses.
+- Payroll.
+- Cash flow.
+- Reconciliation.
+- KPI computation.
+
+## Required consistency contract
+
+The following must remain identical between modes when all global search and structural filters are unchanged:
+
+- Search query.
+- Tenant scope.
+- Branch scope.
+- Department scope.
+- Date scope.
+- Searchable source population.
+- Verified entity relationships.
+- Search normalization rules.
+
+The following may differ because of accounting semantics:
+
+- Recognized revenue.
+- Recognized expenses.
+- Payroll expense recognition.
+- Accruals.
+- Cash flow presentation.
+- Financial KPI values.
+- Reconciliation bridge.
+
+Do not treat legitimate CASH/ACCRUAL differences as filter defects.
+
+## Required invariants
+
+For a fixed tenant and global filter state:
+
+1. Switching modes must not clear `searchQuery`.
+2. Switching modes must not restore another search query.
+3. Switching modes must not change the selected branch.
+4. Switching modes must not change the selected department.
+5. Switching modes must not change the date range.
+6. Switching modes must not introduce records outside the canonical scope.
+7. Switching modes must not duplicate source records.
+8. Financial differences must be attributable to accounting recognition, not different search populations.
+
+Define a future test strategy to verify these invariants.
+
+Do not modify or execute production behavior.
+
+---
+
+# 9. TRANSACTION TYPE FILTER ASYMMETRY
+
+The current report claims:
+
+- Vue Simplifiée hides the transaction type selector and forces `ALL`.
+- Vue Expert exposes transaction type selection.
+
+Inspect:
+
+- `BIFiltersHeader.tsx`
+- Filter context.
+- Transaction selectors.
+- Accounting aggregation.
+- Mode-toggle logic.
+
+Determine whether this asymmetry is intentional and whether it causes the two views to use different source populations.
+
+Evaluate two alternatives:
+
+**Option A — Shared transaction type filter**
+
+Same selected type in both modes.
+
+**Option B — Expert-only analytical filter**
+
+Expert mode allows additional analytical narrowing, while Simple mode remains `ALL`.
+
+**Option C — Shared underlying scope, mode-specific display filter**
+
+Both modes receive the same canonical source population, but Expert mode may apply an explicitly separate analytical display filter.
+
+Recommend a policy.
+
+If a mode-specific filter changes the underlying financial population, make the impact explicit.
+
+Do not assume the selector should be shared merely because other filters are shared.
+
+Mark any unresolved product/accounting choice:
+
+`DECISION METIER REQUISE`.
+
+---
+
+# 10. COMPONENT-BY-COMPONENT COVERAGE AUDIT
+
+Audit every visible section of BusinessIntelligence.
+
+Required coverage matrix:
+
+| Section | Component | Global filters | Global search | Canonical dataset | Local filter | Accounting mode |
+|---|---|---|---|---|---|---|
+| Executive | KPI cards | Verify | Verify | Verify | Verify | Verify |
+| Executive | Payroll/headcount | Verify | Verify | Verify | Verify | Verify |
+| Executive | Reconciliation bridge | Verify | Verify | Verify | Verify | Verify |
+| Executive | Branch chart | Verify | Verify | Verify | Verify | Verify |
+| Executive | Department chart | Verify | Verify | Verify | Verify | Verify |
+| Workforce | Employee leaderboard | Verify | Verify | Verify | Verify | Verify |
+| Workforce | Employee table | Verify | Verify | Verify | Verify | Verify |
+| Payroll | Employee scorecards | Verify | Verify | Verify | Verify | Verify |
+| Payroll | Payroll register | Verify | Verify | Verify | Verify | Verify |
+| Cost Centers | Cashflow timeline | Verify | Verify | Verify | Verify | Verify |
+| Cost Centers | Expense category chart | Verify | Verify | Verify | Verify | Verify |
+| AI Reports | CFO Advisor | Verify | Verify | Verify | Verify | Verify |
+| AI Reports | Exports | Verify | Verify | Verify | Verify | Verify |
+| Predictive | Projection models | Verify | Verify | Verify | Verify | Verify |
+
+For every row, distinguish:
+
+- Fully verified.
+- Partially verified.
+- Not verified.
+- Not applicable.
+
+Do not claim 100% coverage from shared hook usage alone.
+
+---
+
+# 11. LOCAL SEARCH CONSOLIDATION
+
+Investigate existing local search state in:
+
+- Workforce.
+- Payroll.
+- Other tabs.
+- PIC.
+
+For each local search field determine:
+
+- Current owner.
+- Searchable entity.
+- Existing users.
+- Whether it is a display-only search.
+- Whether it changes aggregate calculations.
+- Whether it filters only a table.
+- Whether it can conflict with the proposed global search.
+
+Evaluate these alternatives:
+
+**Option A — Replace local search with global search.**
+
+**Option B — Bind local input directly to global search.**
+
+**Option C — Keep a local refinement filter on top of global search.**
+
+**Option D — Global search plus explicitly named local refinement.**
+
+Recommend the architecture for each tab.
+
+A local refinement must never silently alter global KPI or financial aggregation if it is only intended to filter a displayed table.
+
+Do not remove any existing search behavior during this audit.
+
+---
+
+# 12. AI REPORTS, EXPORTS AND PREDICTIVE DATA
+
+Determine whether each consumer receives the canonical filtered dataset.
+
+Inspect:
+
+- AI CFO Advisor input construction.
+- Prompt context construction.
+- Export generation.
+- CSV and Excel exports.
+- Predictive Analytics source data.
+- Historical snapshots.
+- Any background report generation.
+
+Verify:
+
+- Global filters are included.
+- Global search is included where relevant.
+- Export metadata describes the applied filters.
+- AI prompts cannot silently use unfiltered datasets.
+- Exports do not re-fetch all tenant data independently.
+- Predictive models distinguish filtered presentation from model training data.
+
+Important distinction:
+
+A global search filter used for an interactive report must not automatically alter the historical training population of a predictive model unless that behavior is explicitly intended.
+
+Document this boundary.
+
+---
+
+# 13. SECURITY, PRIVACY AND PERFORMANCE
+
+## Security
+
+Verify:
+
+- Tenant isolation occurs before search results are returned.
+- Search cannot reveal another tenant's data.
+- Branch and department restrictions are enforced appropriately.
+- Search does not expose sensitive personal data.
+- Employee email visibility follows existing permissions.
+- Search results do not bypass RBAC.
+- Client-provided search parameters are not treated as authorization.
+
+Do not assume UI filtering provides security.
+
+## Privacy
+
+Identify fields that should not be searchable or displayed without explicit authorization, including:
+
+- Sensitive employee identifiers.
+- Personal contact information beyond authorized use.
+- Private financial information.
+- Authentication or security metadata.
+
+Do not invent additional data collection.
+
+## Performance
+
+Evaluate:
+
+- In-memory filtering versus Firestore queries.
+- Dataset size.
+- Number of searchable fields.
+- Repeated normalization.
+- Search recomputation.
+- React render frequency.
+- Debouncing.
+- Memoization.
+- Indexing requirements.
+- Pagination.
+- Large historical datasets.
+
+Do not invent performance benchmarks.
+
+Recommend measurements and thresholds to establish before implementation.
+
+Do not introduce external search infrastructure unless the existing architecture demonstrably requires it.
+
+---
+
+# 14. EMPTY STATES AND NULL FINANCIAL SEMANTICS
+
+Define the expected behavior for:
+
+1. Empty search query.
+2. No matching employee.
+3. No matching transaction.
+4. No matching invoice.
+5. Matching employee but no payroll.
+6. Matching employee but no attendance.
+7. Matching invoice with no payment.
+8. Matching transaction with missing FX.
+9. Matching entity with incomplete organizational metadata.
+10. No results in the previous comparison period.
+
+Distinguish:
+
+- No matching records.
+- Valid zero financial amount.
+- Missing data.
+- Incomplete configuration.
+- Missing FX.
+- Unauthorized access.
+
+Do not convert any of these states automatically into a valid financial zero.
+
+The target UI should provide an explicit empty state and should preserve existing `NO_DATA` / `INCOMPLETE_DATA` semantics.
+
+---
+
+# 15. TEST STRATEGY AND ACCEPTANCE CONTRACT
+
+Do not modify or create tests.
+
+Design a future acceptance test matrix.
+
+## A. Search behavior
+
+- Search employee by name.
+- Search employee by email where authorized.
+- Search employee by partial name.
+- Search transaction by reference.
+- Search transaction by description.
+- Search invoice by reference.
+- Search customer by verified name field.
+- Search with accents.
+- Search with multiple words.
+- Search with uppercase/lowercase differences.
+- Search with empty input.
+- Search with no results.
+- Clear search.
+- Invalid search input.
+
+## B. Cross-tab behavior
+
+- Search in global header.
+- Navigate to Workforce.
+- Navigate to Payroll.
+- Navigate to Cost Centers.
+- Navigate to AI Reports.
+- Return to Executive.
+- Verify search remains unchanged.
+- Verify every component follows the agreed search contract.
+
+## C. Cross-mode behavior
+
+- Search in Vue Simplifiée.
+- Switch to Vue Expert.
+- Verify identical search state.
+- Switch back.
+- Verify no filter reset.
+- Verify same canonical population.
+- Verify legitimate accounting differences remain explainable.
+
+## D. Structural filters
+
+Test combinations of:
+
+- Dates.
+- Branch.
+- Department.
+- Global search.
+- Transaction type, where applicable.
+
+## E. Relationship integrity
+
+- Employee search returns only verified related payroll.
+- Employee search returns only verified related attendance.
+- Employee search returns only attributable transactions.
+- Invoice search returns only linked payments and entries.
+- Customer search does not include unrelated invoices.
+- No duplicate financial transactions after relationship expansion.
+
+## F. Financial integrity
+
+- Payroll sales never become accounting revenue merely through search.
+- Treasury transfers are not automatically revenue.
+- Cash and accrual accounting remain distinct.
+- FX normalization remains correct.
+- Missing FX never becomes fabricated valid zero.
+- Attendance contractual-hour rules remain intact.
+- Empty search results do not fabricate KPI values.
+
+## G. Tenant and authorization integrity
+
+- Tenant A search never returns Tenant B records.
+- Unauthorized employee fields are not exposed.
+- Search cannot bypass branch restrictions.
+- Search cannot bypass RBAC.
+
+## H. Persistence
+
+- Search survives tab changes.
+- Search survives mode changes.
+- Search persistence follows an explicit policy.
+- Tenant changes cannot restore another tenant's previous search.
+- Expired or invalid persisted filters are safely handled.
+
+For every scenario specify:
+
+- Input.
+- Expected result.
+- Data lineage.
+- Financial effect.
+- Relevant component or service.
+- Test layer required.
+
+Distinguish unit, integration, browser and security tests.
+
+---
+
+# 16. TARGET ARCHITECTURE RECOMMENDATION
+
+Produce a target architecture with:
+
+1. Global filter context.
+2. Search state ownership.
+3. Search normalization.
+4. Entity-specific search predicates.
+5. Verified relationship expansion.
+6. Canonical filtered dataset.
+7. CASH projection.
+8. ACCRUAL projection.
+9. UI consumers.
+10. Export and AI consumers.
+11. Persistence boundary.
+12. Security boundary.
+
+Provide:
+
+- A Mermaid architecture diagram.
+- A data lineage diagram.
+- A search-state lifecycle diagram.
+- A responsibility matrix.
+- Proposed interface contracts as illustrative pseudocode only.
+
+Do not write production-ready implementation code.
+
+Clearly label every proposed interface as:
+
+`PROPOSED — NOT IMPLEMENTED`.
+
+---
+
+# 17. IMPLEMENTATION ROADMAP
+
+Recommend a controlled sequence for future implementation.
+
+Possible stages:
+
+- BI-P1.7.1 — Global Search Contract and State Ownership.
+- BI-P1.7.2 — Canonical Search Selector and Relationship Filtering.
+- BI-P1.7.3 — Cross-Tab and Cross-Mode Integration.
+- BI-P1.7.4 — Local Search Consolidation.
+- BI-P1.7.5 — Exports and AI Reports Alignment.
+- BI-P1.7.6 — Independent Regression and Acceptance Audit.
+
+These are proposed phase names only.
+
+For each stage specify:
+
+- Scope.
+- Dependencies.
+- Files likely affected.
+- Acceptance criteria.
+- Risks.
+- Required tests.
+- STOP GATE.
+
+Do not begin any stage.
+
+---
+
+# 18. REQUIRED FINAL REPORT
+
+Create:
+
+`FINOPS_BI_P1_7_0_GLOBAL_SEARCH_SSOT_CROSS_VIEW_FILTERING_ARCHITECTURE_AUDIT.md`
+
+Required sections:
+
+1. Executive Summary.
+2. Global Verdict.
+3. Workspace and Baseline Verification.
+4. Existing Filter SSOT Audit.
+5. Existing Search State Inventory.
+6. Global Search Contract.
+7. Entity Search Matrix.
+8. Relationship Integrity Analysis.
+9. Canonical Filtering Pipeline.
+10. CASH/ACCRUAL Cross-View Analysis.
+11. Transaction Type Filter Analysis.
+12. Component-by-Component Coverage Matrix.
+13. Local Search Consolidation Analysis.
+14. AI Reports and Export Lineage.
+15. Predictive Analytics Boundary.
+16. Security and Tenant Isolation.
+17. Privacy Analysis.
+18. Performance Assessment.
+19. Empty States and Null Semantics.
+20. Acceptance Test Matrix.
+21. Target Architecture.
+22. Implementation Roadmap.
+23. Unresolved Business Decisions.
+24. Risks and Dependencies.
+25. Explicit STOP GATE.
+
+All critical findings must include:
+
+- Finding ID.
+- Priority.
+- Severity.
+- Exact file path.
+- Function/component.
+- Line references, where available.
+- Verified evidence.
+- Financial or security impact.
+- Recommended remediation.
+- Acceptance criteria.
+
+Do not report source line references that were not actually inspected.
+
+---
+
+# 19. VERDICT CLASSIFICATION
+
+**PASS**
+
+The existing architecture already satisfies the required global search and cross-view SSOT contract, with evidence for every critical consumer.
+
+**PASS WITH CONDITIONS**
+
+The architecture is fundamentally reusable, but identified gaps require controlled implementation and/or explicit business decisions.
+
+**FAIL**
+
+There are critical structural, financial, security or tenant-isolation defects that prevent safe implementation of global search.
+
+**NOT VERIFIED**
+
+The workspace, source files, or required evidence are unavailable or incomplete.
+
+A PASS does not authorize implementation.
+
+---
+
+# 20. FINAL STOP GATE
+
+At the end of the report explicitly state:
+
+`BI-P1.7.0 AUDIT STATUS: READ-ONLY COMPLETE`
+
+and:
+
+`BI-P1.7.0 IMPLEMENTATION AUTHORIZATION: NOT GRANTED`
+
+Do not add the global search field.
+
+Do not modify `ExecutiveFilterContext`.
+
+Do not modify `useBIDataAggregation`.
+
+Do not modify `selectFilteredDataSet`.
+
+Do not consolidate local search fields.
+
+Do not alter CASH/ACCRUAL behavior.
+
+Do not modify exports or AI prompt construction.
+
+Do not start BI-P1.7.1.
+
+The only authorized deliverable is the evidence-based architectural audit report.
+
+**FINAL PRINCIPLE: ONE SEARCH STATE. ONE CANONICAL FILTERING PIPELINE. VERIFIED RELATIONSHIPS. MULTIPLE ACCOUNTING VIEWS. NO UNEXPLAINED DATA DIVERGENCE.**
+
+**NO EVIDENCE = NOT VERIFIED.**

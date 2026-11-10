@@ -142,10 +142,16 @@ export default function EditEmployeeDialog({
               <div>
                 <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Rôle Système</label>
                 <select required value={role} onChange={e => setRole(e.target.value as Role)} className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs text-slate-200">
-                  <option value="OWNER">OWNER</option>
-                  <option value="MANAGER">MANAGER</option>
-                  <option value="SUPERVISOR">SUPERVISOR</option>
-                  <option value="EMPLOYEE">EMPLOYEE</option>
+                  <option value="OWNER">OWNER — Propriétaire</option>
+                  <option value="ADMIN">ADMIN — Administrateur</option>
+                  <option value="MANAGER">MANAGER — Gérant de Succursale</option>
+                  <option value="SUPERVISOR">SUPERVISOR — Superviseur</option>
+                  <option value="ACCOUNTANT">ACCOUNTANT — Comptable</option>
+                  <option value="HEAD_TELLER">HEAD_TELLER — Chef Caissier</option>
+                  <option value="SENIOR_TELLER">SENIOR_TELLER — Caissier Senior</option>
+                  <option value="JUNIOR_TELLER">JUNIOR_TELLER — Caissier Junior</option>
+                  <option value="AUDITOR">AUDITOR — Auditeur</option>
+                  <option value="EMPLOYEE">EMPLOYEE — Employé Standard</option>
                 </select>
               </div>
             </div>

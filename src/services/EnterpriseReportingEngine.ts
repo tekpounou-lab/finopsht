@@ -60,7 +60,8 @@ export const generateExecutivePdfReport = (
   pdf.setFontSize(11);
   y += 20;
   workforceData.slice(0, 5).forEach(emp => {
-    pdf.text(`Employee ${emp.employeeId} - Prod. Index: ${Math.round(emp.productivityIndex)}, Attendance: ${Math.round(emp.attendanceConsistencyScore)}%`, 14, y);
+    const attText = emp.attendanceConsistencyScore !== null ? `${Math.round(emp.attendanceConsistencyScore)}%` : "N/D";
+    pdf.text(`Employee ${emp.employeeId} - Prod. Index: ${Math.round(emp.productivityIndex)}, Attendance: ${attText}`, 14, y);
     y += 7;
   });
 
@@ -217,13 +218,17 @@ export const generatePayrollPdfReport = (
   
   // Aggregates calculations
   const totalEmployees = payrollData.length;
-  const totalGross = payrollData.reduce((sum, item) => sum + (item.payrollTotal || 0), 0);
-  const totalCommissions = payrollData.reduce((sum, item) => sum + (item.commissionsGenerated || 0), 0);
-  const totalAdvances = payrollData.reduce((sum, item) => sum + (item.advancesTaken || 0), 0);
+  const totalGross = payrollData.reduce((sum, item) => sum + (item.grossSalary !== undefined ? item.grossSalary : (item.payrollTotal || item.baseSalary || 0)), 0);
+  const totalCommissions = payrollData.reduce((sum, item) => sum + (item.commissions !== undefined ? item.commissions : (item.commissionsGenerated || 0)), 0);
+  const totalAdvances = payrollData.reduce((sum, item) => sum + (item.advancesTreated !== undefined ? item.advancesTreated : (item.advancesTaken || item.advances || 0)), 0);
   
-  const totalCnss = isSocialTaxEnabled ? Math.round(totalGross * rates.employeeOnaRate) : 0;
-  const totalCns = isSocialTaxEnabled ? Math.round(totalGross * rates.employeeOfatmaRate) : 0;
-  const totalNet = totalGross - totalAdvances - totalCnss - totalCns;
+  const totalCnss = isSocialTaxEnabled
+    ? payrollData.reduce((sum, item) => sum + (item.cnssDeduction !== undefined ? item.cnssDeduction : Math.round((item.grossSalary || item.payrollTotal || 0) * rates.employeeOnaRate)), 0)
+    : 0;
+  const totalCns = isSocialTaxEnabled
+    ? payrollData.reduce((sum, item) => sum + (item.cnsDeduction !== undefined ? item.cnsDeduction : Math.round((item.grossSalary || item.payrollTotal || 0) * rates.employeeOfatmaRate)), 0)
+    : 0;
+  const totalNet = payrollData.reduce((sum, item) => sum + (item.netPaid !== undefined ? item.netPaid : ((item.grossSalary || item.payrollTotal || 0) - totalAdvances - totalCnss - totalCns)), 0);
 
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(9);
@@ -268,13 +273,17 @@ export const generatePayrollPdfReport = (
       pdf.rect(14, rowY - 4, 182, 6, "F");
     }
 
-    const empId = item.id || "N/A";
-    const name = item.displayName || item.name || "N/A";
+    const empId = item.employeeId || item.id || "N/A";
+    const name = item.employeeName || item.displayName || item.name || "N/A";
     const dept = item.department || "N/A";
     const productivity = item.productivityIndex !== undefined ? `${Math.round(item.productivityIndex)}` : "100";
-    const commissions = item.commissionsGenerated !== undefined ? `${item.commissionsGenerated.toLocaleString()} HTG` : "0 HTG";
-    const advances = item.advancesTaken !== undefined ? `${item.advancesTaken.toLocaleString()} HTG` : "0 HTG";
-    const netPaid = item.payrollTotal !== undefined ? `${item.payrollTotal.toLocaleString()} HTG` : "0 HTG";
+    const commVal = item.commissions !== undefined ? item.commissions : (item.commissionsGenerated || 0);
+    const advVal = item.advancesTreated !== undefined ? item.advancesTreated : (item.advancesTaken || item.advances || 0);
+    const netVal = item.netPaid !== undefined ? item.netPaid : (item.payrollTotal || 0);
+
+    const commissions = `${commVal.toLocaleString()} HTG`;
+    const advances = `${advVal.toLocaleString()} HTG`;
+    const netPaid = `${netVal.toLocaleString()} HTG`;
 
     pdf.text(empId.toString().substring(0, 8), 17, rowY);
     pdf.text(name.toString().substring(0, 20), 35, rowY);

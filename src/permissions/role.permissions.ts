@@ -13,6 +13,19 @@ export interface RolePermissions {
 }
 
 export const ROLE_PERMISSIONS: Record<string, RolePermissions> = {
+  SYSTEM: {
+    canViewDashboard: true,
+    canManagePayroll: true,
+    canCreateBranch: true,
+    canCreateDepartment: true,
+    canImportEmployees: true,
+    canValidatePayroll: true,
+    canOverrideAttendance: true,
+    canAccessReliability: true,
+    canAccessForensicAudit: true,
+    canAccessSystemHealth: true,
+    canAccessDisasterRecovery: true,
+  },
   SUPER_ADMIN: {
     canViewDashboard: true,
     canManagePayroll: true,

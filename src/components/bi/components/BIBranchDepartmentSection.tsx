@@ -31,7 +31,7 @@ const CustomRadarTooltip = ({ active, payload }: any) => {
         </p>
         <p className="text-cyan-400 font-mono flex items-center justify-between gap-4">
           <span>Assiduité:</span>
-          <span className="font-bold">{data.attendanceRate}%</span>
+          <span className="font-bold">{data.attendanceRate !== null && data.attendanceRate !== undefined ? `${data.attendanceRate}%` : "N/D"}</span>
         </p>
       </div>
     );
@@ -79,7 +79,7 @@ export const BIBranchDepartmentSection: React.FC<BIBranchDepartmentSectionProps>
                 <div className="flex flex-col">
                   <span className="text-xs font-bold text-slate-100">{bm.branchName}</span>
                   <span className="text-[9px] text-slate-400 font-mono mt-0.5">
-                    {bm.employeeCount} {tbi.activeStaff.toLowerCase()} | {bm.attendanceRate}% {tbi.attendanceRate.toLowerCase()}
+                    {bm.employeeCount} {tbi.activeStaff.toLowerCase()} | {bm.attendanceRate !== null && bm.attendanceRate !== undefined ? `${bm.attendanceRate}%` : "N/D"} {tbi.attendanceRate.toLowerCase()}
                   </span>
                 </div>
                 <div className="text-right">
@@ -221,7 +221,7 @@ export const BIBranchDepartmentSection: React.FC<BIBranchDepartmentSectionProps>
                       <span className="text-[9px] text-slate-500 font-mono">Effectif: {dm.employeeCount} membres | {dm.averageHours} hrs/moyenne</span>
                     </div>
                     <div className="text-right font-mono text-[10px]">
-                      <span className="text-cyan-400 block font-semibold">{dm.attendanceRate}%</span>
+                      <span className="text-cyan-400 block font-semibold">{dm.attendanceRate !== null && dm.attendanceRate !== undefined ? `${dm.attendanceRate}%` : "N/D"}</span>
                       <span className="text-[8.5px] text-slate-500 uppercase font-bold">Assiduité</span>
                     </div>
                   </div>

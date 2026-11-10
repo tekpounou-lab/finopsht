@@ -5,7 +5,8 @@ import { setDoc } from 'firebase/firestore';
 import { LedgerTransaction, Branch, Department, Employee, ForensicLog } from '../../types';
 import { generateSignature, getLocalIP } from '../../data';
 import { LedgerAuditEngine } from '../../services/accounting/LedgerAuditEngine';
-import { AccountingEngine } from '../../services/AccountingEngine';
+import { AccountingEngine, isOrphanTransaction, sanitizeAndEnrichLedgerTransaction, TransactionSanitizationContext } from '../../services/AccountingEngine';
+import { CacheInvalidationService } from '../../services/performance/CacheInvalidationService';
 
 interface DataIntegrityDialogProps {
   isOpen: boolean;
@@ -128,6 +129,21 @@ export default function DataIntegrityDialog({
       }
     }
 
+    // 5. Zero-Orphan & Dual-Key Structural Attribution check
+    if (isOrphanTransaction(tx)) {
+      isReparable = true;
+      const sanitized = sanitizeAndEnrichLedgerTransaction(tx, current_business_id, {
+        branches,
+        departments,
+        employees,
+        defaultBranchId: branches[0]?.id || "main",
+        defaultDepartmentId: departments[0]?.id || "operations",
+        defaultCostCenter: branches[0]?.id || "main"
+      });
+      repairDetails.orphanAttribution = sanitized;
+      issues.push(`Attribution orpheline détectée : Absence de Succursale, Département, Centre de Coût ou Comptes Débit/Crédit valides. Réaffectation automatique vers "${sanitized.branchId}" / "${sanitized.departmentId}".`);
+    }
+
     return {
       tx,
       isReparable,
@@ -149,6 +165,15 @@ export default function DataIntegrityDialog({
 
     let successCount = 0;
     try {
+      const context: TransactionSanitizationContext = {
+        branches,
+        departments,
+        employees,
+        defaultBranchId: branches[0]?.id || "main",
+        defaultDepartmentId: departments[0]?.id || "operations",
+        defaultCostCenter: branches[0]?.id || "main"
+      };
+
       for (const item of reparableItems) {
         const updatedTx = { ...item.tx };
         
@@ -173,26 +198,31 @@ export default function DataIntegrityDialog({
           updatedTx.employeeId = item.repairDetails.employeeId;
         }
 
-        // Apply automatic double-entry COA mapping if missing
-        if (!updatedTx.debit_account || !updatedTx.credit_account) {
-          const balanced = AccountingEngine.applyDoubleEntryRules(updatedTx);
-          updatedTx.debit_account = balanced.debit_account;
-          updatedTx.credit_account = balanced.credit_account;
+        // Apply orphan structural attribution if present
+        if (item.repairDetails.orphanAttribution) {
+          Object.assign(updatedTx, item.repairDetails.orphanAttribution);
         }
 
-        // Double check cents
-        if (!updatedTx.amount_cents && updatedTx.amount) {
-          updatedTx.amount_cents = Math.round(updatedTx.amount * 100);
-        }
+        // Canonical zero-orphan sanitization and double-entry balancing
+        const finalTx = sanitizeAndEnrichLedgerTransaction(updatedTx, current_business_id, context);
 
-        // Persist to Firebase
-        const txToSave = { ...updatedTx };
-        if (txToSave.employeeId === undefined) {
-          delete txToSave.employeeId;
-        }
-        await setDoc(getDbDoc("transactions", txToSave.id), txToSave);
+        const txToSave = {
+          ...finalTx,
+          updated_at: new Date().toISOString(),
+          metadata: {
+            ...(updatedTx.metadata || {}),
+            remediatedAt: new Date().toISOString(),
+            remediationReason: "DATA_INTEGRITY_AUDIT_REPAIR"
+          }
+        };
+
+        // Persist to canonical Firestore collection ledger_transactions
+        await setDoc(getDbDoc("ledger_transactions", txToSave.id), txToSave, { merge: true });
         successCount++;
       }
+
+      // Sweep local cache to trigger instantaneous UI sync
+      CacheInvalidationService.sweepLocal(current_business_id);
 
       // Log forensic trail
       const repairLog: ForensicLog = {

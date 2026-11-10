@@ -610,6 +610,8 @@ export const ConnectedPersonnel: React.FC<ConnectedPersonnelProps> = ({
             currentBusiness={currentBusiness}
             currentUserId={currentUser?.id}
             currentUserEmail={currentUser?.email}
+            ledgerTransactions={ledgerTransactions}
+            payrollRecords={payrollRecords}
             onAction={(action, emp) => {
               if (action === 'payroll') {
                 setActiveTab('payroll');

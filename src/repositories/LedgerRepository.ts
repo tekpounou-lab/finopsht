@@ -7,7 +7,7 @@ import { RuntimeEvent } from "../modules/runtime/types";
 import { EventBus } from "../modules/runtime/EventBus";
 import { CacheInvalidationService } from "../services/performance/CacheInvalidationService";
 import { SnapshotRebuildService } from "../services/SnapshotRebuildService";
-import { applyDoubleEntryRules, DEFAULT_CHART_OF_ACCOUNTS, detectOrphanTransactions, COST_CENTER_DEFAULT } from "../services/AccountingEngine";
+import { applyDoubleEntryRules, DEFAULT_CHART_OF_ACCOUNTS, detectOrphanTransactions, COST_CENTER_DEFAULT, sanitizeAndEnrichLedgerTransaction, TransactionSanitizationContext } from "../services/AccountingEngine";
 import { durableQueueService } from "../services/queue/DurableQueueService";
 import { validateLedgerForeignKeys } from "../validations/integritySchemas";
 import { filterLedgerTransactions } from "../services/cfo/LedgerFilterEngine";
@@ -205,31 +205,7 @@ export const LedgerRepository = {
       throw new Error(`[MultiTenancyViolation] LedgerTransaction ${tx.id} requires a valid business_id. Generic or fallback tenant ("${businessId}") rejected.`);
     }
 
-    const enrichedTx = applyDoubleEntryRules(tx);
-    const amountCents = enrichedTx.amount_cents ?? Math.round((enrichedTx.amount || 0) * 100);
-    const amount = enrichedTx.amount || (amountCents / 100);
-    const costCenter = (enrichedTx as any).cost_center_id || (enrichedTx as any).costCenterId || enrichedTx.branchId || enrichedTx.branch_id || "main";
-
-    const finalTx: LedgerTransaction = {
-      ...enrichedTx,
-      business_id: businessId,
-      businessId: businessId,
-      cost_center_id: costCenter,
-      costCenterId: costCenter,
-      branchId: enrichedTx.branchId || enrichedTx.branch_id || costCenter,
-      branch_id: enrichedTx.branch_id || enrichedTx.branchId || costCenter,
-      departmentId: enrichedTx.departmentId || enrichedTx.department_id || "operations",
-      department_id: enrichedTx.department_id || enrichedTx.departmentId || "operations",
-      debit_account: enrichedTx.debit_account || DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK,
-      credit_account: enrichedTx.credit_account || DEFAULT_CHART_OF_ACCOUNTS.REVENUE.OPERATING,
-      debit: enrichedTx.debit ?? amount,
-      credit: enrichedTx.credit ?? amount,
-      debit_cents: enrichedTx.debit_cents ?? amountCents,
-      credit_cents: enrichedTx.credit_cents ?? amountCents,
-      amount,
-      amount_cents: amountCents,
-      isLocked: true
-    };
+    const finalTx = sanitizeAndEnrichLedgerTransaction(tx, businessId);
 
     const validation = validateLedgerForeignKeys(finalTx as any);
     if (!validation.isValid) {
@@ -385,11 +361,15 @@ export const LedgerRepository = {
 
   /**
    * Batch writes multiple transactions into Firestore atomically alongside an Outbox Event.
+   * Enforces zero-orphan sanitization and relational attribution on every transaction.
    */
-  async batchSave(txs: LedgerTransaction[], customEvent?: RuntimeEvent): Promise<void> {
+  async batchSave(txs: LedgerTransaction[], customEvent?: RuntimeEvent, context?: TransactionSanitizationContext): Promise<void> {
     if (txs.length === 0) return;
-    const businessId = txs[0].business_id || "biz_default";
+    const businessId = txs[0].business_id || (txs[0] as any).businessId || "biz_default";
     const now = new Date().toISOString();
+
+    const sanitizedTxs = txs.map(t => sanitizeAndEnrichLedgerTransaction(t, businessId, context));
+
     const event: RuntimeEvent = customEvent || {
       eventId: `evt_batch_tx_${Date.now()}`,
       correlationId: `corr_batch_tx_${Date.now()}`,
@@ -399,7 +379,7 @@ export const LedgerRepository = {
       type: "LEDGER_BATCH_TRANSACTIONS_RECORDED",
       eventType: "LEDGER_BATCH_TRANSACTIONS_RECORDED",
       source: "LedgerRepository",
-      payload: { count: txs.length, businessId },
+      payload: { count: sanitizedTxs.length, businessId },
       version: "1.0.0",
       status: "PENDING",
       timestamp: now
@@ -409,7 +389,7 @@ export const LedgerRepository = {
       await MessageQueue.persistAndPublishWithBatch(
         businessId,
         (batch) => {
-          txs.forEach((tx) => {
+          sanitizedTxs.forEach((tx) => {
             const txRef = doc(db, "ledger_transactions", tx.id);
             batch.set(txRef, {
               ...tx,
@@ -431,7 +411,8 @@ export const LedgerRepository = {
   async bulkImportWithAudit(
     txs: LedgerTransaction[],
     forensicLog: ForensicLog,
-    onProgress?: (completed: number, total: number) => void
+    onProgress?: (completed: number, total: number) => void,
+    context?: TransactionSanitizationContext
   ): Promise<{ success: number; failed: number; errors: any[] }> {
     const MAX_BATCH_SIZE = 400; // Leave space for audit log + outbox event within 500 limit
     const chunks: LedgerTransaction[][] = [];
@@ -446,7 +427,7 @@ export const LedgerRepository = {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const businessId = chunk[0]?.business_id || forensicLog.business_id || "biz_default";
+      const businessId = chunk[0]?.business_id || (chunk[0] as any)?.businessId || forensicLog.business_id || "biz_default";
       const now = new Date().toISOString();
       const deterministicEventId = durableQueueService.generateDeterministicEventId(
         businessId,
@@ -459,6 +440,7 @@ export const LedgerRepository = {
       try {
         await durableQueueService.executeWithRetry(
           async () => {
+            const sanitizedChunk = chunk.map(t => sanitizeAndEnrichLedgerTransaction(t, businessId, context));
             const chunkEvent: RuntimeEvent = {
               eventId: deterministicEventId,
               correlationId: `corr_bulk_import_${forensicLog.id}_${i}`,
@@ -468,35 +450,16 @@ export const LedgerRepository = {
               type: "LEDGER_BULK_IMPORT_CHUNK_RECORDED",
               eventType: "LEDGER_BULK_IMPORT_CHUNK_RECORDED",
               source: "LedgerRepository",
-              payload: { chunkIndex: i, totalChunks: chunks.length, count: chunk.length, businessId },
+              payload: { chunkIndex: i, totalChunks: chunks.length, count: sanitizedChunk.length, businessId },
               version: "1.0.0",
               status: "PENDING",
               timestamp: now
             };
 
-            console.debug(`[Audit Step 1: Write Firestore] Writing chunk ${i + 1}/${chunks.length} (${chunk.length} items) to "ledger_transactions"`, {
-              collection: "ledger_transactions",
-              businessId,
-              chunkIndex: i,
-              chunkCount: chunk.length,
-              totalImportCount: txs.length,
-              firstDocument: chunk[0] ? {
-                id: chunk[0].id,
-                business_id: chunk[0].business_id,
-                date: chunk[0].date,
-                amount: chunk[0].amount,
-                amount_cents: chunk[0].amount_cents,
-                description: chunk[0].description,
-                type: chunk[0].type,
-                status: chunk[0].status
-              } : null
-            });
-            console.debug("[Firestore] Writing batch of", chunk.length, "documents. First doc:", chunk[0]);
-
             await MessageQueue.persistAndPublishWithBatch(
               businessId,
               (batch) => {
-                chunk.forEach(tx => {
+                sanitizedChunk.forEach(tx => {
                   const txRef = doc(db, "ledger_transactions", tx.id);
                   batch.set(txRef, {
                     ...tx,
@@ -566,65 +529,74 @@ export const LedgerRepository = {
 
   /**
    * Identifies and remediates orphan transactions for a business tenant
-   * by assigning the default cost center and balancing double-entry accounts.
+   * by resolving relations with Branches, Departments, Employees, and balancing double-entry accounts.
    */
   async cleanOrphanTransactions(
     businessId: string,
     defaultCostCenterId: string = COST_CENTER_DEFAULT,
-    actor?: any
-  ): Promise<{ fixedCount: number; fixedIds: string[] }> {
-    if (!businessId) return { fixedCount: 0, fixedIds: [] };
+    actor?: any,
+    context?: TransactionSanitizationContext
+  ): Promise<{ fixedCount: number; fixedIds: string[]; details: any[] }> {
+    if (!businessId) return { fixedCount: 0, fixedIds: [], details: [] };
 
-    const transactions = await this.listByBusiness(businessId, { limitTo: 500 });
+    // Fetch all transactions without artificial 500 cap
+    const transactions = await this.listByBusiness(businessId);
     const orphans = detectOrphanTransactions(transactions, businessId);
 
     if (orphans.length === 0) {
-      return { fixedCount: 0, fixedIds: [] };
+      return { fixedCount: 0, fixedIds: [], details: [] };
     }
 
     const fixedIds: string[] = [];
+    const details: any[] = [];
     const chunkSize = 400;
 
     for (let i = 0; i < orphans.length; i += chunkSize) {
       const chunk = orphans.slice(i, i + chunkSize);
       const batch = writeBatch(db);
 
-      chunk.forEach((tx) => {
-        const docRef = doc(db, "ledger_transactions", tx.id);
-        const resolvedTx = applyDoubleEntryRules(tx);
-        const currentCc = (tx as any).cost_center_id || (tx as any).costCenterId || tx.branchId || tx.branch_id;
-        const validCc = (!currentCc || currentCc === "none" || currentCc === "ORPHAN" || currentCc === "UNASSIGNED")
-          ? defaultCostCenterId
-          : currentCc;
-
-        const amountCents = tx.amount_cents ?? Math.round((tx.amount || 0) * 100);
-        const amount = tx.amount || (amountCents / 100);
+      chunk.forEach((orphan) => {
+        const docRef = doc(db, "ledger_transactions", orphan.id);
+        const resolvedCc = defaultCostCenterId !== COST_CENTER_DEFAULT ? defaultCostCenterId : context?.defaultCostCenter;
+        const sanitized = sanitizeAndEnrichLedgerTransaction(orphan, businessId, {
+          ...context,
+          defaultCostCenter: resolvedCc,
+          defaultBranchId: defaultCostCenterId !== COST_CENTER_DEFAULT ? defaultCostCenterId : context?.defaultBranchId
+        });
 
         const updatedFields: any = {
-          cost_center_id: validCc,
-          costCenterId: validCc,
-          branchId: tx.branchId || tx.branch_id || validCc || "main",
-          branch_id: tx.branch_id || tx.branchId || validCc || "main",
-          departmentId: tx.departmentId || tx.department_id || "operations",
-          department_id: tx.department_id || tx.departmentId || "operations",
-          debit_account: resolvedTx.debit_account || DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK,
-          credit_account: resolvedTx.credit_account || DEFAULT_CHART_OF_ACCOUNTS.REVENUE.OPERATING,
-          debit: tx.debit ?? amount,
-          credit: tx.credit ?? amount,
-          debit_cents: tx.debit_cents ?? amountCents,
-          credit_cents: tx.credit_cents ?? amountCents,
-          amount: amount,
-          amount_cents: amountCents,
-          isLocked: true,
+          ...sanitized,
           updated_at: new Date().toISOString(),
           metadata: {
-            ...(tx.metadata || {}),
+            ...(orphan.metadata || {}),
             orphanRemediatedAt: new Date().toISOString(),
+            remediationReason: "ORPHAN_ATTRIBUTION_CORRECTION",
             remediatedBy: actor?.uid || actor?.id || "SYSTEM"
           }
         };
-        batch.update(docRef, updatedFields);
-        fixedIds.push(tx.id);
+
+        batch.set(docRef, updatedFields, { merge: true });
+        fixedIds.push(orphan.id);
+        details.push({
+          id: orphan.id,
+          before: {
+            branchId: orphan.branchId || (orphan as any).branch_id,
+            departmentId: orphan.departmentId || (orphan as any).department_id,
+            costCenterId: (orphan as any).cost_center_id || (orphan as any).costCenterId,
+            employeeId: orphan.employeeId || (orphan as any).employee_id,
+            debit_account: orphan.debit_account,
+            credit_account: orphan.credit_account
+          },
+          after: {
+            branchId: sanitized.branchId,
+            departmentId: sanitized.departmentId,
+            costCenterId: sanitized.costCenterId,
+            employeeId: sanitized.employeeId,
+            employeeName: sanitized.employeeName,
+            debit_account: sanitized.debit_account,
+            credit_account: sanitized.credit_account
+          }
+        });
       });
 
       await batch.commit();
@@ -642,6 +614,6 @@ export const LedgerRepository = {
 
     CacheInvalidationService.sweepLocal(businessId);
 
-    return { fixedCount: fixedIds.length, fixedIds };
+    return { fixedCount: fixedIds.length, fixedIds, details };
   }
 };

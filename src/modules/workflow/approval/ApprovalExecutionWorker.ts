@@ -33,8 +33,11 @@ export class ApprovalExecutionWorker {
       const instance = docSnap.data() as ApprovalInstance;
       const now = Date.now();
 
-      // Check if eligible: EXECUTION_PENDING or (EXECUTING and lease expired)
-      const isPending = instance.status === "EXECUTION_PENDING";
+      // Check if eligible: EXECUTION_PENDING / APPROVED or (EXECUTING and lease expired)
+      const isPending =
+        instance.status === "EXECUTION_PENDING" ||
+        instance.status === "APPROVED" ||
+        (instance as any).execution_status === "PENDING";
       const isExpiredExecuting =
         instance.status === "EXECUTING" &&
         instance.leaseExpiresAt &&
@@ -65,11 +68,18 @@ export class ApprovalExecutionWorker {
   /**
    * STAGE 11 & 12 & 13: Execute Approved Payroll using Financial Execution Oracle
    */
-  public async executeApprovedPayroll(params: {
-    instanceId: string;
-    workerId: string;
-  }): Promise<ExecutionWorkerResult> {
-    const { instanceId, workerId } = params;
+  public async executeApprovedPayroll(
+    paramsOrInstanceId: string | { instanceId: string; workerId: string },
+    workerIdParam?: string
+  ): Promise<ExecutionWorkerResult> {
+    const instanceId =
+      typeof paramsOrInstanceId === "string"
+        ? paramsOrInstanceId
+        : paramsOrInstanceId.instanceId;
+    const workerId =
+      typeof paramsOrInstanceId === "string"
+        ? workerIdParam || "system_worker"
+        : paramsOrInstanceId.workerId;
 
     // 1. Claim instance
     const claimedInstance = await this.claimExecution(instanceId, workerId);
@@ -92,7 +102,7 @@ export class ApprovalExecutionWorker {
     }
 
     const businessId = claimedInstance.business_id || claimedInstance.businessId;
-    const cycleId = claimedInstance.entityId;
+    const cycleId = claimedInstance.entityId || (claimedInstance as any).entity_id;
 
     try {
       // 2. 8-Point Financial Oracle Check (Recovery Oracle)
@@ -127,24 +137,55 @@ export class ApprovalExecutionWorker {
       const currentSnapshot: PayrollSourceSnapshot = {
         cycleId,
         business_id: businessId,
-        totalGrossCents: records.reduce((acc, r: any) => acc + Math.round((r.grossSalary ?? (r.gross_salary_cents ? r.gross_salary_cents / 100 : 0)) * 100), 0),
-        totalNetCents: records.reduce((acc, r: any) => acc + Math.round((r.netPaid ?? (r.net_salary_cents ? r.net_salary_cents / 100 : 0)) * 100), 0),
-        totalEmployerDeductionsCents: records.reduce((acc, r: any) => acc + Math.round((r.employerTaxes ?? (r.employer_deductions_cents ? r.employer_deductions_cents / 100 : 0)) * 100), 0),
+        totalGrossCents: records.reduce(
+          (acc, r: any) =>
+            acc +
+            (r.gross_salary_cents ??
+              Math.round((r.grossSalary ?? 0) * 100)),
+          0
+        ),
+        totalNetCents: records.reduce(
+          (acc, r: any) =>
+            acc +
+            (r.net_salary_cents ??
+              Math.round((r.netPaid ?? r.netSalary ?? 0) * 100)),
+          0
+        ),
+        totalEmployerDeductionsCents: records.reduce(
+          (acc, r: any) =>
+            acc +
+            (r.employer_deductions_cents ??
+              Math.round((r.employerTaxes ?? r.employerDeductions ?? 0) * 100)),
+          0
+        ),
         currency: (cycle as any).currency || "HTG",
-        effectiveAccountingDate: cycle.effectiveAccountingDate || cycle.endDate || new Date().toISOString().split("T")[0],
+        effectiveAccountingDate:
+          cycle.effectiveAccountingDate ||
+          cycle.endDate ||
+          new Date().toISOString().split("T")[0],
         employees: records.map((r: any) => ({
           employeeId: r.employeeId || r.employee_id || r.id,
           employeeName: r.employeeName || r.employee_name || "Employee",
-          grossCents: Math.round((r.grossSalary ?? (r.gross_salary_cents ? r.gross_salary_cents / 100 : 0)) * 100),
-          netCents: Math.round((r.netPaid ?? (r.net_salary_cents ? r.net_salary_cents / 100 : 0)) * 100),
-          employerTaxesCents: Math.round((r.employerTaxes ?? (r.employer_deductions_cents ? r.employer_deductions_cents / 100 : 0)) * 100),
-          employeeDeductionsCents: Math.round((r.employeeDeductions ?? (r.employee_deductions_cents ? r.employee_deductions_cents / 100 : 0)) * 100),
-          advancesCents: Math.round((r.advances ?? 0) * 100)
-        }))
+          grossCents:
+            r.gross_salary_cents ??
+            Math.round((r.grossSalary ?? 0) * 100),
+          netCents:
+            r.net_salary_cents ??
+            Math.round((r.netPaid ?? r.netSalary ?? 0) * 100),
+          employerTaxesCents:
+            r.employer_deductions_cents ??
+            Math.round((r.employerTaxes ?? r.employerDeductions ?? 0) * 100),
+          employeeDeductionsCents:
+            r.employee_deductions_cents ??
+            Math.round((r.employeeDeductions ?? 0) * 100),
+          advancesCents:
+            r.advances_cents ?? Math.round((r.advances ?? 0) * 100),
+        })),
       };
 
       const currentHash = ApprovalHashingService.computePayrollSourceHash(currentSnapshot);
-      if (currentHash !== claimedInstance.sourceHash) {
+      const expectedHash = claimedInstance.sourceHash || (claimedInstance as any).payload_hash;
+      if (expectedHash && currentHash !== expectedHash) {
         throw new Error("PAYLOAD_MUTATION_DETECTED: Fingerprint mismatch during execution attempt.");
       }
 
@@ -155,7 +196,8 @@ export class ApprovalExecutionWorker {
           id: `worker_${workerId}`,
           name: "Trusted Approval Execution Worker",
           role: "SYSTEM"
-        }
+        },
+        firestoreAdmin: this.firestore
       });
 
       // 6. Transition Terminal State to EXECUTED
@@ -248,6 +290,7 @@ export class ApprovalExecutionWorker {
     const instanceRef = this.firestore.collection("approval_instances").doc(instanceId);
     batch.update(instanceRef, {
       status: "EXECUTED",
+      execution_status: "EXECUTED",
       updatedAt: now
     });
 

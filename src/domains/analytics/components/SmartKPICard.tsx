@@ -10,14 +10,14 @@ import { MetricSemanticState } from "../types";
 export interface SmartKPICardProps {
   title: string;
   currentValue: number | null;
-  previousValue: number;
-  difference: number;
-  percentage: number;
+  previousValue: number | null;
+  difference: number | null;
+  percentage: number | null;
   trend: "UP" | "DOWN" | "STABLE";
   direction: "UP" | "DOWN" | "NEUTRAL";
   unit?: string;
-  targetValue?: number;
-  forecastValue?: number;
+  targetValue?: number | null;
+  forecastValue?: number | null;
   confidenceScore?: number;
   status: "Healthy" | "Warning" | "Critical";
   sparklineData?: { value: number }[];
@@ -43,11 +43,11 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
   state,
 }) => {
   const { filters } = useAnalyticsFilters();
-  const isPositive = difference > 0.01;
-  const isNegative = difference < -0.01;
+  const isPositive = typeof difference === "number" && difference > 0.01;
+  const isNegative = typeof difference === "number" && difference < -0.01;
 
   // Compute achievement %
-  const achievementPct = targetValue && targetValue > 0 && currentValue !== null && currentValue !== undefined
+  const achievementPct = targetValue !== null && targetValue !== undefined && targetValue > 0 && currentValue !== null && currentValue !== undefined
     ? Math.round((currentValue / targetValue) * 100) 
     : undefined;
 
@@ -118,12 +118,12 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
 
         {/* Change stats */}
         <div className="flex items-center gap-1.5 mt-1">
-          {isPositive ? (
+          {isPositive && typeof percentage === "number" ? (
             <span className="flex items-center text-xs font-bold text-emerald-400 font-mono">
               <TrendingUp className="w-3 h-3 mr-0.5 shrink-0" />
               +{percentage.toFixed(1)}%
             </span>
-          ) : isNegative ? (
+          ) : isNegative && typeof percentage === "number" ? (
             <span className="flex items-center text-xs font-bold text-rose-400 font-mono">
               <TrendingDown className="w-3 h-3 mr-0.5 shrink-0" />
               {percentage.toFixed(1)}%
@@ -132,14 +132,14 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
             <span className="text-xs font-bold text-slate-400 font-mono">0.0%</span>
           )}
           <span className="text-[10px] text-slate-500 font-normal">
-            vs {previousValue.toLocaleString()} {unit}
+            vs {previousValue !== null && previousValue !== undefined ? previousValue.toLocaleString() : "—"} {unit}
           </span>
         </div>
       </div>
 
       {/* Target & Achievement & Forecast */}
       <div className="grid grid-cols-2 gap-3 pt-3 pb-2 border-t border-slate-800/60 text-[10px] font-sans">
-        {targetValue !== undefined && (
+        {targetValue !== undefined && targetValue !== null && (
           <div className="flex flex-col gap-0.5">
             <span className="text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1">
               <Target className="w-2.5 h-2.5 text-slate-400" /> Target
@@ -155,7 +155,7 @@ export const SmartKPICard: React.FC<SmartKPICardProps> = ({
           </div>
         )}
 
-        {forecastValue !== undefined && (
+        {forecastValue !== undefined && forecastValue !== null && (
           <div className="flex flex-col gap-0.5">
             <span className="text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1">
               <Activity className="w-2.5 h-2.5 text-slate-400" /> Forecast

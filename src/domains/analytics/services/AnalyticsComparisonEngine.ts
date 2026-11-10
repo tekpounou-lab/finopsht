@@ -1,10 +1,10 @@
 import { KPIComparison } from "../types";
 
-export interface ComparisonDetails {
-  current: number;
-  previous: number;
-  difference: number;
-  percentage: number;
+export interface ComparisonDetails<T extends number | null = number> {
+  current: T;
+  previous: T;
+  difference: T;
+  percentage: T;
   trend: "UP" | "DOWN" | "STABLE";
   direction: "UP" | "DOWN" | "NEUTRAL";
   isPositive: boolean;
@@ -51,9 +51,10 @@ export const AnalyticsComparisonEngine = {
   /**
    * Wraps an existing KPIComparison object to provide the additional calculated properties.
    */
-  wrap(kpi: KPIComparison): ComparisonDetails {
+  wrap<T extends number | null = number>(kpi: KPIComparison<T>): ComparisonDetails<T> {
     const difference = kpi.difference;
     const percentage = kpi.differencePercentage;
+    const diffNum = typeof difference === "number" ? difference : 0;
 
     return {
       current: kpi.currentValue,
@@ -62,9 +63,9 @@ export const AnalyticsComparisonEngine = {
       percentage,
       trend: kpi.trend,
       direction: kpi.direction,
-      isPositive: difference > 0.01,
-      isNegative: difference < -0.01,
-      isNeutral: Math.abs(difference) <= 0.01,
+      isPositive: typeof difference === "number" && diffNum > 0.01,
+      isNegative: typeof difference === "number" && diffNum < -0.01,
+      isNeutral: difference === null || Math.abs(diffNum) <= 0.01,
     };
   }
 };

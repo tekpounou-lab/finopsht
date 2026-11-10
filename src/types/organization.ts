@@ -59,6 +59,7 @@ export interface Department {
   costCenterId?: string;
   name: string;
   code?: string;
+  description?: string;
   aliases?: string[];
   budget?: number;
   isActive?: boolean;

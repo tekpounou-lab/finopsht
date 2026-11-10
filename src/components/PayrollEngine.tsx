@@ -20,7 +20,8 @@ import {
   PayrollBonus,
   PayrollDeduction,
   Payslip,
-  Business
+  Business,
+  EmployeeReceivable,
 } from "../types";
 import { 
   PayrollCycleSelector,
@@ -29,6 +30,7 @@ import {
   PayrollSlipViewer,
   CreatePayrollCycleDialog,
   EditCycleModal,
+  EmployeeReceivableRecoveryPanel,
   usePayrollRuns,
   usePayrollCalculation,
   usePayrollUIState
@@ -122,7 +124,8 @@ export default function PayrollEngine({
   const { language } = useI18n();
 
   // 1. UI Navigation & Tabs
-  const [activeTab, setActiveTab] = useState<"runs" | "structures" | "advances" | "history">("runs");
+  const [activeTab, setActiveTab] = useState<"runs" | "recoveries">("runs");
+  const [recentProposals, setRecentProposals] = useState<EmployeeReceivable[]>([]);
 
   // 2. Business Runs Hook
   const {
@@ -254,7 +257,7 @@ export default function PayrollEngine({
     const reason = reversalReason.trim() || "Contre-passation et correction des écritures de paie";
     try {
       console.debug(`[Payroll] Reversing sealed cycle ${activeCycle.id}...`);
-      const { reversalCycle, reversalRecords } = await reversePayrollCycle(
+      const { reversalCycle, reversalRecords, recoveryProposals } = await reversePayrollCycle(
         activeCycle,
         activeCycleRecords,
         reason
@@ -269,9 +272,18 @@ export default function PayrollEngine({
       addCycleLocal(reversalCycle);
       addRecordsLocal(reversalRecords);
       setSelectedCycleId(reversalCycle.id);
+
+      if (recoveryProposals && recoveryProposals.length > 0) {
+        setRecentProposals((prev) => [...recoveryProposals, ...prev]);
+        toast.success(
+          `Contre-passation effectuée ! ${recoveryProposals.length} proposition(s) de recouvrement créée(s) (statut: En attente d'approbation).`
+        );
+      } else {
+        toast.success(`Contre-passation effectuée avec succès ! Le cycle DRAFT "${reversalCycle.cycleName}" a été créé.`);
+      }
+
       setIsReverseConfirmOpen(false);
       setReversalReason("");
-      toast.success(`Contre-passation effectuée avec succès ! Le cycle DRAFT "${reversalCycle.cycleName}" a été créé.`);
     } catch (err: any) {
       console.error("[Payroll] Reversal error:", err);
       toast.error("Erreur lors de la contre-passation : " + (err.message || "Échec"));
@@ -428,101 +440,144 @@ export default function PayrollEngine({
         </div>
       </div>
 
-      {/* Main Tab: Runs & Calculations */}
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <PayrollCycleSelector
-            cycles={tenantCycles}
-            selectedCycleId={selectedCycleId || activeCycle?.id || ""}
-            onSelectCycle={(id) => setSelectedCycleId(id)}
-            onOpenCreateModal={() => setIsCreateCycleOpen(true)}
-            onOpenEditModal={() => setIsEditCycleOpen(true)}
-            onDeleteActiveCycle={handleDeleteActiveCycle}
-            canCreate={canExecutePayroll}
-          />
+      {/* Sub Navigation Bar */}
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveTab("runs")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 ${
+            activeTab === "runs"
+              ? "bg-indigo-600 text-white shadow-md shadow-indigo-900/30"
+              : "bg-slate-900/60 text-slate-400 hover:text-white hover:bg-slate-800/80"
+          }`}
+        >
+          <Landmark className="w-4 h-4" />
+          <span>Calcul & Bulletins de Paie</span>
+        </button>
 
-          {activeCycle && activeCycle.status === "SEALED" && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-3 py-2 rounded-xl bg-emerald-950/80 border border-emerald-800/80 text-emerald-400 font-mono text-xs font-semibold flex items-center gap-2 shadow-inner">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Cycle Scellé (SEALED) & Écriture GL Générée</span>
-              </span>
-
-              {activeCycle.isReversed ? (
-                <span className="px-3 py-2 rounded-xl bg-red-950/80 border border-red-800/80 text-red-400 font-mono text-xs font-semibold flex items-center gap-2 shadow-inner">
-                  <RotateCcw className="w-4 h-4 text-red-400" />
-                  <span>Cycle Contre-passé</span>
-                </span>
-              ) : canExecutePayroll ? (
-                <button
-                  type="button"
-                  id="reverse-sealed-cycle-btn"
-                  onClick={() => {
-                    setReversalReason("");
-                    setIsReverseConfirmOpen(true);
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-amber-900/20 transition cursor-pointer"
-                  title="Effectuer une contre-passation comptable et générer un nouveau cycle DRAFT"
-                >
-                  <RotateCcw className="w-4 h-4 text-amber-200" />
-                  <span>Renverser (Contre-passation)</span>
-                </button>
-              ) : null}
-            </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab("recoveries")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 ${
+            activeTab === "recoveries"
+              ? "bg-amber-600 text-white shadow-md shadow-amber-900/30"
+              : "bg-slate-900/60 text-slate-400 hover:text-white hover:bg-slate-800/80"
+          }`}
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>Créances & Recouvrables Salariés</span>
+          {recentProposals.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-slate-950 font-bold text-[10px]">
+              {recentProposals.length}
+            </span>
           )}
-
-          {activeCycle && activeCycle.status !== "SEALED" && canExecutePayroll && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                id="execute-payroll-calc-btn"
-                onClick={() => {
-                  runPayrollDryRun(activeCycle);
-                  setIsRunModalOpen(true);
-                }}
-                className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-900/20 transition cursor-pointer"
-              >
-                <span>Exécuter le calcul</span>
-              </button>
-
-              {activeCycleRecords.length > 0 && (
-                <button
-                  type="button"
-                  id="seal-payroll-cycle-btn"
-                  onClick={() => setIsSealConfirmOpen(true)}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-900/20 transition cursor-pointer"
-                >
-                  <ShieldCheck className="w-4 h-4 text-emerald-200" />
-                  <span>Sceller (SEALED)</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        <PayrollRunTable
-          records={activeCycleRecords}
-          isLocked={isCycleLocked}
-          currentRole={currentRole}
-          activeCycle={activeCycle}
-          onViewRecordDetails={(rec) => setViewedRecord(rec)}
-          onDeleteRecord={async (recId) => {
-            deleteRecordLocal(recId);
-            if (onDeletePayrollRecord) {
-              await onDeletePayrollRecord(recId);
-            }
-          }}
-          onToggleExcludeRecord={(recId) => {
-            const updated = activeCycleRecords.map((r) =>
-              r.id === recId ? { ...r, isExcluded: !r.isExcluded } : r
-            );
-            addRecordsLocal(updated);
-            if (onAddRecords) {
-              onAddRecords(updated);
-            }
-          }}
-        />
+        </button>
       </div>
+
+      {activeTab === "recoveries" ? (
+        <EmployeeReceivableRecoveryPanel
+          currentBusinessId={current_business_id}
+          currentRole={currentRole}
+          currentUser={currentUser ? { id: currentUser.id, name: currentUser.name, role: currentRole } : undefined}
+          initialReceivables={recentProposals}
+        />
+      ) : (
+        /* Main Tab: Runs & Calculations */
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <PayrollCycleSelector
+              cycles={tenantCycles}
+              selectedCycleId={selectedCycleId || activeCycle?.id || ""}
+              onSelectCycle={(id) => setSelectedCycleId(id)}
+              onOpenCreateModal={() => setIsCreateCycleOpen(true)}
+              onOpenEditModal={() => setIsEditCycleOpen(true)}
+              onDeleteActiveCycle={handleDeleteActiveCycle}
+              canCreate={canExecutePayroll}
+            />
+
+            {activeCycle && activeCycle.status === "SEALED" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-3 py-2 rounded-xl bg-emerald-950/80 border border-emerald-800/80 text-emerald-400 font-mono text-xs font-semibold flex items-center gap-2 shadow-inner">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Cycle Scellé (SEALED) & Écriture GL Générée</span>
+                </span>
+
+                {activeCycle.isReversed ? (
+                  <span className="px-3 py-2 rounded-xl bg-red-950/80 border border-red-800/80 text-red-400 font-mono text-xs font-semibold flex items-center gap-2 shadow-inner">
+                    <RotateCcw className="w-4 h-4 text-red-400" />
+                    <span>Cycle Contre-passé</span>
+                  </span>
+                ) : canExecutePayroll ? (
+                  <button
+                    type="button"
+                    id="reverse-sealed-cycle-btn"
+                    onClick={() => {
+                      setReversalReason("");
+                      setIsReverseConfirmOpen(true);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-amber-900/20 transition cursor-pointer"
+                    title="Effectuer une contre-passation comptable et générer un nouveau cycle DRAFT"
+                  >
+                    <RotateCcw className="w-4 h-4 text-amber-200" />
+                    <span>Renverser (Contre-passation)</span>
+                  </button>
+                ) : null}
+              </div>
+            )}
+
+            {activeCycle && activeCycle.status !== "SEALED" && canExecutePayroll && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="execute-payroll-calc-btn"
+                  onClick={() => {
+                    runPayrollDryRun(activeCycle);
+                    setIsRunModalOpen(true);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-900/20 transition cursor-pointer"
+                >
+                  <span>Exécuter le calcul</span>
+                </button>
+
+                {activeCycleRecords.length > 0 && (
+                  <button
+                    type="button"
+                    id="seal-payroll-cycle-btn"
+                    onClick={() => setIsSealConfirmOpen(true)}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-900/20 transition cursor-pointer"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-emerald-200" />
+                    <span>Sceller (SEALED)</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <PayrollRunTable
+            records={activeCycleRecords}
+            isLocked={isCycleLocked}
+            currentRole={currentRole}
+            activeCycle={activeCycle}
+            onViewRecordDetails={(rec) => setViewedRecord(rec)}
+            onDeleteRecord={async (recId) => {
+              deleteRecordLocal(recId);
+              if (onDeletePayrollRecord) {
+                await onDeletePayrollRecord(recId);
+              }
+            }}
+            onToggleExcludeRecord={(recId) => {
+              const updated = activeCycleRecords.map((r) =>
+                r.id === recId ? { ...r, isExcluded: !r.isExcluded } : r
+              );
+              addRecordsLocal(updated);
+              if (onAddRecords) {
+                onAddRecords(updated);
+              }
+            }}
+          />
+        </div>
+      )}
 
       {/* Edit Cycle Modal */}
       {isEditCycleOpen && activeCycle && (

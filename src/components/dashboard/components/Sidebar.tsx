@@ -5,6 +5,7 @@ import {
   Building2,
   Landmark,
   BookOpen,
+  Vault,
   Clock,
   Calendar,
   ShieldCheck,
@@ -69,42 +70,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: "hr_group",
       label: "Gestion RH & Personnel",
       items: [
-        { id: "organization", label: "Structure Organisation", icon: Building2, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
-        { id: "personnel", label: "Effectifs & Personnel", icon: Users, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
-        { id: "attendance", label: "Pointage & Présences", icon: Clock, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"] },
-        { id: "planning", label: "Planning & Horaires", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR"] },
-        { id: "leaves", label: "Gestion des Congés", icon: Calendar, badge: badgeCounts.leaves, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"] },
+        { id: "organization", label: "Structure Organisation", icon: Building2, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "AUDITOR"] },
+        { id: "personnel", label: "Effectifs & Personnel", icon: Users, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "AUDITOR"] },
+        { id: "attendance", label: "Pointage & Présences", icon: Clock, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "AUDITOR"] },
+        { id: "planning", label: "Planning & Horaires", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "AUDITOR"] },
+        { id: "leaves", label: "Gestion des Congés", icon: Calendar, badge: badgeCounts.leaves, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
       id: "finance_group",
       label: "Finances & Comptabilité",
       items: [
-        { id: "payroll", label: "Moteur de Paie", icon: Landmark, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
-        { id: "ledger", label: "Grand Livre Comptable", icon: BookOpen, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
+        { id: "payroll", label: "Moteur de Paie", icon: Landmark, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "ledger", label: "Grand Livre Comptable", icon: BookOpen, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "cash", label: "Caisses & Coffres", icon: Vault, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "reports", label: "Centre des Rapports", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "HEAD_TELLER", "AUDITOR"] },
       ],
     },
     {
       id: "commercial_group",
       label: "Ventes & Relation Client",
       items: [
-        { id: "crm", label: "CRM & Facturation", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
+        { id: "crm", label: "CRM & Facturation", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
       id: "intelligence_group",
       label: "Performance & Décisionnel BI",
       items: [
-        { id: "performance", label: "Performance Intelligence (PIC)", icon: TrendingUp, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR"] },
-        { id: "cfo", label: "Assistant IA CFO", icon: Sparkles, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
+        { id: "performance", label: "Performance Intelligence (PIC)", icon: TrendingUp, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "cfo", label: "Assistant IA CFO", icon: Sparkles, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
       id: "tools_group",
       label: "Outils & Espace",
       items: [
-        { id: "documents", label: "Gestion Documentaire", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "EMPLOYEE"] },
-        { id: "employeeSpace", label: "Mon Espace Collaborateur", icon: UserCheck, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"] },
+        { id: "documents", label: "Gestion Documentaire", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "employeeSpace", label: "Mon Espace Collaborateur", icon: UserCheck, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
@@ -112,7 +115,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Administration & Sécurité",
       items: [
         { id: "settings", label: "Administration", icon: Settings, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"] },
-        { id: "forensic", label: "Audit & Sécurité", icon: ShieldCheck, roles: ["SUPER_ADMIN"] },
+        { id: "forensic", label: "Audit & Sécurité", icon: ShieldCheck, roles: ["SUPER_ADMIN", "AUDITOR"] },
       ],
     },
     {

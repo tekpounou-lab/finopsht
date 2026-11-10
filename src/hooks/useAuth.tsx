@@ -41,7 +41,7 @@ export interface OrchestrationState {
   identity: IdentitySnapshot | null;
 }
 
-const AuthContext = createContext<OrchestrationState | null>(null);
+export const AuthContext = createContext<OrchestrationState | null>(null);
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const { identity, loading: identityLoading, stage: identityStage, error: identityError, refresh } = useIdentity();
@@ -219,3 +219,8 @@ export const useAuth = () => {
   if (!ctx) throw new Error("useAuth must be inside AuthProvider");
   return ctx;
 };
+
+export const useOptionalAuth = () => {
+  return useContext(AuthContext);
+};
+

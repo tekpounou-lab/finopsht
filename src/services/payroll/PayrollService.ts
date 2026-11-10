@@ -1,15 +1,18 @@
-import { PayrollCycle, PayrollRecord, Employee, ERPEvent, ForensicLog, AttendanceRecord, SalaryAdvance, PayrollBonus, PayrollDeduction, LedgerTransaction } from "../../types";
+import { PayrollCycle, PayrollRecord, Employee, ERPEvent, ForensicLog, AttendanceRecord, SalaryAdvance, PayrollBonus, PayrollDeduction, LedgerTransaction, EmployeeReceivable } from "../../types";
 import { resolveTaxRatesForDate } from "../../components/payroll/services/PayrollCalculationEngine";
 import { TaxPolicyEngine } from "./TaxPolicyEngine";
 import { BusinessAdministrationRepository, BusinessTaxConfiguration } from "../../repositories/BusinessAdministrationRepository";
 import { ForensicLogRepository } from "../../repositories/ForensicLogRepository";
 import { PayrollRepository } from "../../repositories/PayrollRepository";
+import { PayrollPolicyRepository } from "../../repositories/PayrollPolicyRepository";
+import { PayrollPolicyResolver } from "./PayrollPolicyResolver";
 import { generateSignature } from "../../data";
 import { EventBus } from "../../modules/runtime/EventBus";
 import { doc, setDoc, serverTimestamp, getDocs, query, collection, where } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { AccountingEngine } from "../AccountingEngine";
 import { FinopsException } from "../../modules/runtime/FinopsException";
+import { EmployeeReceivableService } from "./EmployeeReceivableService";
 
 export interface ProcessPayrollCycleOptions {
   currentUser?: { name: string; id: string; role?: string };
@@ -28,6 +31,7 @@ export interface ProcessPayrollCycleOptions {
   onAddEvent?: (ev: ERPEvent) => void;
   onAddForensicLog?: (log: ForensicLog) => void;
   targetStatus?: "CALCULATED" | "LOCKED" | "COMMITTED";
+  firestoreAdmin?: any;
 }
 
 export const PayrollService = {
@@ -90,15 +94,54 @@ export const PayrollService = {
       })
     );
 
-    // 1. Fetch Dynamic Payroll Policies and Tax Configuration
+    // 1. Fetch Dynamic Payroll Policies and Tax Configuration via SSOT Resolver
     console.debug(`[Payroll] Fetching dynamic payroll policies for business ${businessId}...`);
+    let resolvedPolicy: any = null;
+    try {
+      resolvedPolicy = await PayrollPolicyResolver.resolveEffectivePolicy({
+        businessId,
+        effectiveDate: cycle.startDate || cycle.endDate,
+      });
+    } catch (resolveErr) {
+      console.warn("[Payroll] Could not resolve effective policy via PayrollPolicyResolver:", resolveErr);
+    }
+
     let fetchedPolicies = {};
     try {
       fetchedPolicies = await BusinessAdministrationRepository.getPayrollPolicies(businessId);
     } catch (policyErr) {
       console.warn("[Payroll] Could not fetch dynamic payroll policies:", policyErr);
     }
-    const policies: any = { ...fetchedPolicies, ...(options.policies || {}) };
+    const hasTenantPolicy = !!resolvedPolicy?.policyId;
+    const policies: any = hasTenantPolicy
+      ? {
+          ...fetchedPolicies,
+          ...resolvedPolicy,
+          ...(options.policies || {}),
+        }
+      : {
+          ...(resolvedPolicy || {}),
+          ...fetchedPolicies,
+          ...(options.policies || {}),
+        };
+    if (options.policies?.enableSurvivalFloor !== undefined) {
+      policies.enableSurvivalFloor = options.policies.enableSurvivalFloor;
+      policies.enable_survival_floor = options.policies.enableSurvivalFloor;
+      if (policies.survivalFloor) {
+        policies.survivalFloor = { ...policies.survivalFloor, enabled: options.policies.enableSurvivalFloor };
+      }
+    }
+    if (options.policies?.survivalFloorHTG !== undefined) {
+      policies.survivalFloorHTG = options.policies.survivalFloorHTG;
+      policies.survivalFloor = options.policies.survivalFloorHTG;
+    }
+    if (options.policies?.requireAttendanceForPayroll !== undefined) {
+      policies.requireAttendanceForPayroll = options.policies.requireAttendanceForPayroll;
+      policies.require_attendance_for_payroll = options.policies.requireAttendanceForPayroll;
+      if (policies.attendance) {
+        policies.attendance = { ...policies.attendance, excludeWithoutRecords: options.policies.requireAttendanceForPayroll };
+      }
+    }
     console.debug(`[Payroll] Policies loaded:`, policies);
 
     let taxConfig = options.taxConfig;
@@ -108,6 +151,39 @@ export const PayrollService = {
       } catch (taxErr) {
         console.warn("[Payroll] Could not fetch tax configuration:", taxErr);
       }
+    }
+    if (hasTenantPolicy) {
+      taxConfig = {
+        ...taxConfig,
+        enableTaxes: policies.enableTaxes,
+        cnssRateEmployee: policies.onaEmployeeRate ?? taxConfig?.cnssRateEmployee,
+        cnssRateEmployer: policies.onaEmployerRate ?? taxConfig?.cnssRateEmployer,
+        cnsRateEmployee: policies.ofatmaEmployeeRate ?? taxConfig?.cnsRateEmployee,
+        cnsRateEmployer: policies.ofatmaEmployerRate ?? taxConfig?.cnsRateEmployer,
+        survivalFloorHTG: policies.survivalFloorHTG ?? taxConfig?.survivalFloorHTG,
+        currency: policies.currency || taxConfig?.currency || "HTG",
+      };
+    } else if (taxConfig) {
+      taxConfig = {
+        ...taxConfig,
+        enableTaxes: policies.enableTaxes ?? taxConfig.enableTaxes,
+        cnssRateEmployee: taxConfig.cnssRateEmployee ?? policies.onaEmployeeRate,
+        cnssRateEmployer: taxConfig.cnssRateEmployer ?? policies.onaEmployerRate,
+        cnsRateEmployee: taxConfig.cnsRateEmployee ?? policies.ofatmaEmployeeRate,
+        cnsRateEmployer: taxConfig.cnsRateEmployer ?? policies.ofatmaEmployerRate,
+        survivalFloorHTG: taxConfig.survivalFloorHTG ?? policies.survivalFloorHTG,
+        currency: taxConfig.currency || policies.currency || "HTG",
+      };
+    } else if (resolvedPolicy) {
+      taxConfig = {
+        enableTaxes: policies.enableTaxes,
+        cnssRateEmployee: policies.onaEmployeeRate,
+        cnssRateEmployer: policies.onaEmployerRate,
+        cnsRateEmployee: policies.ofatmaEmployeeRate,
+        cnsRateEmployer: policies.ofatmaEmployerRate,
+        survivalFloorHTG: policies.survivalFloorHTG,
+        currency: policies.currency || "HTG",
+      };
     }
     const rates = resolveTaxRatesForDate(taxConfig, cycle.startDate || new Date().toISOString());
     const isTaxesEnabled =
@@ -155,10 +231,11 @@ export const PayrollService = {
     }
 
     // 2. Identify active employees for this business tenant with strict multi-tenant validation
-    console.debug(`[PAYROLL_EMPLOYEES_LOAD_STARTED] Loading active employees for business ${businessId}...`);
+    const targetBizId = businessId || cycle.business_id || (cycle as any).businessId || "";
+    console.debug(`[PAYROLL_EMPLOYEES_LOAD_STARTED] Loading active employees for business ${targetBizId}...`);
     const activeEmployees = (employees || []).filter((e) => {
-      const snakeTenant = e.business_id?.trim();
-      const camelTenant = e.businessId?.trim();
+      let snakeTenant = e.business_id?.trim();
+      let camelTenant = e.businessId?.trim();
 
       // Contradictory tenant check
       if (snakeTenant && camelTenant && snakeTenant !== camelTenant) {
@@ -166,26 +243,42 @@ export const PayrollService = {
         return false;
       }
 
-      const empTenant = snakeTenant || camelTenant;
-      if (!empTenant || empTenant !== businessId) {
-        if (!empTenant) {
-          console.warn(`[MultiTenancyViolation] Employee ${e.id} is missing tenant ID. Excluded from cycle ${cycle.id}.`);
-        }
+      let empTenant = snakeTenant || camelTenant;
+      if (!empTenant && targetBizId) {
+        empTenant = targetBizId;
+        e.business_id = targetBizId;
+        e.businessId = targetBizId;
+      }
+
+      if (empTenant && targetBizId && empTenant !== targetBizId) {
         return false;
       }
 
-      const isActive = e.status === "ACTIVE" || !e.status || (e as any).isActive === true;
+      const stUpper = (e.status || "").toString().toUpperCase();
+      const isNotInactive = stUpper !== "INACTIVE" && stUpper !== "TERMINATED" && stUpper !== "SUSPENDED" && stUpper !== "ARCHIVED";
+      const isStatusActive = stUpper === "ACTIVE" || stUpper === "ONBOARDING" || stUpper === "PENDING" || !e.status;
+      const isFlagActive = (e as any).isActive !== false && (e as any).is_active !== false;
+
+      const isActive = (isStatusActive || isFlagActive) && isNotInactive;
       const isExcluded = (cycle.excludedEmployeeIds || []).includes(e.id);
       return isActive && !isExcluded;
     });
 
     console.debug(`[PAYROLL_EMPLOYEES_LOAD_SUCCEEDED] Loaded ${activeEmployees.length} active employees for business ${businessId}.`);
 
-    // 3. Filter employees by Attendance if attendance records are provided / policy enabled
+    // 3. Filter employees by Attendance / Work Activity for the payroll period
+    // Automatically exclude anyone who does not have at least 1 day of work or attendance/pointage
     let eligibleEmployees = activeEmployees;
-    const isAttendanceRequired = TaxPolicyEngine.isAttendanceRequiredForPayroll(policies);
-    if (attendanceRecords.length > 0 && isAttendanceRequired) {
-      console.debug(`[Payroll] Filtering employees by attendance records for period ${cycle.startDate} to ${cycle.endDate}...`);
+    const isAttendanceRequired =
+      options.policies?.requireAttendanceForPayroll === true ||
+      options.policies?.require_attendance_for_payroll === true ||
+      (options.policies?.requireAttendanceForPayroll !== false &&
+       options.policies?.require_attendance_for_payroll !== false &&
+       policies?.requireAttendanceForPayroll === true &&
+       (!options.policies || Object.keys(options.policies).length === 0));
+
+    if (attendanceRecords.length > 0) {
+      console.debug(`[Payroll] Verifying attendance and worked days for period ${cycle.startDate} to ${cycle.endDate}...`);
       eligibleEmployees = activeEmployees.filter((emp) => {
         const empAtt = attendanceRecords.filter(
           (att) =>
@@ -193,15 +286,42 @@ export const PayrollService = {
             (!cycle.startDate || !att.date || att.date >= cycle.startDate) &&
             (!cycle.endDate || !att.date || att.date <= cycle.endDate)
         );
-        const hasWorkedHours = empAtt.some(
-          (att) => (att.realHours && att.realHours > 0) || (att.plannedHours && att.plannedHours > 0) || att.status !== "ABSENT"
+
+        const hasAttendanceRecord = empAtt.length > 0;
+        const hasWorkedDaysOrPointage = empAtt.some((att) => {
+          const h = att.realHours || (att as any).workedHours || (att as any).hours || att.plannedHours || 0;
+          const statusUpper = (att.status || "").toUpperCase();
+          const isValidStatus = statusUpper !== "ABSENT" && statusUpper !== "UNEXCUSED";
+          return h > 0 || isValidStatus;
+        });
+
+        const hasExplicitHours = typeof (emp as any).workedHours === "number" && (emp as any).workedHours > 0;
+        const isHourly = (emp as any).paymentModel === "HOURLY" || (emp as any).pay_regime === "HOURLY";
+
+        const hasSalesActivity = ledgerTransactions.some(
+          (tx) =>
+            (tx.employeeId === emp.id || (tx as any).employee_id === emp.id) &&
+            (tx.type === "INCOME" || (tx as any).category === "SALE") &&
+            (!cycle.startDate || !tx.date || tx.date >= cycle.startDate) &&
+            (!cycle.endDate || !tx.date || tx.date <= cycle.endDate)
         );
-        if (!hasWorkedHours) {
-          console.debug(`[Payroll] Employee ${emp.id} (${emp.name}) has no active attendance in period ${cycle.startDate} to ${cycle.endDate}. Excluding from cycle.`);
+
+        if (hasAttendanceRecord) {
+          if (!hasWorkedDaysOrPointage && !hasExplicitHours && isHourly) {
+            console.debug(`[Payroll] Hourly employee ${emp.id} (${emp.name}) has 0 worked days/pointages in period. Excluded.`);
+            return false;
+          }
+          return true;
         }
-        return hasWorkedHours;
+
+        if (isHourly && isAttendanceRequired && !hasExplicitHours && !hasSalesActivity) {
+          console.debug(`[Payroll] Hourly employee ${emp.id} (${emp.name}) has no attendance recorded while required. Excluded.`);
+          return false;
+        }
+
+        return true;
       });
-      console.debug(`[Payroll] ${eligibleEmployees.length} out of ${activeEmployees.length} employees have valid attendance and are included.`);
+      console.debug(`[Payroll] ${eligibleEmployees.length} out of ${activeEmployees.length} employees included after attendance & work verification.`);
     }
 
     if (eligibleEmployees.length === 0) {
@@ -215,16 +335,18 @@ export const PayrollService = {
       const paymentModel: "FIXED" | "COMMISSION" | "HYBRID" =
         emp.paymentModel || (emp as any).pay_regime || (emp as any).pay_profile || "FIXED";
 
-      // 1. Base Salary: Monthly (e.g. 10,000 HTG) -> divided by 2 for quinzaine = 5,000 HTG
+      // 1. Base Salary: Monthly (e.g. 10,000 HTG) -> divided according to frequency:
+      // MONTHLY = / 1, BIWEEKLY = / 2, WEEKLY = / 4
       const monthlyBaseSalary =
         emp.salaryBaseHtg ?? emp.baseSalary ?? ((emp as any).base_salary_cents !== undefined ? (emp as any).base_salary_cents / 100 : 0);
 
-      // Quinzaine base for FIXED and HYBRID; 0 for COMMISSION
-      const quinzaineBase = paymentModel === "COMMISSION" ? 0 : Math.round((monthlyBaseSalary / 2) * 100) / 100;
+      const cycleFrequency = ((cycle as any).frequency || policies.frequency || "BIWEEKLY").toString().toUpperCase();
+      const frequencyDivisor = cycleFrequency === "MONTHLY" ? 1 : cycleFrequency === "WEEKLY" ? 4 : 2;
+      const quinzaineBase = paymentModel === "COMMISSION" ? 0 : Math.round((monthlyBaseSalary / frequencyDivisor) * 100) / 100;
 
-      // 2. Required hours per quinzaine: 96h standard
-      const standardQuinzaineHours = policies.standardQuinzaineHours || 96;
-      const absenceThresholdHours = standardQuinzaineHours - 2; // 94h threshold (96 - 2)
+      // 2. Required hours per cycle:
+      const standardQuinzaineHours = policies.standardHoursPerCycle || policies.standardQuinzaineHours || (cycleFrequency === "MONTHLY" ? 173.33 : cycleFrequency === "WEEKLY" ? 40 : 96);
+      const absenceThresholdHours = typeof policies.attendanceToleranceHours === "number" ? policies.attendanceToleranceHours : (standardQuinzaineHours - 2);
 
       // 3. Hourly Rate calculation:
       // Priority:
@@ -298,13 +420,13 @@ export const PayrollService = {
       totalWorkedHours = Number(totalWorkedHours.toFixed(2));
 
       // Presence rules:
-      // - If Total hours < 94h (96 - 2) => Base - (Absent hours * Hourly rate)
-      // - If Total hours > 96h => Base + (Overtime hours * Hourly rate * Taux HS)
-      // - If 94h <= Total hours <= 96h => regular base salary, no penalty, no overtime bonus
+      // - If Total hours < absenceThresholdHours => Base - (Absent hours * Hourly rate)
+      // - If Total hours > standardQuinzaineHours => Base + (Overtime hours * Hourly rate * Taux HS)
+      // - If absenceThresholdHours <= Total hours <= standardQuinzaineHours => regular base salary, no penalty, no overtime bonus
       let overtimeHours = 0;
       let overtimePay = 0;
       let absenceHoursDeduction = 0;
-      const tauxHS = policies.overtimeRate150 || 1.5;
+      const tauxHS = policies.overtime?.normalRate ?? policies.overtimeRate150 ?? 1.5;
 
       if (totalWorkedHours < absenceThresholdHours) {
         const absentHours = Number((standardQuinzaineHours - totalWorkedHours).toFixed(2));
@@ -319,9 +441,10 @@ export const PayrollService = {
       
       let tardinessPenalty = 0;
       if (tardinessMinutes > 0) {
-        if (policies.latePenaltyCents && policies.latePenaltyCents > 0) {
+        const lateFixedCents = policies.penalties?.lateFixedCents ?? policies.latePenaltyCents;
+        if (lateFixedCents && lateFixedCents > 0) {
           const latesCount = empAttendance.filter((a) => a.status === "LATE").length || 1;
-          tardinessPenalty = Math.round((policies.latePenaltyCents / 100) * latesCount * 100) / 100;
+          tardinessPenalty = Math.round((lateFixedCents / 100) * latesCount * 100) / 100;
         } else {
           const mult = policies.tardinessPenaltyMultiplier || 1.0;
           tardinessPenalty = Math.round((tardinessMinutes / 60) * hourlyRate * mult * 100) / 100;
@@ -330,8 +453,9 @@ export const PayrollService = {
 
       let unexcusedAbsencePenalty = 0;
       if (unexcusedAbsenceDays > 0) {
-        if (policies.absencePenaltyCents && policies.absencePenaltyCents > 0) {
-          unexcusedAbsencePenalty = Math.round((policies.absencePenaltyCents / 100) * unexcusedAbsenceDays * 100) / 100;
+        const absFixedCents = policies.penalties?.absencePerDayCents ?? policies.absencePenaltyCents;
+        if (absFixedCents && absFixedCents > 0) {
+          unexcusedAbsencePenalty = Math.round((absFixedCents / 100) * unexcusedAbsenceDays * 100) / 100;
         } else if (absenceHoursDeduction === 0) {
           unexcusedAbsencePenalty = Math.round(unexcusedAbsenceDays * dailyRate * 100) / 100;
         }
@@ -361,6 +485,7 @@ export const PayrollService = {
         emp.commission_rate ??
         (emp as any).commissionRate ??
         (emp as any).commission_percent ??
+        policies.commissions?.defaultSalesRate ??
         policies.defaultCommissionRate ??
         0;
 
@@ -562,7 +687,12 @@ export const PayrollService = {
         gross_salary_cents: Math.round(grossPay * 100),
         grossSalary: grossPay,
         cnss_employee_cents: Math.round(cnssDeduction * 100),
+        cnss_employer_cents: Math.round(dualResult.onaEmployer * 100),
         cns_employee_cents: Math.round(cnsDeduction * 100),
+        cns_employer_cents: Math.round(dualResult.ofatmaEmployer * 100),
+        employer_deductions_cents: Math.round(totalEmployerContributions * 100),
+        onaEmployer: dualResult.onaEmployer,
+        ofatmaEmployer: dualResult.ofatmaEmployer,
         cnssDeduction,
         cnsDeduction,
         employeeContributionsTotal: totalEmployeeDeductions,
@@ -577,6 +707,8 @@ export const PayrollService = {
         netPaid: netPay,
         protectionRuleEnforced: survivalFloorApplied,
         isExcluded: false,
+        policyId: policies.policyId,
+        policyVersion: policies.policyVersion || policies.version,
         status: "CALCULATED" as any,
         hashSignature: generateSignature(emp.id),
       } as unknown as PayrollRecord;
@@ -735,7 +867,6 @@ export const PayrollService = {
       await PayrollRepository.sealCycleAtomic({
         cycle: {
           ...cycle,
-          status: "SEALED",
           sealSignature: forensicLog.signature,
           sealedAt: new Date().toISOString(),
           sealedBy: options.currentUser?.name || "SYSTEM",
@@ -744,6 +875,7 @@ export const PayrollService = {
         payslips: sealedRecords as any[],
         ledgerTransactions: glTransactions,
         forensicLog,
+        firestoreAdmin: options?.firestoreAdmin,
       });
     } catch (e) {
       console.warn("[Payroll] PayrollRepository.sealCycleAtomic fallback to direct Firestore set:", e);
@@ -848,7 +980,7 @@ export const PayrollService = {
    * - Preserves the sealed cycle and historical audit trail (does not delete or destroy original).
    * - Generates an inverse balanced GL journal entry (swapping debit & credit accounts).
    * - Creates a new DRAFT cycle representing the reversal with identical period.
-   * - For each payslip of the sealed cycle, creates an inverse payslip (negative gross, net, deductions).
+   * - For each payslip of the sealed cycle, creates an inverse payslip (negative gross, net, deductions, tax, employer contributions).
    * - Marks original cycle with isReversed: true, reversedAt, reversedBy, reversalCycleId.
    * - Generates a signed forensic audit log for PAYROLL_CYCLE_REVERSED.
    * - Emits PAYROLL_CYCLE_REVERSED runtime event.
@@ -858,7 +990,7 @@ export const PayrollService = {
     records: PayrollRecord[],
     businessId: string,
     options: ProcessPayrollCycleOptions & { reason?: string } = {}
-  ): Promise<{ reversalCycle: PayrollCycle; reversalRecords: PayrollRecord[] }> {
+  ): Promise<{ reversalCycle: PayrollCycle; reversalRecords: PayrollRecord[]; recoveryProposals?: EmployeeReceivable[] }> {
     if (cycle.status !== "SEALED") {
       throw new FinopsException(
         "CYCLE_NOT_SEALED",
@@ -866,10 +998,35 @@ export const PayrollService = {
       );
     }
 
+    // ENG-05: Idempotency Protection
+    if (cycle.isReversed || (cycle as any).reversalCycleId) {
+      throw new FinopsException(
+        "CYCLE_ALREADY_REVERSED",
+        `[IdempotencyViolation] Le cycle de paie ${cycle.id} a déjà fait l'objet d'une contre-passation.`
+      );
+    }
+
+    // ENG-05: Segregation of Duties / Maker-Checker Check
+    const actorId = options.currentUser?.id || "SYSTEM";
+    const actorRole = options.currentUser?.role;
+    const initiatorId = cycle.generated_by || (cycle as any).createdBy || (cycle as any).sealedBy;
+
+    if (
+      actorId !== "SYSTEM" &&
+      initiatorId &&
+      actorId === initiatorId &&
+      actorRole &&
+      ["SENIOR_TELLER", "HEAD_TELLER", "MANAGER"].includes(actorRole)
+    ) {
+      throw new FinopsException(
+        "SEGREGATION_OF_DUTIES_VIOLATION",
+        `[SegregationOfDutiesViolation] L'utilisateur '${actorId}' (${actorRole}) ayant initié le cycle ${cycle.id} ne peut pas exécuter lui-même la contre-passation (Règle Maker-Checker).`
+      );
+    }
+
     console.debug(`[Payroll] Reversing sealed cycle ${cycle.id}... Reason: ${options.reason || "Non spécifié"}`);
 
     const now = new Date().toISOString();
-    const actorId = options.currentUser?.id || "SYSTEM";
     const actorName = options.currentUser?.name || "SYSTEM";
     const reason = options.reason || "Contre-passation et annulation comptable du cycle scellé";
 
@@ -893,29 +1050,62 @@ export const PayrollService = {
       excludedEmployeeIds: cycle.excludedEmployeeIds || [],
       enableTaxes: (cycle as any).enableTaxes !== false,
       reversalOfCycleId: cycle.id,
+      isReversed: false,
       created_at: now,
       updated_at: now,
       generated_by: actorName,
       recordsCount: records.length,
     } as any;
 
-    // 2. Create inverse payslips / records with negative amounts
+    // 2. Create inverse payslips / records capturing EVERY monetary component
     const reversalRecords: PayrollRecord[] = records.map((r) => {
+      // Monetary amounts (HTG / Cents)
       const grossAmt = r.grossSalary || (r.gross_salary_cents ? r.gross_salary_cents / 100 : 0);
       const grossC = r.gross_salary_cents ?? Math.round(grossAmt * 100);
+
       const netAmt = r.netPaid || (r.net_salary_cents ? r.net_salary_cents / 100 : 0);
       const netC = r.net_salary_cents ?? Math.round(netAmt * 100);
+
+      const baseAmt = r.baseSalary || (r.base_salary_cents ? r.base_salary_cents / 100 : 0);
+      const baseC = r.base_salary_cents ?? Math.round(baseAmt * 100);
+      const theoBaseC = r.theoretical_quincena_base_cents ?? baseC;
+
       const cnssAmt = r.cnssDeduction || (r.cnss_employee_cents ? r.cnss_employee_cents / 100 : 0);
       const cnssC = r.cnss_employee_cents ?? Math.round(cnssAmt * 100);
+
       const cnsAmt = r.cnsDeduction || (r.cns_employee_cents ? r.cns_employee_cents / 100 : 0);
       const cnsC = r.cns_employee_cents ?? Math.round(cnsAmt * 100);
-      const advAmt = r.advancesTreated || (r.debts_deduction_cents ? r.debts_deduction_cents / 100 : 0);
+
+      const taxAmt = (r as any).taxDeduction || ((r as any).tax_employee_cents ? (r as any).tax_employee_cents / 100 : 0);
+      const taxC = (r as any).tax_employee_cents ?? Math.round(taxAmt * 100);
+
+      const onaEmprAmt = (r as any).onaEmployer || (r.cnss_employer_cents ? r.cnss_employer_cents / 100 : 0);
+      const onaEmprC = r.cnss_employer_cents ?? Math.round(onaEmprAmt * 100);
+
+      const ofatmaEmprAmt = (r as any).ofatmaEmployer || (r.cns_employer_cents ? r.cns_employer_cents / 100 : 0);
+      const ofatmaEmprC = r.cns_employer_cents ?? Math.round(ofatmaEmprAmt * 100);
+
+      const empContribTot = r.employeeContributionsTotal ?? ((r as any).employee_contributions_cents ? (r as any).employee_contributions_cents / 100 : (cnssAmt + cnsAmt + taxAmt));
+      const emprContribTot = r.employerContributionsTotal ?? ((r as any).employer_contributions_cents ? (r as any).employer_contributions_cents / 100 : (onaEmprAmt + ofatmaEmprAmt));
+      const emprCostTot = r.employerPayrollCostTotal ?? (grossAmt + emprContribTot);
+
+      const advAmt = r.advancesTreated || r.advances || (r.debts_deduction_cents ? r.debts_deduction_cents / 100 : 0);
       const advC = r.debts_deduction_cents ?? Math.round(advAmt * 100);
-      const penAmt = r.penalties || (r.penalties_cents ? r.penalties_cents / 100 : 0);
+
+      const penAmt = r.penalties || r.penalty || r.absencePenalties || (r.penalties_cents ? r.penalties_cents / 100 : 0);
       const penC = r.penalties_cents ?? Math.round(penAmt * 100);
-      const primesAmt = r.primes || (r.bonuses_cents ? r.bonuses_cents / 100 : 0);
+
+      const primesAmt = r.primes || r.bonuses || r.bonusesAddition || (r.bonuses_cents ? r.bonuses_cents / 100 : 0);
       const primesC = r.bonuses_cents ?? Math.round(primesAmt * 100);
-      const baseAmt = r.baseSalary || 0;
+
+      const commAmt = r.commissions || (r.commission_cents ? r.commission_cents / 100 : 0);
+      const commC = r.commission_cents ?? Math.round(commAmt * 100);
+
+      const otAmt = r.overtimePayout || (r.overtime_cents ? r.overtime_cents / 100 : 0);
+      const otC = r.overtime_cents ?? Math.round(otAmt * 100);
+
+      const salesAmt = r.salesHtg || (r.sales_cents ? r.sales_cents / 100 : 0);
+      const salesC = r.sales_cents ?? Math.round(salesAmt * 100);
 
       return {
         ...r,
@@ -923,21 +1113,55 @@ export const PayrollService = {
         cycleId: reversalCycleId,
         payroll_cycle_id: reversalCycleId,
         business_id: businessId,
+        reversalOfPayrollRecordId: r.id,
+        reversalOfRecordId: r.id,
+        isReversal: true,
+        // Invert all monetary amounts (HTG & Cents)
         grossSalary: -grossAmt,
         gross_salary_cents: -grossC,
         netPaid: -netAmt,
         net_salary_cents: -netC,
         baseSalary: -baseAmt,
+        base_salary_cents: -baseC,
+        theoretical_quincena_base_cents: -theoBaseC,
         cnssDeduction: -cnssAmt,
         cnss_employee_cents: -cnssC,
         cnsDeduction: -cnsAmt,
         cns_employee_cents: -cnsC,
+        taxDeduction: -taxAmt,
+        tax_employee_cents: -taxC,
+        onaEmployer: -onaEmprAmt,
+        cnss_employer_cents: -onaEmprC,
+        ofatmaEmployer: -ofatmaEmprAmt,
+        cns_employer_cents: -ofatmaEmprC,
+        employer_tax_cents: -(onaEmprC + ofatmaEmprC),
+        employer_deductions_cents: -(onaEmprC + ofatmaEmprC),
+        employeeContributionsTotal: -empContribTot,
+        employerContributionsTotal: -emprContribTot,
+        employerPayrollCostTotal: -emprCostTot,
         advancesTreated: -advAmt,
+        advances: -advAmt,
         debts_deduction_cents: -advC,
         penalties: -penAmt,
+        penalty: -penAmt,
+        absencePenalties: -penAmt,
         penalties_cents: -penC,
         primes: -primesAmt,
+        bonuses: -primesAmt,
+        bonusesAddition: -primesAmt,
         bonuses_cents: -primesC,
+        prime_cents: -primesC,
+        commissions: -commAmt,
+        commission_cents: -commC,
+        overtimePayout: -otAmt,
+        overtime_cents: -otC,
+        salesHtg: -salesAmt,
+        sales_cents: -salesC,
+        // Preserve non-monetary quantities (hours, rates, counts)
+        workedHours: r.workedHours,
+        worked_minutes: r.worked_minutes,
+        overtimeHours: r.overtimeHours,
+        commission_rate_used: r.commission_rate_used,
         status: "DRAFT" as any,
         notes: `Contre-passation du bulletin ${r.id} (Cycle scellé: ${cycle.id}). ${reason}`,
         created_at: now,
@@ -945,17 +1169,44 @@ export const PayrollService = {
       };
     });
 
-    // 3. Generate inverse GL journal entries
-    const { transactions: reversalTransactions, journalEntry: reversalJournalEntry } =
+    // 3. Generate inverse GL journal entries (handling Case A vs Case B)
+    const { transactions: reversalTransactions, journalEntry: reversalJournalEntry, settlementStatus } =
       AccountingEngine.createPayrollReversalJournalEntry(
         cycle,
         records,
         businessId,
         { uid: actorId, name: actorName },
-        reason
+        reason,
+        options.ledgerTransactions
       );
 
-    console.debug(`[Payroll] Generated ${reversalTransactions.length} reversal GL transactions for cycle ${cycle.id}`);
+    console.debug(`[Payroll] Generated ${reversalTransactions.length} reversal GL transactions for cycle ${cycle.id} (Settlement status: ${settlementStatus})`);
+
+    // 3b. If payroll was already disbursed (Case B), generate recovery proposals requiring human approval
+    const recoveryProposals: any[] = [];
+    if (settlementStatus === "SETTLEMENT_PRESERVED_PENDING_RECOVERY") {
+      records.forEach((origRec) => {
+        const netAmt = origRec.netPaid || (origRec.net_salary_cents ? origRec.net_salary_cents / 100 : 0);
+        if (netAmt > 0) {
+          const revRec = reversalRecords.find((r) => r.reversalOfPayrollRecordId === origRec.id || r.employeeId === origRec.employeeId);
+          const proposal = EmployeeReceivableService.createProposal({
+            businessId,
+            originalPayrollCycleId: cycle.id,
+            originalPayrollRecordId: origRec.id,
+            reversalCycleId,
+            reversalPayrollRecordId: revRec?.id,
+            employeeId: origRec.employeeId,
+            employeeName: origRec.employeeName,
+            recoverableAmount: netAmt,
+            currency: (cycle.currency as any) === "USD" ? "USD" : "HTG",
+            creator: { id: actorId, name: actorName, role: options.currentUser?.role },
+            notes: `Trop-perçu salarial suite à la contre-passation du cycle scellé ${cycle.id} (${cycle.cycleName || cycle.label}).`,
+          });
+          recoveryProposals.push(proposal);
+        }
+      });
+      console.debug(`[Payroll] Created ${recoveryProposals.length} pending employee recovery proposals for cycle ${cycle.id}`);
+    }
 
     // 4. Create signed forensic audit log
     const forensicLog = await ForensicLogRepository.createAndSignLog({
@@ -964,7 +1215,7 @@ export const PayrollService = {
       userName: actorName,
       userRole: options.currentUser?.role || "SYSTEM",
       action: "PAYROLL_CYCLE_REVERSED",
-      details: `Contre-passation du cycle de paie scellé ${cycle.id} (${cycle.cycleName || cycle.label}). Nouveau cycle DRAFT: ${reversalCycleId}. Motif: ${reason}`,
+      details: `Contre-passation du cycle de paie scellé ${cycle.id} (${cycle.cycleName || cycle.label}). Nouveau cycle DRAFT: ${reversalCycleId}. Status règlement: ${settlementStatus}. Proposals: ${recoveryProposals.length}. Motif: ${reason}`,
       beforeState: { cycleId: cycle.id, status: "SEALED", isReversed: false },
       afterState: {
         originalCycleId: cycle.id,
@@ -972,10 +1223,18 @@ export const PayrollService = {
         status: "SEALED",
         isReversed: true,
         reversalRecordsCount: reversalRecords.length,
+        recoveryProposalsCount: recoveryProposals.length,
         reversalJournalEntryId: reversalJournalEntry.id,
       },
       timestamp: now,
     });
+
+    // Set in-memory reversal state on original cycle
+    cycle.isReversed = true;
+    (cycle as any).reversalCycleId = reversalCycleId;
+    (cycle as any).reversedAt = now;
+    (cycle as any).reversedBy = actorName;
+    (cycle as any).reversalReason = reason;
 
     // 5. Persist to Firestore
     try {
@@ -986,7 +1245,7 @@ export const PayrollService = {
         updated_at: serverTimestamp(),
       }, { merge: true });
 
-      // 5b. Update original cycle with reversal metadata
+      // 5b. Update original cycle with reversal metadata in Firestore
       const origCycleRef = doc(db, "payroll_cycles", cycle.id);
       await setDoc(origCycleRef, {
         isReversed: true,
@@ -1016,7 +1275,16 @@ export const PayrollService = {
         }, { merge: true });
       }
 
-      // 5e. Forensic log
+      // 5e. Persist recovery proposals
+      for (const prop of recoveryProposals) {
+        const propRef = doc(db, "employee_receivables", prop.id);
+        await setDoc(propRef, {
+          ...prop,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      }
+
+      // 5f. Forensic log
       await ForensicLogRepository.writeForensicLog(forensicLog);
     } catch (e) {
       console.warn("[Payroll] Direct Firestore reversal writes had error or offline fallback:", e);
@@ -1057,6 +1325,7 @@ export const PayrollService = {
           reversalCycleId,
           cycleName: cycle.cycleName || cycle.label,
           recordsCount: reversalRecords.length,
+          recoveryProposalsCount: recoveryProposals.length,
           signature: forensicLog.signature,
           reason,
           business_id: businessId,
@@ -1081,6 +1350,6 @@ export const PayrollService = {
     }
 
     console.debug(`[Payroll] Sealed cycle ${cycle.id} reversed successfully -> new draft ${reversalCycleId}`);
-    return { reversalCycle, reversalRecords };
+    return { reversalCycle, reversalRecords, recoveryProposals };
   },
 };

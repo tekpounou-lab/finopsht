@@ -852,6 +852,15 @@ class PermissionServiceClass {
     return allowed.includes(effectiveRole);
   }
 
+  public static canValidateOrSealPayroll(role: string): boolean {
+    const r = (role || "").toUpperCase();
+    return ["SUPER_ADMIN", "OWNER", "ADMIN", "OWNER_ADMIN"].includes(r);
+  }
+
+  public canValidateOrSealPayroll(role: string): boolean {
+    return PermissionServiceClass.canValidateOrSealPayroll(role);
+  }
+
   /**
    * Verifies if the user profile carries specific permission clearance (compatible with older stubs)
    */

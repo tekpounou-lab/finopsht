@@ -118,17 +118,125 @@ export class DataCleanupAndSSOTService {
    * Executes a database migration to strip duplicated, redundant, and out-of-sync fields
    * from Firestore documents across tenant collections.
    */
-  public async runSSOTCleanupMigration(businessId: string): Promise<SSOTMigrationSummary> {
-    console.log(`[SSOT Cleanup Migration] Starting data cleanup for tenant ${businessId}...`);
+  public async runSSOTCleanupMigration(
+    businessId: string,
+    adminDb?: any
+  ): Promise<SSOTMigrationSummary> {
+    const trimmedBiz = typeof businessId === "string" ? businessId.trim() : "";
+    if (
+      !trimmedBiz ||
+      ["none", "default", "biz_default", "demo", "biz_demo"].includes(trimmedBiz.toLowerCase())
+    ) {
+      throw new Error("MISSING_TENANT_CONTEXT");
+    }
+
+    console.log(`[SSOT Cleanup Migration] Starting data cleanup for tenant ${trimmedBiz}...`);
 
     let invoicesCleaned = 0;
     let proformasCleaned = 0;
     let payrollCyclesCleaned = 0;
     let totalFieldsRemoved = 0;
 
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
+    if (isServerRuntime) {
+      let resolvedAdminDb = adminDb;
+      if (!resolvedAdminDb) {
+        const adminModulePath = "../../lib/firebaseAdmin";
+        const { getAdminFirestore } = await import(/* @vite-ignore */ adminModulePath);
+        resolvedAdminDb = getAdminFirestore();
+      }
+      const adminFirestoreModule = "firebase-admin/firestore";
+      const { FieldValue } = await import(/* @vite-ignore */ adminFirestoreModule);
+
+      const queryTenantCollection = async (colName: string) => {
+        const colRef = resolvedAdminDb.collection(colName);
+        const subColRef = resolvedAdminDb.collection(`businesses/${trimmedBiz}/${colName}`);
+        const [snap1, snap2, subSnap] = await Promise.all([
+          colRef.where("businessId", "==", trimmedBiz).get(),
+          colRef.where("business_id", "==", trimmedBiz).get(),
+          typeof subColRef?.get === "function" ? subColRef.get() : Promise.resolve({ docs: [] })
+        ]);
+        const byPath = new Map<string, { snap: any; path: string }>();
+        snap1?.docs?.forEach((d: any) => byPath.set(`${colName}/${d.id}`, { snap: d, path: `${colName}/${d.id}` }));
+        snap2?.docs?.forEach((d: any) => byPath.set(`${colName}/${d.id}`, { snap: d, path: `${colName}/${d.id}` }));
+        subSnap?.docs?.forEach((d: any) =>
+          byPath.set(`businesses/${trimmedBiz}/${colName}/${d.id}`, {
+            snap: d,
+            path: `businesses/${trimmedBiz}/${colName}/${d.id}`
+          })
+        );
+        return Array.from(byPath.values()).filter(({ snap, path }) => {
+          const data = typeof snap.data === "function" ? snap.data() : snap;
+          const b1 = typeof data?.businessId === "string" ? data.businessId.trim() : "";
+          const b2 = typeof data?.business_id === "string" ? data.business_id.trim() : "";
+          if (b1 && b2 && b1 !== b2) {
+            const err: any = new Error("TENANT_ISOLATION_VIOLATION");
+            err.code = "TENANT_ISOLATION_VIOLATION";
+            throw err;
+          }
+          const resolvedBiz = b1 || b2 || (path.startsWith(`businesses/${trimmedBiz}/`) ? trimmedBiz : "");
+          return resolvedBiz === trimmedBiz;
+        });
+      };
+
+      const applyCleanup = async (
+        _colName: string,
+        entries: Array<{ snap: any; path: string }>,
+        redundantKeys: string[]
+      ): Promise<number> => {
+        let cleaned = 0;
+        for (const { snap: docSnap, path: docPath } of entries) {
+          const data = typeof docSnap.data === "function" ? docSnap.data() : docSnap;
+          const updates: Record<string, any> = {};
+          for (const key of redundantKeys) {
+            if (data && data[key] !== undefined) {
+              updates[key] = FieldValue.delete();
+              totalFieldsRemoved++;
+            }
+          }
+          if (Object.keys(updates).length > 0) {
+            const targetRef = resolvedAdminDb.doc(docPath);
+            await targetRef.update(updates);
+            cleaned++;
+          }
+        }
+        return cleaned;
+      };
+
+      const [invDocs, profDocs, cycleDocs] = await Promise.all([
+        queryTenantCollection("invoices"),
+        queryTenantCollection("proformas"),
+        queryTenantCollection("payroll_cycles")
+      ]);
+
+      invoicesCleaned = await applyCleanup("invoices", invDocs, [
+        "totalRevenue",
+        "totalExpenses",
+        "cachedLedgerTotal",
+        "redundantSummary"
+      ]);
+      proformasCleaned = await applyCleanup("proformas", profDocs, [
+        "totalRevenue",
+        "cachedProfit"
+      ]);
+      payrollCyclesCleaned = await applyCleanup("payroll_cycles", cycleDocs, [
+        "totalRevenue",
+        "totalProfit"
+      ]);
+
+      return {
+        businessId: trimmedBiz,
+        invoicesCleaned,
+        proformasCleaned,
+        payrollCyclesCleaned,
+        totalFieldsRemoved,
+        timestamp: new Date().toISOString()
+      };
+    }
+
     // 1. Invoices Collection: Remove redundant duplicated fields (e.g. legacy totalRevenue, cachedLedgerTotal, redundantTax)
     try {
-      const invoicesRef = collection(db, "businesses", businessId, "invoices");
+      const invoicesRef = collection(db, "businesses", trimmedBiz, "invoices");
       const invSnap = await getDocs(invoicesRef);
 
       let batch = writeBatch(db);
@@ -177,7 +285,7 @@ export class DataCleanupAndSSOTService {
 
     // 2. Proformas Collection: Remove duplicate cached summary fields
     try {
-      const proformasRef = collection(db, "businesses", businessId, "proformas");
+      const proformasRef = collection(db, "businesses", trimmedBiz, "proformas");
       const profSnap = await getDocs(proformasRef);
 
       let batch = writeBatch(db);
@@ -218,7 +326,7 @@ export class DataCleanupAndSSOTService {
 
     // 3. Payroll Cycles: Remove duplicate top-level financial metrics (sourcing from payslips/ledger)
     try {
-      const cyclesQuery = query(collection(db, "payroll_cycles"), where("business_id", "==", businessId));
+      const cyclesQuery = query(collection(db, "payroll_cycles"), where("business_id", "==", trimmedBiz));
       const cycleSnap = await getDocs(cyclesQuery);
 
       let batch = writeBatch(db);
@@ -258,7 +366,7 @@ export class DataCleanupAndSSOTService {
     }
 
     const summary: SSOTMigrationSummary = {
-      businessId,
+      businessId: trimmedBiz,
       invoicesCleaned,
       proformasCleaned,
       payrollCyclesCleaned,
@@ -266,7 +374,7 @@ export class DataCleanupAndSSOTService {
       timestamp: new Date().toISOString()
     };
 
-    console.log(`[SSOT Cleanup Migration] Completed for ${businessId}:`, summary);
+    console.log(`[SSOT Cleanup Migration] Completed for ${trimmedBiz}:`, summary);
     return summary;
   }
 }

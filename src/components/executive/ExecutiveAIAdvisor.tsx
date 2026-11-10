@@ -14,10 +14,10 @@ const ExecutiveAIAdvisorComponent: React.FC<ExecutiveAIAdvisorProps> = ({ snapsh
   const expVal = stabilizedSnapshot?.expenses?.currentValue || 0;
   const payrollVal = stabilizedSnapshot?.payrollCost?.currentValue || 0;
   const netProfit = stabilizedSnapshot?.profit?.currentValue ?? (revVal - expVal);
-  const attendanceRate = stabilizedSnapshot?.attendanceRate?.currentValue ?? 71;
-  const activeStaff = stabilizedSnapshot?.activeStaff?.currentValue ?? 16;
-  const checkedInCount = Math.round((activeStaff * attendanceRate) / 100);
-  const absenteeCount = Math.max(0, activeStaff - checkedInCount);
+  const attendanceRate = stabilizedSnapshot?.attendanceRate?.currentValue ?? null;
+  const activeStaff = stabilizedSnapshot?.activeStaff?.currentValue ?? 0;
+  const checkedInCount = attendanceRate !== null ? Math.round((activeStaff * attendanceRate) / 100) : null;
+  const absenteeCount = checkedInCount !== null ? Math.max(0, activeStaff - checkedInCount) : null;
   const payrollRatio = revVal > 0 ? Math.min(100, Math.round((payrollVal / revVal) * 100)) : 0;
 
   return (
@@ -84,9 +84,9 @@ const ExecutiveAIAdvisorComponent: React.FC<ExecutiveAIAdvisorProps> = ({ snapsh
             <p className="font-sans leading-relaxed font-light text-slate-300">
               Sur un effectif actif de{" "}
               <span className="text-slate-100 font-bold">{activeStaff} collaborateurs</span>, le taux d'assiduité moyen s'établit à{" "}
-              <span className="text-emerald-400 font-bold font-mono">{attendanceRate}%</span>, soit{" "}
-              <span className="text-slate-100 font-semibold">{checkedInCount} agents présents</span> et{" "}
-              <span className="text-rose-400 font-semibold">{absenteeCount} absents enregistrés</span>.
+              <span className="text-emerald-400 font-bold font-mono">{attendanceRate !== null ? `${attendanceRate}%` : "N/D"}</span>, soit{" "}
+              <span className="text-slate-100 font-semibold">{checkedInCount !== null ? `${checkedInCount} agents présents` : "N/D"}</span> et{" "}
+              <span className="text-rose-400 font-semibold">{absenteeCount !== null ? `${absenteeCount} absents enregistrés` : "N/D"}</span>.
             </p>
           </div>
         </div>

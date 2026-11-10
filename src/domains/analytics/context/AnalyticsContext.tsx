@@ -26,6 +26,9 @@ import { useAnalyticsFilters } from "../../../contexts/AnalyticsFilterContext";
 import { toDateOnly, resolveAnalyticsPayrollDate } from "../../../utils/dateNormalization";
 import { isOperationalEmployee } from "../../../services/workforce/EmployeeEligibilityService";
 
+import { CurrencyRateRepository } from "../../../repositories/CurrencyRateRepository";
+import { NormalizationContext } from "../utils/NormalizedAmountResolver";
+
 export interface AnalyticsContextState {
   period: AnalyticsPeriod;
   setPeriod: (period: AnalyticsPeriod) => void;
@@ -54,6 +57,8 @@ export interface AnalyticsContextState {
   semanticEngine: SemanticAnalyticsEngine;
   runSemanticAnalytics: (selectedMonth: number | string, selectedYear: number) => any;
   explainKPI: (kpiId: string, dimension: any, selectedMonth: number | string, selectedYear: number) => any;
+  
+  normalizationContext: NormalizationContext;
 }
 
 const AnalyticsContext = createContext<AnalyticsContextState | null>(null);
@@ -63,18 +68,30 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const { filters: analyticsFilters } = useAnalyticsFilters();
 
   const filters = useMemo(() => {
+    const activeBranch = (executiveFilters.branchId && executiveFilters.branchId !== "ALL")
+      ? executiveFilters.branchId
+      : (analyticsFilters.branchId || "ALL");
+
+    const activeDept = (executiveFilters.departmentId && executiveFilters.departmentId !== "ALL")
+      ? executiveFilters.departmentId
+      : (analyticsFilters.departmentId || "ALL");
+
+    const activeEmp = (executiveFilters.employeeId && executiveFilters.employeeId !== "ALL")
+      ? executiveFilters.employeeId
+      : (analyticsFilters.employeeId || "ALL");
+
     return {
-      startDate: analyticsFilters.dateRange.startDate || executiveFilters.startDate,
-      endDate: analyticsFilters.dateRange.endDate || executiveFilters.endDate,
-      branchId: analyticsFilters.branchId || executiveFilters.branchId,
-      departmentId: analyticsFilters.departmentId || executiveFilters.departmentId,
-      employeeId: analyticsFilters.employeeId || executiveFilters.employeeId,
+      startDate: executiveFilters.startDate ?? analyticsFilters.dateRange.startDate,
+      endDate: executiveFilters.endDate ?? analyticsFilters.dateRange.endDate,
+      branchId: activeBranch,
+      departmentId: activeDept,
+      employeeId: activeEmp,
       contractType: executiveFilters.contractType,
       transactionType: executiveFilters.transactionType,
       status: executiveFilters.status,
       currency: executiveFilters.currency,
       businessUnit: executiveFilters.businessUnit,
-      accountingMode: executiveFilters.accountingMode,
+      accountingMode: executiveFilters.accountingBasis || executiveFilters.accountingMode || "CASH",
     };
   }, [executiveFilters, analyticsFilters]);
 
@@ -115,6 +132,8 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       endDate: lastDay,
     };
   });
+
+  const [normalizationContext, setNormalizationContext] = useState<NormalizationContext>({});
 
   // Refresh trigger state
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
@@ -238,11 +257,41 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [effectiveEmployees]);
 
   const activeCustomRange = useMemo(() => {
-    if (filters.startDate && filters.endDate) {
+    if (filters.startDate !== undefined && filters.endDate !== undefined) {
       return { startDate: filters.startDate, endDate: filters.endDate };
     }
     return customRange;
   }, [filters.startDate, filters.endDate, customRange]);
+
+  // Fetch normalization grids for the active period (including unbounded all-dates selections)
+  useEffect(() => {
+    let active = true;
+    const fetchGrids = async () => {
+      if (!businessId) return;
+      try {
+        let normStartDate = "2020-01-01";
+        if (activeCustomRange?.startDate) {
+          const s = new Date(activeCustomRange.startDate);
+          if (!isNaN(s.getTime())) {
+            s.setMonth(s.getMonth() - 1);
+            normStartDate = s.toISOString().split("T")[0];
+          }
+        }
+        const normEndDate = activeCustomRange?.endDate || new Date().toISOString().split("T")[0];
+
+        const grids = await CurrencyRateRepository.getRatesForPeriod(businessId, normStartDate, normEndDate);
+        if (active) {
+          setNormalizationContext(grids);
+        }
+      } catch (err) {
+        console.warn("[AnalyticsContext] Failed to fetch historical rate grids:", err);
+      }
+    };
+    fetchGrids();
+    return () => {
+      active = false;
+    };
+  }, [businessId, activeCustomRange?.startDate, activeCustomRange?.endDate]);
 
   // Standardized Date Normalization Helpers
   const normalizeDateStr = (rawDate: any): string => toDateOnly(rawDate);
@@ -276,9 +325,9 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const rBranch = rec.branchId || (rec as any).branch_id || (rec.employeeId ? empBranchMap.get(rec.employeeId) : undefined);
       const rDept = rec.departmentId || (rec as any).department_id || (rec.employeeId ? empDeptMap.get(rec.employeeId) : undefined);
       const rEmp = rec.employeeId || (rec as any).employee_id;
-      if (filters.branchId !== "ALL" && rBranch && rBranch !== filters.branchId) return false;
-      if (filters.departmentId !== "ALL" && rDept && rDept !== filters.departmentId) return false;
-      if (filters.employeeId !== "ALL" && rEmp && rEmp !== filters.employeeId) return false;
+      if (filters.branchId !== "ALL" && (!rBranch || rBranch !== filters.branchId)) return false;
+      if (filters.departmentId !== "ALL" && (!rDept || rDept !== filters.departmentId)) return false;
+      if (filters.employeeId !== "ALL" && (!rEmp || rEmp !== filters.employeeId)) return false;
 
       return true;
     });
@@ -290,9 +339,9 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const rBranchId = rec.branch_id || (rec as any).branchId || (rEmpId ? empBranchMap.get(rEmpId) : undefined);
       const rDeptId = rec.department_id || (rec as any).departmentId || (rEmpId ? empDeptMap.get(rEmpId) : undefined);
 
-      if (filters.branchId !== "ALL" && rBranchId && rBranchId !== filters.branchId) return false;
-      if (filters.departmentId !== "ALL" && rDeptId && rDeptId !== filters.departmentId) return false;
-      if (filters.employeeId !== "ALL" && rEmpId && rEmpId !== filters.employeeId) return false;
+      if (filters.branchId !== "ALL" && (!rBranchId || rBranchId !== filters.branchId)) return false;
+      if (filters.departmentId !== "ALL" && (!rDeptId || rDeptId !== filters.departmentId)) return false;
+      if (filters.employeeId !== "ALL" && (!rEmpId || rEmpId !== filters.employeeId)) return false;
       if (filters.status !== "ALL" && rec.status && rec.status !== filters.status) return false;
 
       return true;
@@ -430,6 +479,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           businessSettings,
           payrollCycles: effectiveCycles,
           accountingMode: filters.accountingMode || "CASH",
+          normalizationContext,
         });
         console.debug("[AnalyticsContext] Snapshot recalculated successfully:", {
           generatedAt: snap.generatedAt,
@@ -463,6 +513,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     businessSettings,
     effectiveCycles,
     filters.accountingMode,
+    normalizationContext,
   ]);
 
   useEffect(() => {
@@ -559,6 +610,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         semanticEngine,
         runSemanticAnalytics,
         explainKPI,
+        normalizationContext,
       }}
     >
       {children}

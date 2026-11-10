@@ -1,6 +1,7 @@
 import { doc, writeBatch, serverTimestamp } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { LedgerTransaction } from "../../types";
+import { sanitizeAndEnrichLedgerTransaction } from "../AccountingEngine";
 
 export interface SeedResult {
   success: number;
@@ -136,11 +137,41 @@ export class LedgerSeedService {
       }
     ];
 
-    console.log(`Creating batch with ${demoTransactions.length} transactions`);
+    const sanitizedDemoTransactions: LedgerTransaction[] = demoTransactions.map(t =>
+      sanitizeAndEnrichLedgerTransaction(
+        {
+          ...t,
+          business_id: businessId,
+          businessId: businessId,
+          branchId: targetBranch,
+          branch_id: targetBranch,
+          departmentId: targetDept,
+          department_id: targetDept,
+          cost_center_id: targetBranch,
+          costCenterId: targetBranch,
+          employeeId: targetEmp,
+          employee_id: targetEmp,
+          employeeName: "Direction Générale",
+          employee_name: "Direction Générale",
+          debit: t.amount,
+          credit: t.amount,
+          debit_cents: t.amount_cents,
+          credit_cents: t.amount_cents
+        },
+        businessId,
+        {
+          defaultBranchId: targetBranch,
+          defaultDepartmentId: targetDept,
+          defaultCostCenter: targetBranch
+        }
+      )
+    );
+
+    console.log(`Creating batch with ${sanitizedDemoTransactions.length} transactions`);
 
     try {
       const batch = writeBatch(db);
-      demoTransactions.forEach((tx) => {
+      sanitizedDemoTransactions.forEach((tx) => {
         // Path 1: root collection ledger_transactions
         const docRef1 = doc(db, "ledger_transactions", tx.id);
         const data = {
@@ -162,9 +193,9 @@ export class LedgerSeedService {
       console.log("Batch commit successful");
 
       return {
-        success: demoTransactions.length,
+        success: sanitizedDemoTransactions.length,
         failed: 0,
-        demoTransactions
+        demoTransactions: sanitizedDemoTransactions
       };
     } catch (err: any) {
       console.error("Batch commit failed with error", err);

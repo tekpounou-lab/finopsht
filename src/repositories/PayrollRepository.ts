@@ -29,6 +29,7 @@ export interface SealPayrollParams {
   userRole?: string;
   actorRole?: string;
   currentUser?: { id?: string; name?: string; role?: string };
+  firestoreAdmin?: any;
 }
 
 export interface RollbackPayrollParams {
@@ -274,6 +275,35 @@ export const PayrollRepository = {
         return;
       }
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycleId}`);
+    }
+  },
+
+  /**
+   * Fetches all payroll records for a business tenant from Firestore (/payroll_records).
+   */
+  async getPayrollRecords(businessId: string): Promise<PayrollRecord[]> {
+    if (!businessId) return [];
+    try {
+      let snap = await getDocs(
+        query(
+          collection(db, "payroll_records"),
+          where("business_id", "==", businessId)
+        )
+      );
+      if (snap.empty) {
+        snap = await getDocs(
+          query(
+            collection(db, "payroll_records"),
+            where("businessId", "==", businessId)
+          )
+        );
+      }
+      return snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as PayrollRecord))
+        .filter((r) => !(r as any).deleted);
+    } catch (err) {
+      console.warn("[PayrollRepository] Failed to fetch payroll records:", err);
+      return [];
     }
   },
 
@@ -593,6 +623,75 @@ export const PayrollRepository = {
       timestamp: new Date().toISOString()
     };
 
+    if (params.firestoreAdmin) {
+      try {
+        const batch = params.firestoreAdmin.batch();
+
+        // 1. Update cycle status to SEALED
+        const cycleRef = params.firestoreAdmin.collection("payroll_cycles").doc(cycle.id);
+        batch.set(
+          cycleRef,
+          {
+            ...cycle,
+            status: "SEALED",
+            sealedAt: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+
+        // 2. Persist Payslips
+        payslips.forEach((payslip) => {
+          const psId = payslip.id || `ps_${cycle.id}_${payslip.employeeId}`;
+          const payslipRef = params.firestoreAdmin.collection("payslips").doc(psId);
+          batch.set(
+            payslipRef,
+            {
+              ...payslip,
+              business_id: businessId,
+              payroll_cycle_id: cycle.id,
+              status: "SEALED",
+              updated_at: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        });
+
+        // 3. Persist General Ledger Transactions (Balanced Double-Entry)
+        ledgerTransactions.forEach((tx) => {
+          const txRef = params.firestoreAdmin.collection("ledger_transactions").doc(tx.id);
+          batch.set(
+            txRef,
+            {
+              ...tx,
+              business_id: businessId,
+              businessId,
+              payroll_cycle_id: cycle.id,
+              payrollCycleId: cycle.id,
+              date: cycle.effectiveAccountingDate || cycle.endDate || tx.date,
+              status: "POSTED",
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        });
+
+        // 4. Persist Forensic Audit Trail Log
+        const logRef = params.firestoreAdmin.collection("forensic_logs").doc(forensicLog.id);
+        batch.set(logRef, {
+          ...forensicLog,
+          business_id: businessId,
+          _server_timestamp: new Date().toISOString(),
+        });
+
+        await batch.commit();
+        return;
+      } catch (error) {
+        console.error("[PayrollRepository] Admin batch seal failed:", error);
+        throw error;
+      }
+    }
+
     try {
       await MessageQueue.persistAndPublishWithBatch(
         businessId,
@@ -624,6 +723,9 @@ export const PayrollRepository = {
             batch.set(txRef, {
               ...tx,
               business_id: businessId,
+              businessId,
+              payroll_cycle_id: cycle.id,
+              payrollCycleId: cycle.id,
               date: cycle.effectiveAccountingDate || cycle.endDate || tx.date,
               status: "POSTED",
               updatedAt: serverTimestamp()

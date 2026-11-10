@@ -449,7 +449,7 @@ export default function PayrollActivityTrends({
     if (snapshot) {
       return {
         totalNetBill: snapshot.payrollCost.currentValue,
-        avgActivity: snapshot.attendanceRate.currentValue * 10,
+        avgActivity: (snapshot.attendanceRate.currentValue ?? 0) * 10,
         avgWorkforce: snapshot.activeStaff.currentValue,
       };
     }
@@ -512,7 +512,7 @@ export default function PayrollActivityTrends({
               if (isCurrency) {
                 formattedVal = `${val.toLocaleString()} HTG`;
               } else if (isPercent) {
-                formattedVal = `${val.toFixed(1)}%`;
+                formattedVal = val !== null && val !== undefined && typeof val === "number" ? `${val.toFixed(1)}%` : "N/D";
               } else if (entry.dataKey === "hours" || entry.dataKey === "averageHours") {
                 formattedVal = `${val} hrs`;
               } else if (entry.dataKey === "staff" || entry.dataKey === "employeeCount") {

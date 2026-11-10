@@ -34,7 +34,13 @@ export const TAB_ALIASES: Record<string, string> = {
   "system/reliability": "reliability",
   "system/forensic": "forensic",
   "system/recovery": "recovery",
-  "disaster-recovery": "recovery",
+  rapports: "reports",
+  report: "reports",
+  cash_management: "cash",
+  "cash-management": "cash",
+  caisses: "cash",
+  caisse: "cash",
+  coffres: "cash",
 };
 
 export function normalizeTab(tab?: string): string {

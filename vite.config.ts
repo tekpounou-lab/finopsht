@@ -61,8 +61,6 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(process.cwd(), './src'),
-        'react': path.resolve(process.cwd(), './node_modules/react'),
-        'react-dom': path.resolve(process.cwd(), './node_modules/react-dom'),
       },
       dedupe: [
         'react',

@@ -23,6 +23,8 @@ export function getSnapshotSemanticSignature(snapshot: AnalyticsSnapshot | null 
     profit: snapshot.profit?.currentValue,
     payrollCost: snapshot.payrollCost?.currentValue,
     attendanceRate: snapshot.attendanceRate?.currentValue,
+    attendanceRateState: snapshot.attendanceRate?.state,
+    attendanceFrequency: snapshot.attendanceFrequency?.currentValue,
     activeStaff: snapshot.activeStaff?.currentValue,
     businessHealthScore: snapshot.businessHealthScore,
     cashOnHand: snapshot.cashOnHand?.currentValue,

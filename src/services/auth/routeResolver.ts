@@ -34,6 +34,8 @@ export type AppTab =
   | "notifications"
   | "bi"
   | "instructions"
+  | "reports"
+  | "cash"
   | "leave";
 
 /**
@@ -51,6 +53,12 @@ export function resolveDefaultTabForRole(role: Role | string): AppTab {
       return "planning";
     case "SUPERVISOR":
       return "attendance";
+    case "JUNIOR_TELLER":
+    case "SENIOR_TELLER":
+    case "HEAD_TELLER":
+    case "ACCOUNTANT":
+    case "AUDITOR":
+      return "ledger";
     case "EMPLOYEE":
       return "employeeSpace";
     default:
@@ -60,7 +68,7 @@ export function resolveDefaultTabForRole(role: Role | string): AppTab {
 
 /**
  * Returns list of authorized tabs for a specific organizational role.
- * Strictly enforces that forensic audit, system health, reliability & DLQ, and disaster recovery
+ * Strictly enforces that system health, reliability & DLQ, and disaster recovery
  * are accessible exclusively by SUPER_ADMIN.
  */
 export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
@@ -100,6 +108,8 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "bi",
         "settings",
         "leave",
+        "reports",
+        "cash",
         ...commonTabs,
       ];
     case "OWNER":
@@ -113,6 +123,7 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "attendance",
         "payroll",
         "ledger",
+        "cash",
         "crm",
         "leads",
         "prospects",
@@ -124,6 +135,7 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "bi",
         "settings",
         "leave",
+        "reports",
         "employeeSpace",
         ...commonTabs,
       ];
@@ -137,6 +149,7 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "attendance",
         "payroll",
         "ledger",
+        "cash",
         "crm",
         "leads",
         "prospects",
@@ -147,6 +160,7 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "bi",
         "settings",
         "leave",
+        "reports",
         "employeeSpace",
         ...commonTabs,
       ];
@@ -156,12 +170,79 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         "planning",
         "performance",
         "employeeSpace",
+        "documents",
+        "leave",
+        ...commonTabs,
+      ];
+    case "JUNIOR_TELLER":
+    case "SENIOR_TELLER":
+      return [
+        "ledger",
+        "cash",
+        "attendance",
+        "leave",
+        "documents",
+        "employeeSpace",
+        ...commonTabs,
+      ];
+    case "HEAD_TELLER":
+      return [
+        "bi",
+        "ledger",
+        "cash",
+        "reports",
+        "attendance",
+        "planning",
+        "performance",
+        "leave",
+        "documents",
+        "employeeSpace",
+        ...commonTabs,
+      ];
+    case "ACCOUNTANT":
+      return [
+        "bi",
+        "ledger",
+        "cash",
+        "reports",
+        "payroll",
+        "crm",
+        "invoices",
+        "proformas",
+        "performance",
+        "aicfo",
+        "documents",
+        "leave",
+        "employeeSpace",
+        ...commonTabs,
+      ];
+    case "AUDITOR":
+      return [
+        "bi",
+        "organization",
+        "personnel",
+        "attendance",
+        "planning",
+        "leave",
+        "payroll",
+        "ledger",
+        "cash",
+        "reports",
+        "crm",
+        "performance",
+        "aicfo",
+        "forensic",
+        "audit",
+        "documents",
+        "employeeSpace",
         ...commonTabs,
       ];
     case "EMPLOYEE":
       return [
         "employeeSpace",
         "documents",
+        "attendance",
+        "leave",
         ...commonTabs,
       ];
     default:

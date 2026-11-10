@@ -227,6 +227,17 @@ export function invalidateResilientQuery(cacheKey: string): boolean {
 }
 
 /**
+ * Invalidate cached queries by prefix or collection path.
+ */
+export function invalidateResilientQueriesByPrefix(prefix: string): void {
+  for (const key of Array.from(queryMemoryCache.keys())) {
+    if (key.includes(prefix)) {
+      queryMemoryCache.delete(key);
+    }
+  }
+}
+
+/**
  * Resiliently fetch a single document with exponential backoff retry.
  * 1. Checks memory cache.
  * 2. Deduplicates concurrent in-flight requests for the exact same document.

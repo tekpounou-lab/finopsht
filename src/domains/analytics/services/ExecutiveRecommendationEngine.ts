@@ -36,11 +36,12 @@ export class ExecutiveRecommendationEngine {
     }
 
     // 2. Attendance declining recommendation
-    if (snapshot.attendanceRate.currentValue < 90) {
+    const attVal = snapshot.attendanceRate?.currentValue;
+    if (typeof attVal === "number" && !isNaN(attVal) && attVal < 90) {
       recommendations.push({
         id: "rec_attendance_decline",
         title: "Deploy Automated Attendance Prompts",
-        description: `With attendance rates hovering at ${snapshot.attendanceRate.currentValue.toFixed(1)}%, absenteeism controls should be deployed across low-performing departments.`,
+        description: `With attendance rates hovering at ${attVal.toFixed(1)}%, absenteeism controls should be deployed across low-performing departments.`,
         priority: "HIGH",
         targetMetric: "Operational efficiency score",
         estimatedImpact: "+5% staff productivity",
@@ -49,11 +50,12 @@ export class ExecutiveRecommendationEngine {
     }
 
     // 3. Cash reserve warning
-    if (snapshot.cashOnHand.currentValue < 60000) {
+    const cashVal = snapshot.cashOnHand?.currentValue;
+    if (typeof cashVal === "number" && !isNaN(cashVal) && cashVal < 60000) {
       recommendations.push({
         id: "rec_cash_reserve",
         title: "Accelerate Accounts Collections Cycle",
-        description: `Current liquid cash of ${snapshot.cashOnHand.currentValue.toLocaleString()} HTG is thin. Speed up billing collection times and restrict secondary expenses.`,
+        description: `Current liquid cash of ${cashVal.toLocaleString()} HTG is thin. Speed up billing collection times and restrict secondary expenses.`,
         priority: "HIGH",
         targetMetric: "Working Capital Safety",
         estimatedImpact: "+15% liquid buffer",
@@ -82,8 +84,9 @@ export class ExecutiveRecommendationEngine {
     }
 
     // 5. Increase staffing / capacity limits
-    const avgHrs = snapshot.avgHoursWorked.currentValue;
-    if (avgHrs > 45 && snapshot.activeStaff.currentValue < 15) {
+    const avgHrs = snapshot.avgHoursWorked?.currentValue;
+    const staffCount = snapshot.activeStaff?.currentValue;
+    if (typeof avgHrs === "number" && !isNaN(avgHrs) && avgHrs > 45 && typeof staffCount === "number" && staffCount < 15) {
       recommendations.push({
         id: "rec_increase_staffing",
         title: "Initiate Part-Time Resource Onboarding",
@@ -96,9 +99,10 @@ export class ExecutiveRecommendationEngine {
     }
 
     // 6. Review department profitability / high spend
-    if (depts.length > 0) {
+    const expVal = snapshot.expenses?.currentValue;
+    if (depts.length > 0 && typeof expVal === "number" && !isNaN(expVal) && expVal > 0) {
       const sortedDepts = [...depts].sort((a, b) => b.expenses - a.expenses);
-      if (sortedDepts[0].expenses > snapshot.expenses.currentValue * 0.4) {
+      if (sortedDepts[0].expenses > expVal * 0.4) {
         recommendations.push({
           id: "rec_dept_profitability",
           title: `Audit Expenditures in ${sortedDepts[0].departmentName}`,

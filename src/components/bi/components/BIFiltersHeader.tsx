@@ -8,6 +8,10 @@ interface BIFiltersHeaderProps {
   language: string;
   isSimplifiedMode: boolean;
   setIsSimplifiedMode: (val: boolean) => void;
+  accountingBasis?: "CASH" | "ACCRUAL";
+  setAccountingBasis?: (basis: "CASH" | "ACCRUAL") => void;
+  presentationMode?: "SIMPLIFIED" | "EXPERT";
+  setPresentationMode?: (mode: "SIMPLIFIED" | "EXPERT") => void;
   currentRole: Role;
   currentBusiness?: Business;
   branches: Branch[];
@@ -33,6 +37,10 @@ export const BIFiltersHeader: React.FC<BIFiltersHeaderProps> = ({
   language,
   isSimplifiedMode,
   setIsSimplifiedMode,
+  accountingBasis = "CASH",
+  setAccountingBasis,
+  presentationMode = "SIMPLIFIED",
+  setPresentationMode,
   currentRole,
   currentBusiness,
   branches,
@@ -73,42 +81,85 @@ export const BIFiltersHeader: React.FC<BIFiltersHeaderProps> = ({
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
-        {/* Mode Toggle Switch */}
+        {/* Accounting Basis Toggle */}
+        <div className="flex items-center bg-slate-950/80 border border-slate-800/80 p-1 rounded-xl shadow-lg shrink-0" id="bi-accounting-basis-toggle">
+          <button
+            onClick={() => {
+              if (setAccountingBasis) setAccountingBasis("CASH");
+              else setIsSimplifiedMode(true);
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              accountingBasis === "CASH"
+                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-md"
+                : "text-slate-500 hover:text-slate-300 border border-transparent"
+            }`}
+            title="Reconnaissance sur encaissements/décaissements réels de trésorerie"
+          >
+            <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+            💵 Trésorerie (CASH)
+          </button>
+          <button
+            onClick={() => {
+              if (setAccountingBasis) setAccountingBasis("ACCRUAL");
+              else setIsSimplifiedMode(false);
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              accountingBasis === "ACCRUAL"
+                ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shadow-md"
+                : "text-slate-500 hover:text-slate-400 border border-transparent"
+            }`}
+            title="Reconnaissance économique sur exercices et engagements comptables"
+          >
+            <Database className="w-3.5 h-3.5 text-indigo-400" />
+            📈 Engagement (ACCRUAL)
+          </button>
+        </div>
+
+        {/* Presentation Mode Toggle Switch */}
         <div className="flex items-center bg-slate-950/80 border border-slate-800/80 p-1 rounded-xl shadow-lg shrink-0" id="bi-mode-toggle">
           <button
-            onClick={() => setIsSimplifiedMode(true)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+            onClick={() => {
+              if (setPresentationMode) setPresentationMode("SIMPLIFIED");
+              setIsSimplifiedMode(true);
+              if (selectedTxType !== "ALL") setSelectedTxType("ALL");
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
               isSimplifiedMode
-                ? "bg-gradient-to-r from-cyan-500/10 to-teal-500/10 text-cyan-400 border border-cyan-500/30 shadow-md"
+                ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 shadow-md"
                 : "text-slate-500 hover:text-slate-300 border border-transparent"
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            💡 {language === "ht" ? "Mòd Senp" : "Mode Simplifié"}
+            💡 {language === "ht" ? "Mòd Senp" : "Vue Simplifiée"}
           </button>
           <button
-            onClick={() => setIsSimplifiedMode(false)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+            onClick={() => {
+              if (setPresentationMode) setPresentationMode("EXPERT");
+              setIsSimplifiedMode(false);
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
               !isSimplifiedMode
                 ? "bg-slate-800 text-slate-200 border border-slate-700 shadow-md"
                 : "text-slate-500 hover:text-slate-400 border border-transparent"
             }`}
           >
-            <Database className="w-3.5 h-3.5" />
-            📊 {language === "ht" ? "Mòd Ekspè" : "Mode Expert (Finances)"}
+            <Layers className="w-3.5 h-3.5" />
+            📊 {language === "ht" ? "Mòd Ekspè" : "Vue Expert"}
           </button>
         </div>
 
         {/* Global Structural Filters Panel */}
-        <div className="flex flex-wrap items-center gap-3 bg-slate-900/30 border border-slate-850 p-3 rounded-xl shadow" id="bi-filter-panel">
+        <div className="flex flex-wrap items-center gap-3 bg-slate-900/50 border border-slate-800/90 hover:border-cyan-500/30 p-3 rounded-xl shadow-lg backdrop-blur-sm transition-all" id="bi-filter-panel">
+          {/* Branch Select */}
           <div className="flex items-center gap-1.5" id="branch-select-box">
-            <Building className="w-3.5 h-3.5 text-slate-500" />
+            <Building className="w-3.5 h-3.5 text-cyan-400" />
             <select
               id="bi-branch-selector"
               value={selectedBranchId}
               onChange={(e) => setSelectedBranchId(e.target.value)}
               disabled={currentRole === "MANAGER"}
-              className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-200"
+              aria-label={allBranchesLabel}
+              className="bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 rounded-lg px-2.5 py-1 text-[11px] text-slate-200 font-medium outline-none transition cursor-pointer"
             >
               <option value="ALL">{allBranchesLabel}</option>
               {branches
@@ -121,13 +172,15 @@ export const BIFiltersHeader: React.FC<BIFiltersHeaderProps> = ({
             </select>
           </div>
 
+          {/* Department Select */}
           <div className="flex items-center gap-1.5" id="dept-select-box">
-            <Layers className="w-3.5 h-3.5 text-slate-500" />
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
             <select
               id="bi-dept-selector"
               value={selectedDeptId}
               onChange={(e) => setSelectedDeptId(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-200"
+              aria-label={allDepartmentsLabel}
+              className="bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 rounded-lg px-2.5 py-1 text-[11px] text-slate-200 font-medium outline-none transition cursor-pointer"
             >
               <option value="ALL">{allDepartmentsLabel}</option>
               {departments.map((d, _i) => (
@@ -138,14 +191,16 @@ export const BIFiltersHeader: React.FC<BIFiltersHeaderProps> = ({
             </select>
           </div>
 
+          {/* Transaction Type Select (Expert Mode Only) */}
           {!isSimplifiedMode && (
             <div className="flex items-center gap-1.5" id="tx-type-select-box">
-              <DollarSign className="w-3.5 h-3.5 text-slate-500" />
+              <DollarSign className="w-3.5 h-3.5 text-amber-400" />
               <select
                 id="bi-tx-type-selector"
                 value={selectedTxType}
                 onChange={(e) => setSelectedTxType(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-200 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition outline-none"
+                aria-label={transactionTypeLabel}
+                className="bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 rounded-lg px-2.5 py-1 text-[11px] text-slate-200 font-medium outline-none transition cursor-pointer"
               >
                 <option value="ALL">{transactionTypeLabel} : {language === "ht" ? "Tout" : language === "en" ? "All" : "Tous"}</option>
                 <option value="INCOME">{language === "ht" ? "Revni (INCOME)" : language === "en" ? "Revenue" : "Revenus"}</option>
@@ -159,23 +214,81 @@ export const BIFiltersHeader: React.FC<BIFiltersHeaderProps> = ({
           )}
 
           {/* Date range inputs */}
-          <div className="flex items-center gap-1 font-mono text-[11px]" id="bi-date-range-box">
+          <div className="flex items-center gap-1 font-mono text-[11px] text-slate-300" id="bi-date-range-box">
             <input
               id="bi-start-date"
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 outline-none focus:border-cyan-500 text-slate-300"
+              aria-label="Date de début"
+              className="bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 rounded-lg px-2 py-0.5 outline-none text-slate-200 text-[11px] transition"
             />
-            <span>-</span>
+            <span className="text-slate-500 font-bold">-</span>
             <input
               id="bi-end-date"
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 outline-none focus:border-cyan-500 text-slate-300"
+              aria-label="Date de fin"
+              className="bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 rounded-lg px-2 py-0.5 outline-none text-slate-200 text-[11px] transition"
             />
           </div>
+
+          {/* Quick Date Preset Shortcuts */}
+          <div className="flex items-center gap-1 text-[10px] font-mono border-l border-slate-800 pl-2">
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                setStartDate(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0]);
+                setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0]);
+              }}
+              className="px-2 py-0.5 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
+              {language === "fr" ? "Ce Mois" : language === "ht" ? "Mwa Sa" : "Month"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                setEndDate(now.toISOString().split("T")[0]);
+                setStartDate(new Date(now.getTime() - 30 * 86400000).toISOString().split("T")[0]);
+              }}
+              className="px-2 py-0.5 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
+              30D
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                setStartDate(new Date(now.getFullYear(), 0, 1).toISOString().split("T")[0]);
+                setEndDate(new Date(now.getFullYear(), 11, 31).toISOString().split("T")[0]);
+              }}
+              className="px-2 py-0.5 rounded bg-slate-800/60 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
+              {language === "fr" ? "Année" : language === "ht" ? "Ane" : "Year"}
+            </button>
+          </div>
+
+          {/* Active Filter Counter & Reset Button */}
+          {(selectedBranchId !== "ALL" || selectedDeptId !== "ALL" || selectedTxType !== "ALL" || startDate || endDate) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedBranchId("ALL");
+                setSelectedDeptId("ALL");
+                setSelectedTxType("ALL");
+                setStartDate("");
+                setEndDate("");
+              }}
+              title="Réinitialiser tous les filtres"
+              className="ml-auto px-2 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+              {language === "ht" ? "Nwaye filte" : "Réinitialiser"}
+            </button>
+          )}
         </div>
       </div>
 

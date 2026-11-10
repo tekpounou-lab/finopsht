@@ -1,9 +1,14 @@
-import { collection, query, where, getDocs, doc, writeBatch, serverTimestamp, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, writeBatch, serverTimestamp } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../../lib/firebase";
 import { LedgerTransaction } from "../../types";
 import { BusinessSettingsRepository } from "../../repositories/organization";
 import { ForensicLogRepository } from "../../repositories/ForensicLogRepository";
 import { EventBus } from "../../modules/runtime/EventBus";
+import { 
+  isOrphanTransaction, 
+  sanitizeAndEnrichLedgerTransaction, 
+  TransactionSanitizationContext 
+} from "../AccountingEngine";
 
 export interface LedgerOrphanRemediationReport {
   businessId: string;
@@ -19,8 +24,27 @@ export interface LedgerOrphanRemediationReport {
   details: {
     fixedTransactions: Array<{
       id: string;
-      before: { branchId?: string; departmentId?: string; branch_id?: string; department_id?: string };
-      after: { branchId: string; departmentId: string; branch_id: string; department_id: string };
+      before: { 
+        branchId?: string; 
+        departmentId?: string; 
+        branch_id?: string; 
+        department_id?: string;
+        costCenterId?: string;
+        employeeId?: string;
+        debit_account?: string;
+        credit_account?: string;
+      };
+      after: { 
+        branchId: string; 
+        departmentId: string; 
+        branch_id: string; 
+        department_id: string;
+        costCenterId?: string;
+        employeeId?: string;
+        employeeName?: string;
+        debit_account?: string;
+        credit_account?: string;
+      };
     }>;
   };
 }
@@ -29,6 +53,7 @@ export interface RemediationOptions {
   businessId: string;
   defaultBranchId?: string;
   defaultDepartmentId?: string;
+  context?: TransactionSanitizationContext;
   actor?: {
     uid: string;
     email?: string;
@@ -40,20 +65,10 @@ export interface RemediationOptions {
 
 export class LedgerOrphanRemediationService {
   /**
-   * Checks if a ledger transaction is an orphan in terms of structural attribution
-   * (missing branchId/branch_id or departmentId/department_id).
+   * Checks if a ledger transaction is an orphan using the canonical AccountingEngine predicate.
    */
   public static isOrphan(tx: Partial<LedgerTransaction>): boolean {
-    const hasBranchOrCostCenter = Boolean(
-      (tx.branchId && tx.branchId.trim() !== "" && tx.branchId !== "none" && tx.branchId !== "ORPHAN" && tx.branchId !== "UNASSIGNED") ||
-      (tx.branch_id && tx.branch_id.trim() !== "" && tx.branch_id !== "none" && tx.branch_id !== "ORPHAN" && tx.branch_id !== "UNASSIGNED") ||
-      ((tx as any).cost_center_id && (tx as any).cost_center_id !== "none" && (tx as any).cost_center_id !== "ORPHAN" && (tx as any).cost_center_id !== "UNASSIGNED") ||
-      ((tx as any).costCenterId && (tx as any).costCenterId !== "none" && (tx as any).costCenterId !== "ORPHAN" && (tx as any).costCenterId !== "UNASSIGNED")
-    );
-
-    const hasAccounts = Boolean(tx.debit_account && tx.credit_account);
-
-    return !hasBranchOrCostCenter || !hasAccounts;
+    return isOrphanTransaction(tx);
   }
 
   /**
@@ -68,14 +83,21 @@ export class LedgerOrphanRemediationService {
     let transactions: LedgerTransaction[] = [];
 
     if (customTransactions && customTransactions.length > 0) {
-      transactions = customTransactions.filter((tx) => tx.business_id === businessId);
+      transactions = customTransactions.filter((tx) => tx.business_id === businessId || (tx as any).businessId === businessId);
     } else {
       try {
-        const q = query(
+        let q = query(
           collection(db, "ledger_transactions"),
           where("business_id", "==", businessId)
         );
-        const snap = await getDocs(q);
+        let snap = await getDocs(q);
+        if (snap.empty) {
+          q = query(
+            collection(db, "ledger_transactions"),
+            where("businessId", "==", businessId)
+          );
+          snap = await getDocs(q);
+        }
         transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() } as LedgerTransaction));
       } catch (error) {
         handleFirestoreError(error, OperationType.LIST, "ledger_transactions");
@@ -147,21 +169,28 @@ export class LedgerOrphanRemediationService {
 
     const { defaultBranchId, defaultDepartmentId } = await this.resolveDefaults(
       businessId,
-      overrideBranch,
-      overrideDept
+      overrideBranch || options.context?.defaultBranchId || (options.context?.branches && options.context.branches[0]?.id),
+      overrideDept || options.context?.defaultDepartmentId || (options.context?.departments && options.context.departments[0]?.id)
     );
 
     // 1. Gather all transactions to inspect
     let allTransactions: LedgerTransaction[] = [];
     if (customTransactions) {
-      allTransactions = customTransactions.filter((tx) => tx.business_id === businessId);
+      allTransactions = customTransactions.filter((tx) => tx.business_id === businessId || (tx as any).businessId === businessId);
     } else {
       try {
-        const q = query(
+        let q = query(
           collection(db, "ledger_transactions"),
           where("business_id", "==", businessId)
         );
-        const snap = await getDocs(q);
+        let snap = await getDocs(q);
+        if (snap.empty) {
+          q = query(
+            collection(db, "ledger_transactions"),
+            where("businessId", "==", businessId)
+          );
+          snap = await getDocs(q);
+        }
         allTransactions = snap.docs.map((d) => ({ id: d.id, ...d.data() } as LedgerTransaction));
       } catch (error) {
         handleFirestoreError(error, OperationType.LIST, "ledger_transactions");
@@ -179,22 +208,15 @@ export class LedgerOrphanRemediationService {
     const updatedTransactions: Array<{ id: string; data: Partial<LedgerTransaction> }> = [];
 
     for (const orphan of orphans) {
-      const beforeBranch = orphan.branchId || orphan.branch_id;
-      const beforeDept = orphan.departmentId || orphan.department_id;
-
-      const targetBranch = beforeBranch && beforeBranch !== "none" && beforeBranch !== "ORPHAN" && beforeBranch !== "UNASSIGNED"
-        ? beforeBranch
-        : defaultBranchId;
-
-      const targetDept = beforeDept && beforeDept !== "none" && beforeDept !== "ORPHAN" && beforeDept !== "UNASSIGNED"
-        ? beforeDept
-        : defaultDepartmentId;
+      const sanitized = sanitizeAndEnrichLedgerTransaction(orphan, businessId, {
+        ...options.context,
+        defaultBranchId,
+        defaultDepartmentId,
+        defaultCostCenter: defaultBranchId
+      });
 
       const patchData: Partial<LedgerTransaction> = {
-        branchId: targetBranch,
-        branch_id: targetBranch,
-        departmentId: targetDept,
-        department_id: targetDept,
+        ...sanitized,
         updated_at: now,
         metadata: {
           ...(orphan.metadata || {}),
@@ -213,13 +235,22 @@ export class LedgerOrphanRemediationService {
           branchId: orphan.branchId,
           departmentId: orphan.departmentId,
           branch_id: orphan.branch_id,
-          department_id: orphan.department_id
+          department_id: orphan.department_id,
+          costCenterId: (orphan as any).cost_center_id || (orphan as any).costCenterId,
+          employeeId: orphan.employeeId || (orphan as any).employee_id,
+          debit_account: orphan.debit_account,
+          credit_account: orphan.credit_account
         },
         after: {
-          branchId: targetBranch,
-          departmentId: targetDept,
-          branch_id: targetBranch,
-          department_id: targetDept
+          branchId: sanitized.branchId,
+          departmentId: sanitized.departmentId,
+          branch_id: sanitized.branch_id,
+          department_id: sanitized.department_id,
+          costCenterId: sanitized.costCenterId,
+          employeeId: sanitized.employeeId,
+          employeeName: sanitized.employeeName,
+          debit_account: sanitized.debit_account,
+          credit_account: sanitized.credit_account
         }
       });
 
@@ -237,10 +268,10 @@ export class LedgerOrphanRemediationService {
 
           for (const item of chunk) {
             const ref = doc(db, "ledger_transactions", item.id);
-            batch.update(ref, {
+            batch.set(ref, {
               ...item.data,
               _server_timestamp: serverTimestamp()
-            });
+            }, { merge: true });
           }
 
           await batch.commit();

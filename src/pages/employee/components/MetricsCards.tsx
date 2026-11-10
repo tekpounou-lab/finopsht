@@ -16,10 +16,9 @@ export const MetricsCards: React.FC<MetricsCardsProps> = ({
   contract,
   tw,
 }) => {
-  // Analytical variables populated by EmployeeAnalyticsSnapshot (scorecard) if exists, fallback nicely
-  const attendanceRate = scorecard ? scorecard.attendanceConsistencyScore : 100;
-  const latenessRate = scorecard ? scorecard.latenessScore : 0;
-  const totalHoursWorked = scorecard ? scorecard.totalHours : 0;
+  const attendanceRate: number | null = scorecard ? (scorecard.attendanceConsistencyScore ?? null) : null;
+  const latenessRate = scorecard ? (scorecard.latenessScore ?? 0) : 0;
+  const totalHoursWorked = scorecard ? (scorecard.totalHours ?? 0) : 0;
   
   // Format currency
   const formatCurrency = (amount: number) => {
@@ -53,7 +52,7 @@ export const MetricsCards: React.FC<MetricsCardsProps> = ({
           
           <div className="flex items-baseline gap-1">
             <span className="text-4xl font-black font-mono tracking-tighter text-slate-100">
-              {attendanceRate.toFixed(1)}%
+              {attendanceRate !== null ? `${attendanceRate.toFixed(1)}%` : "N/D"}
             </span>
             <span className="text-xs font-mono text-slate-500 ml-2">assiduité mois</span>
           </div>

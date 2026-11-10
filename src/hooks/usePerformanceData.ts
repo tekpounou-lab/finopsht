@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { PerformanceRepository } from "../repositories/PerformanceRepository";
+import { CurrencyRateRepository } from "../repositories/CurrencyRateRepository";
 import {
   PICFilters,
   PICPeriod,
@@ -76,11 +77,13 @@ export function usePerformanceData(businessIdProp?: string) {
     searchQuery: "",
   });
 
+  const [normalizationContext, setNormalizationContext] = useState<any>({});
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshIndex, setRefreshIndex] = useState<number>(0);
 
-  const { setFilters: setExecutiveFilters } = useExecutiveFilters();
+  const { filters: execFilters, setFilters: setExecutiveFilters } = useExecutiveFilters();
 
   // Harmonize ExecutiveFilterContext whenever PIC filters update
   useEffect(() => {
@@ -108,6 +111,37 @@ export function usePerformanceData(businessIdProp?: string) {
     filters.endDate,
     setExecutiveFilters,
   ]);
+
+  // Fetch normalization grids for the active period (including unbounded "all" date selections)
+  useEffect(() => {
+    let active = true;
+    setNormalizationContext({});
+    const fetchGrids = async () => {
+      if (!businessId) return;
+      try {
+        let normStartDate = "2020-01-01";
+        if (filters.startDate) {
+          const s = new Date(filters.startDate);
+          if (!isNaN(s.getTime())) {
+            s.setMonth(s.getMonth() - 1);
+            normStartDate = s.toISOString().split("T")[0];
+          }
+        }
+        const normEndDate = filters.endDate || new Date().toISOString().split("T")[0];
+
+        const grids = await CurrencyRateRepository.getRatesForPeriod(businessId, normStartDate, normEndDate);
+        if (active) {
+          setNormalizationContext(grids);
+        }
+      } catch (err) {
+        console.warn("[usePerformanceData] Failed to fetch historical rate grids:", err);
+      }
+    };
+    fetchGrids();
+    return () => {
+      active = false;
+    };
+  }, [businessId, filters.startDate, filters.endDate]);
 
   const [rawDataSet, setRawDataSet] = useState<RawPerformanceDataSet>({
     employees: [],
@@ -182,9 +216,36 @@ export function usePerformanceData(businessIdProp?: string) {
     setRefreshIndex((prev) => prev + 1);
   }, []);
 
-  // Primary Data Fetching Effect with full filter propagation
+  // Helper to merge arrays deduplicating by id
+  const mergeById = useCallback(<T extends { id?: string }>(fetched: T[] = [], context: T[] = []): T[] => {
+    const map = new Map<string, T>();
+    (context || []).forEach((item) => {
+      if (item?.id) map.set(item.id, item);
+    });
+    (fetched || []).forEach((item) => {
+      if (item?.id) {
+        const existing = map.get(item.id);
+        map.set(item.id, existing ? { ...existing, ...item } : item);
+      }
+    });
+    return Array.from(map.values());
+  }, []);
+
+  // Primary Data Fetching Effect: executes ONLY on tenant switch or explicit manual refresh.
+  // In-memory filter changes do NOT re-query Firestore, as selectors handle filtering purely in memory.
   useEffect(() => {
     let isMounted = true;
+
+    // Strict Tenant Isolation: instantly clear dataset on tenant switch to prevent any cross-tenant data bleed
+    setRawDataSet({
+      employees: [],
+      transactions: [],
+      payrollRecords: [],
+      attendanceRecords: [],
+      branches: [],
+      departments: [],
+      snapshots: [],
+    });
 
     async function loadData() {
       if (!businessId) {
@@ -192,29 +253,14 @@ export function usePerformanceData(businessIdProp?: string) {
         return;
       }
 
-      console.info(`[PIC] [usePerformanceData] Triggering data fetch for business ${businessId} with filters:`, filters);
+      console.info(`[PIC] [usePerformanceData] Executing Firestore read for business ${businessId}`);
       setIsLoading(true);
       setError(null);
 
       try {
-        const fetchedData = await PerformanceRepository.getPerformanceData(businessId, filters);
+        const fetchedData = await PerformanceRepository.getPerformanceData(businessId);
         
         if (isMounted) {
-          // Merge fetched data with live context using deduplication by ID
-          const mergeById = <T extends { id?: string }>(fetched: T[], context: T[] = []): T[] => {
-            const map = new Map<string, T>();
-            (context || []).forEach((item) => {
-              if (item?.id) map.set(item.id, item);
-            });
-            (fetched || []).forEach((item) => {
-              if (item?.id) {
-                const existing = map.get(item.id);
-                map.set(item.id, existing ? { ...existing, ...item } : item);
-              }
-            });
-            return Array.from(map.values());
-          };
-
           const merged: RawPerformanceDataSet = {
             employees: mergeById(fetchedData.employees, ctxEmployees),
             transactions: mergeById(fetchedData.transactions, ctxTxs),
@@ -260,35 +306,62 @@ export function usePerformanceData(businessIdProp?: string) {
     return () => {
       isMounted = false;
     };
+  }, [businessId, refreshIndex]);
+
+  // Synchronize live updates from BusinessContext into rawDataSet WITHOUT re-querying Firestore
+  useEffect(() => {
+    if (!businessId || (business?.id && business.id !== businessId)) return;
+    setRawDataSet((prev) => {
+      // If the dataset is empty, wait for primary loadData to complete
+      if (prev.employees.length === 0 && prev.transactions.length === 0 && (ctxEmployees.length === 0 && ctxTxs.length === 0)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        employees: mergeById(prev.employees, ctxEmployees),
+        transactions: mergeById(prev.transactions, ctxTxs),
+        payrollRecords: mergeById(prev.payrollRecords, ctxPayrolls),
+        attendanceRecords: mergeById(prev.attendanceRecords, ctxAtt),
+        branches: mergeById(prev.branches, ctxBranches),
+        departments: mergeById(prev.departments, ctxDepartments),
+      };
+    });
   }, [
     businessId,
-    filters.period,
-    filters.startDate,
-    filters.endDate,
-    filters.branchId,
-    filters.departmentId,
-    filters.metricType,
-    refreshIndex,
+    business?.id,
     ctxEmployees,
     ctxTxs,
     ctxPayrolls,
     ctxAtt,
     ctxBranches,
     ctxDepartments,
+    mergeById,
   ]);
+
+  const effectiveFilters: PICFilters = useMemo(
+    () => ({
+      ...filters,
+      accountingBasis:
+        execFilters?.accountingBasis ||
+        (execFilters as any)?.accountingMode ||
+        filters.accountingBasis ||
+        "CASH",
+    }),
+    [filters, execFilters?.accountingBasis, (execFilters as any)?.accountingMode]
+  );
 
   // Pure memoized metrics selection with active filter propagation
   const simplifiedMetrics: SimplifiedMetrics = useMemo(() => {
-    return selectSimplifiedMetrics(rawDataSet, filters);
-  }, [rawDataSet, filters]);
+    return selectSimplifiedMetrics(rawDataSet, effectiveFilters, normalizationContext);
+  }, [rawDataSet, effectiveFilters, normalizationContext]);
 
   const expertMetrics: ExpertMetrics = useMemo(() => {
-    return selectExpertMetrics(rawDataSet, filters);
-  }, [rawDataSet, filters]);
+    return selectExpertMetrics(rawDataSet, effectiveFilters, normalizationContext);
+  }, [rawDataSet, effectiveFilters, normalizationContext]);
 
   const cashBasisMetrics: ExpertMetrics = useMemo(() => {
-    return selectCashBasisExpertMetrics(rawDataSet, filters);
-  }, [rawDataSet, filters]);
+    return selectCashBasisExpertMetrics(rawDataSet, effectiveFilters, normalizationContext);
+  }, [rawDataSet, effectiveFilters, normalizationContext]);
 
   const branches = useMemo(() => {
     const list = [...(rawDataSet.branches.length > 0 ? rawDataSet.branches : (ctxBranches || []))];
@@ -327,7 +400,7 @@ export function usePerformanceData(businessIdProp?: string) {
   }, [rawDataSet, ctxDepartments, businessId]);
 
   return {
-    filters,
+    filters: effectiveFilters,
     setPeriod,
     setDateRange,
     setBranchId,

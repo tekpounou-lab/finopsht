@@ -19,6 +19,7 @@ export { StructuresTab } from "./tabs/StructuresTab";
 export { AdvancesTab } from "./tabs/AdvancesTab";
 export { AdjustmentsTab } from "./tabs/AdjustmentsTab";
 export { PayslipsTab } from "./tabs/PayslipsTab";
+export { EmployeeReceivableRecoveryPanel } from "./components/EmployeeReceivableRecoveryPanel";
 export { usePayrollRuns } from "./hooks/usePayrollRuns";
 export { usePayrollCalculation } from "./hooks/usePayrollCalculation";
 export { usePayrollUIState } from "./hooks/usePayrollUIState";

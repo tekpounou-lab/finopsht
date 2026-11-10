@@ -86,7 +86,7 @@ export const PICSimplifiedView: React.FC<PICSimplifiedViewProps> = ({
           </div>
           <div className="mt-3">
             <div className="text-2xl font-bold text-slate-100">
-              {metrics.attendanceRate}%
+              {metrics.attendanceRate !== null && metrics.attendanceRate !== undefined ? `${metrics.attendanceRate}%` : "N/D"}
             </div>
             <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
               <span className="text-emerald-400 font-medium">{metrics.averageHoursWorked}h / j</span>
@@ -162,7 +162,7 @@ export const PICSimplifiedView: React.FC<PICSimplifiedViewProps> = ({
               </div>
               <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
                 <span className="font-semibold text-emerald-300">Stabilité Opérationnelle :</span> Taux d'assiduité de{" "}
-                {metrics.attendanceRate}% avec un turnover contenu à {metrics.turnoverRate}%.
+                {metrics.attendanceRate !== null && metrics.attendanceRate !== undefined ? `${metrics.attendanceRate}%` : "N/D"} avec un turnover contenu à {metrics.turnoverRate}%.
               </div>
             </div>
           </div>

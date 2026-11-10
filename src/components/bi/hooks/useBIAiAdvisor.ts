@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { safeFetchJson } from "../../../utils/safeFetch";
 import { FinancialRatioEngine } from "../../../services/cfo/FinancialRatioEngine";
-import { getLocalIP, generateSignature } from "../../../data";
+import { getLocalIP } from "../../../data";
 import { finopsEventOrchestrator } from "../../../services/finopsEventOrchestrator";
 import { Business, Branch, Employee, LedgerTransaction, AttendanceRecord, PayrollRecord, ForensicLog, Role } from "../../../types";
+import { useOptionalAuth } from "../../../hooks/useAuth";
+import { ForensicLogRepository } from "../../../repositories/ForensicLogRepository";
 
 interface UseBIAiAdvisorParams {
   currentBusiness?: Business;
@@ -40,26 +42,45 @@ export function useBIAiAdvisor({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState<any | null>(null);
 
+  const authState = useOptionalAuth();
+  const authUser = authState?.user || null;
+  const authIdentity = authState?.identity || null;
+  const authDbUser = authState?.dbUser || null;
+  const authDbEmployee = authState?.dbEmployee || null;
+
   const handleGenerateAiReport = async () => {
     if (!currentBusiness) return;
     setAiLoading(true);
     setAiReport(null);
 
-    // Audit action trigger
-    const forecastLog: ForensicLog = {
-      id: "log_" + Math.random().toString(36).substring(2, 9),
+    // Audit action trigger with verified identity
+    const actorUid = authUser?.uid || "SYSTEM";
+    const resolvedUserName =
+      authIdentity?.displayName ||
+      authIdentity?.userProfile?.name ||
+      authIdentity?.employee?.name ||
+      authDbEmployee?.name ||
+      authDbUser?.name ||
+      authUser?.displayName ||
+      authUser?.email ||
+      actorUid;
+
+    const forecastLog = await ForensicLogRepository.createAndSignLog({
       timestamp: new Date().toISOString(),
-      userId: currentRole === "OWNER" ? "e1" : "e2",
-      userName: currentRole === "OWNER" ? "Manoel Lhérisson" : "Fabienne Jean-Gilles",
+      actorId: actorUid,
+      userId: actorUid,
+      userName: resolvedUserName,
       userRole: currentRole,
+      userEmail: authUser?.email || undefined,
       business_id: currentBusiness.id,
       action: "GENERATE_AI_REPORT",
       beforeState: JSON.stringify({ query: aiQuery }),
       afterState: JSON.stringify({ triggered: true, scope: selectedBranchId }),
+      details: `Generated AI Advisor report for branch ${selectedBranchId || "ALL"} with query: ${aiQuery || "DEFAULT_OPERATIONAL"}`,
       ipAddress: getLocalIP(),
-      userAgent: navigator.userAgent,
-      signature: generateSignature({ action: "GENERATE_AI_REPORT", timestamp: new Date().toISOString() }),
-    };
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "UNKNOWN",
+      severity: "AUDIT_GRADE",
+    });
     onAddForensicLog(forecastLog);
 
     const payload = {

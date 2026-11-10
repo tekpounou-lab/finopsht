@@ -38,6 +38,8 @@ describe("Phase 10E.2 — Controlled Golden Dataset & KPI SSOT Verification", ()
       hireDate: "2025-01-01",
       baseSalary: 25000,
       is_active: true,
+      contractualHoursPerWeek: 40,
+      workingDaysPerWeek: 5,
     } as any,
     {
       id: "emp_2",
@@ -51,6 +53,8 @@ describe("Phase 10E.2 — Controlled Golden Dataset & KPI SSOT Verification", ()
       hireDate: "2025-01-01",
       baseSalary: 25000,
       is_active: true,
+      contractualHoursPerWeek: 40,
+      workingDaysPerWeek: 5,
     } as any,
   ];
 

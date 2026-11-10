@@ -16,6 +16,7 @@ import {
 } from "../../types";
 import { AttendanceRepository } from "../../repositories/AttendanceRepository";
 import { getDeviceLocalDate, getDeviceLocalTime } from "../../lib/attendanceSSOT";
+import { AnalyticsEngine, resolveEmployeeContractualHours } from "../../domains/analytics/services/AnalyticsEngine";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -78,6 +79,7 @@ export interface MyWorkspaceProps {
   onAddAttendanceSim?: (rec: AttendanceRecord) => void;
   onAddLeaveRequestSim?: (leave: LeaveRecord) => void;
   language?: "fr" | "ht" | "en";
+  businessSettings?: any;
 }
 
 const defaultEmployee: Employee = {
@@ -120,6 +122,7 @@ export function MyWorkspace({
   onAddAttendanceSim,
   onAddLeaveRequestSim,
   language = "fr",
+  businessSettings,
 }: MyWorkspaceProps) {
   const [activeTab, setActiveTab] = useState<
     | "dashboard"
@@ -311,33 +314,85 @@ export function MyWorkspace({
       (t as any).userId === resolvedEmployee.id
   );
 
-  // Dynamic Scorecard & KPI Projections for Current Month
+  // Dynamic Scorecard & KPI Projections via AnalyticsEngine SSOT
   const currentDate = new Date();
-  const currentYearStr = String(currentDate.getFullYear());
-  const currentMonthNum = String(currentDate.getMonth() + 1).padStart(2, "0");
-  const currentMonthPrefix = `${currentYearStr}-${currentMonthNum}`; // e.g. "2026-07"
-  const currentMonthLabel = currentDate.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }).toUpperCase(); // "JUILLET 2026"
-  const currentDayLabel = currentDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); // "31 juillet 2026"
+  const currentYear = currentDate.getFullYear();
+  const currentMonthIdx = currentDate.getMonth();
+  const currentYearStr = String(currentYear);
+  const currentMonthNum = String(currentMonthIdx + 1).padStart(2, "0");
+  const currentMonthPrefix = `${currentYearStr}-${currentMonthNum}`;
+  const currentMonthLabel = currentDate.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }).toUpperCase();
+  const currentDayLabel = currentDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const monthStartDate = `${currentYearStr}-${currentMonthNum}-01`;
+  const lastDayOfMonth = new Date(currentYear, currentMonthIdx + 1, 0).getDate();
+  const monthEndDate = `${currentYearStr}-${currentMonthNum}-${pad2(lastDayOfMonth)}`;
 
   const currentMonthAttendance = myAttendance.filter((a) => a.date && a.date.startsWith(currentMonthPrefix));
-  const activeAttendanceSet = currentMonthAttendance.length > 0 ? currentMonthAttendance : myAttendance;
+  let evalStartDate = monthStartDate;
+  let evalEndDate = monthEndDate;
+  if (currentMonthAttendance.length === 0 && myAttendance.length > 0) {
+    const validDates = myAttendance
+      .map((a) => (a.date ? String(a.date).split("T")[0] : ""))
+      .filter(Boolean)
+      .sort();
+    if (validDates.length > 0) {
+      const [yStr, mStr] = validDates[validDates.length - 1].split("-");
+      const yNum = parseInt(yStr, 10);
+      const mNum = parseInt(mStr, 10);
+      if (!isNaN(yNum) && !isNaN(mNum)) {
+        const ld = new Date(yNum, mNum, 0).getDate();
+        evalStartDate = `${yStr}-${mStr}-01`;
+        evalEndDate = `${yStr}-${mStr}-${pad2(ld)}`;
+      }
+    }
+  }
 
-  const totalWorked = activeAttendanceSet.reduce((acc, curr) => acc + (curr.realHours || (curr as any).workedHours || 8), 0);
-  const totalDays = activeAttendanceSet.length;
-  const totalLates = activeAttendanceSet.filter((a) => a.status === "LATE" || ((a as any).latenessMinutes && (a as any).latenessMinutes > 0)).length;
-  const latenessRate = totalDays > 0 ? (totalLates / totalDays) * 100 : 0;
-  const attendanceConsistencyScore = totalDays > 0 ? Math.max(0, 100 - latenessRate) : 100;
+  const effectiveSettings = businessSettings || (identity?.business as any)?.settings;
 
-  const currentMonthTransactions = myTransactions.filter((t) => (t.date && t.date.startsWith(currentMonthPrefix)) || ((t as any).createdAt && String((t as any).createdAt).startsWith(currentMonthPrefix)));
-  const activeTransactionsSet = currentMonthTransactions.length > 0 ? currentMonthTransactions : myTransactions;
-  const totalCommissions = activeTransactionsSet.reduce((acc, curr) => acc + ((curr as any).commission || 0), 0);
+  const empSnapshot = useMemo(() => {
+    const contractsForSnapshot = activeContract
+      ? [activeContract, ...(employeeContracts || []).filter((c) => c.id !== activeContract.id)]
+      : employeeContracts || [];
+    return AnalyticsEngine.generateSnapshot({
+      period: "CUSTOM",
+      customRange: { startDate: evalStartDate, endDate: evalEndDate },
+      employees: [resolvedEmployee],
+      transactions: myTransactions,
+      attendanceLogs: myAttendance,
+      payrollRecords: myPayroll,
+      branches,
+      departments,
+      contracts: contractsForSnapshot,
+      businessId: resolvedEmployee.business_id || identity?.business?.id || "BIZ_MAIN",
+      language: language as "fr" | "ht" | "en",
+      businessSettings: effectiveSettings,
+    });
+  }, [
+    evalStartDate,
+    evalEndDate,
+    resolvedEmployee,
+    myTransactions,
+    myAttendance,
+    myPayroll,
+    branches,
+    departments,
+    activeContract,
+    employeeContracts,
+    identity?.business?.id,
+    language,
+    effectiveSettings,
+  ]);
+
+  const ssotScorecard = empSnapshot.employeeScorecards[0];
 
   const computedScorecard = {
-    attendanceConsistencyScore,
-    latenessScore: latenessRate,
-    totalHours: totalWorked,
-    commissions: totalCommissions,
-    underperformanceSignal: latenessRate > 20,
+    attendanceConsistencyScore: ssotScorecard ? ssotScorecard.attendanceConsistencyScore : null,
+    latenessScore: ssotScorecard ? ssotScorecard.latenessScore : 0,
+    totalHours: ssotScorecard ? ssotScorecard.totalHours : 0,
+    commissions: ssotScorecard ? ssotScorecard.commissions : 0,
+    underperformanceSignal: ssotScorecard ? ssotScorecard.underperformanceSignal : false,
     currentMonthLabel,
     currentDayLabel,
   };
@@ -356,7 +411,13 @@ export function MyWorkspace({
       const timeStr = getDeviceLocalTime(now);
 
       if (!todayRecord) {
-        // Create new check-in
+        const empHoursRes = resolveEmployeeContractualHours(
+          resolvedEmployee,
+          activeContract,
+          effectiveSettings
+        );
+        const resolvedPlannedHours = empHoursRes.dailyHours ?? 0;
+
         const newRecord: AttendanceRecord = {
           id: `ATT-${resolvedEmployee.id}-${todayStr}`,
           employeeId: resolvedEmployee.id,
@@ -367,7 +428,7 @@ export function MyWorkspace({
           date: todayStr,
           checkIn: timeStr,
           checkOut: null,
-          plannedHours: 8,
+          plannedHours: resolvedPlannedHours,
           realHours: 0,
           variance: 0,
           status: "NORMAL",
@@ -377,11 +438,19 @@ export function MyWorkspace({
         onAddAttendanceSim?.(newRecord);
         toast.success(`Pointage d'entrée enregistré à ${timeStr}`);
       } else if (!todayRecord.checkOut) {
-        // Clock out
+        const [h1, m1] = String(todayRecord.checkIn || "").split(":").map(Number);
+        const [h2, m2] = String(timeStr || "").split(":").map(Number);
+        const mins1 = !isNaN(h1) ? h1 * 60 + (m1 || 0) : NaN;
+        const mins2 = !isNaN(h2) ? h2 * 60 + (m2 || 0) : NaN;
+        const computedRealHours =
+          !isNaN(mins1) && !isNaN(mins2) && mins2 > mins1
+            ? Number(((mins2 - mins1) / 60).toFixed(2))
+            : (todayRecord.plannedHours || 0);
         const updatedRecord: AttendanceRecord = {
           ...todayRecord,
           checkOut: timeStr,
-          realHours: 8,
+          realHours: computedRealHours,
+          variance: Number((computedRealHours - (todayRecord.plannedHours || 0)).toFixed(2)),
         };
 
         await AttendanceRepository.saveRecord(updatedRecord, { uid: resolvedEmployee.id, name: resolvedEmployee.name, role: resolvedEmployee.role });

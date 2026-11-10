@@ -57,7 +57,13 @@ export const EditCycleModal: React.FC<EditCycleModalProps> = ({
     }
   }, [startDate, endDate, isAutoName]);
 
-  const activeEmployees = employees.filter((e) => e.status === "ACTIVE" || !e.status);
+  const activeEmployees = employees.filter((e) => {
+    const stUpper = (e.status || "").toString().toUpperCase();
+    const isNotInactive = stUpper !== "INACTIVE" && stUpper !== "TERMINATED" && stUpper !== "SUSPENDED" && stUpper !== "ARCHIVED";
+    const isStatusActive = stUpper === "ACTIVE" || stUpper === "ONBOARDING" || stUpper === "PENDING" || !e.status;
+    const isFlagActive = (e as any).isActive !== false && (e as any).is_active !== false;
+    return (isStatusActive || isFlagActive) && isNotInactive;
+  });
 
   const toggleEmployeeInclusion = (empId: string) => {
     console.debug(`[EditCycleModal] Toggling employee inclusion: ${empId}`);

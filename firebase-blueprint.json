@@ -801,6 +801,42 @@
         "metadata": { "type": "object" }
       },
       "required": ["id", "businessId", "type", "severity", "title", "message", "createdAt", "read"]
+    },
+    "DailyExchangeRateGrid": {
+      "title": "Daily Exchange Rate Grid",
+      "description": "Tenant-scoped daily currency exchange rate matrix with automated inheritance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "effectiveDate": { "type": "string" },
+        "is_inherited": { "type": "boolean" },
+        "rates": { "type": "object" },
+        "actorId": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "effectiveDate", "is_inherited", "rates"]
+    },
+    "TellerTransaction": {
+      "title": "Counter Teller Transaction",
+      "description": "Immutable operational counter cash movements (collection, disbursement, foreign exchange) linked to balanced double-entry GL ledger transactions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "business_id": { "type": "string" },
+        "till_id": { "type": "string" },
+        "session_id": { "type": "string" },
+        "operator_id": { "type": "string" },
+        "transaction_type": { "type": "string" },
+        "currency": { "type": "string", "enum": ["HTG", "USD"] },
+        "amount_cents": { "type": "number" },
+        "flow_behavior": { "type": "number" },
+        "debit_account_code": { "type": "string" },
+        "credit_account_code": { "type": "string" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "business_id", "till_id", "session_id", "operator_id", "transaction_type", "currency", "amount_cents", "flow_behavior", "status", "created_at"]
     }
   },
   "firestore": {
@@ -972,6 +1008,10 @@
       "schema": "ExchangeRate",
       "description": "Active or historical exchange rate entries and overrides."
     },
+    "/daily_exchange_rate_grids/{gridId}": {
+      "schema": "DailyExchangeRateGrid",
+      "description": "Daily exchange rate grid for a business tenant."
+    },
     "/security_alerts/{alertId}": {
       "schema": "SecurityAlert",
       "description": "Security threat alerts and anomaly detection logs."
@@ -1003,6 +1043,10 @@
     "/payment_methods/{methodId}": {
       "schema": "PaymentMethod",
       "description": "Canonical database-driven payment methods available globally or customized per-tenant."
+    },
+    "/teller_transactions/{id}": {
+      "schema": "TellerTransaction",
+      "description": "Immutable operational counter cash movements (collection, disbursement, foreign exchange) linked to balanced double-entry GL ledger transactions."
     }
   }
 }

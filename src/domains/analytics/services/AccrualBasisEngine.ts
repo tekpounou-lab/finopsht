@@ -19,7 +19,8 @@ export class AccrualBasisEngine {
       if (!bId || bId !== businessId) return false;
       
       const d = resolveAnalyticsTxDate(tx, false);
-      if (d) {
+      if (startDate || endDate) {
+        if (!d) return false;
         if (startDate && d < startDate) return false;
         if (endDate && d > endDate) return false;
       }
@@ -122,8 +123,25 @@ export class AccrualBasisEngine {
       const bId = pr.business_id || (pr as any).businessId;
       if (!bId || bId !== businessId) return false;
       if (pr.isExcluded) return false;
-      const d = (pr.period_end || pr.endDate || pr.created_at || "").split("T")[0];
-      if (d) {
+      
+      const rawDate = pr.period_end || pr.endDate || pr.created_at || (pr as any).createdAt || (pr as any).date || "";
+      let d = "";
+      if (typeof rawDate === "string") {
+        d = rawDate.trim().split("T")[0];
+      } else if (typeof rawDate === "number") {
+        d = new Date(rawDate).toISOString().split("T")[0];
+      } else if (rawDate instanceof Date) {
+        d = rawDate.toISOString().split("T")[0];
+      } else if (rawDate?.toDate && typeof rawDate.toDate === "function") {
+        d = rawDate.toDate().toISOString().split("T")[0];
+      } else if (rawDate?.seconds) {
+        d = new Date(rawDate.seconds * 1000).toISOString().split("T")[0];
+      } else if (rawDate) {
+        d = String(rawDate).trim().split("T")[0];
+      }
+
+      if (startDate || endDate) {
+        if (!d) return false;
         if (startDate && d < startDate) return false;
         if (endDate && d > endDate) return false;
       }

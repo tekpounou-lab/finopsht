@@ -227,7 +227,9 @@ export const PICExpertView: React.FC<PICExpertViewProps> = ({ metrics }) => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Taux d'assiduité :</span>
-                  <span className="font-semibold text-cyan-300">{b.attendanceRate}%</span>
+                  <span className="font-semibold text-cyan-300">
+                    {b.attendanceRate !== null && b.attendanceRate !== undefined ? `${b.attendanceRate}%` : "N/D"}
+                  </span>
                 </div>
               </div>
             </div>

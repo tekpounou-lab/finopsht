@@ -21,7 +21,10 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
         employeeName: sc.employeeName,
         netPaid: sc.netPaid || sc.commissions || 0,
         hoursWorked: sc.totalHours || 0,
-        performanceScore: Math.round((sc.attendanceConsistencyScore + sc.productivityIndex) / 2),
+        performanceScore:
+          sc.attendanceConsistencyScore !== null && sc.attendanceConsistencyScore !== undefined
+            ? Math.round((sc.attendanceConsistencyScore + sc.productivityIndex) / 2)
+            : Math.round(sc.productivityIndex || 0),
         branchName: "Bureau Central",
       }));
     }
@@ -32,8 +35,8 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
         emp.name ||
         "Collaborateur",
       netPaid: emp.netPaid || emp.salary || 0,
-      hoursWorked: emp.hoursWorked || emp.workedHours || 80,
-      performanceScore: emp.performanceScore || 92,
+      hoursWorked: emp.hoursWorked || emp.workedHours || 0,
+      performanceScore: emp.performanceScore || 0,
       branchName: emp.branchName || "Bureau Central",
     }));
   }, [stabilizedSnapshot, employees]);
@@ -59,7 +62,7 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
         <div className="space-y-2.5">
           {leaderboardData.length > 0 ? (
             leaderboardData.map((staff: any, idx: number) => {
-              const hours = staff.hoursWorked ?? staff.realHours ?? 80;
+              const hours = staff.hoursWorked ?? staff.realHours ?? 0;
               const pay = staff.netPaid ?? staff.amount ?? 0;
               return (
                 <div

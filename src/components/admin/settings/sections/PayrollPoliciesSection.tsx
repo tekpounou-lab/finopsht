@@ -1,18 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { FileText, Calendar, Clock, Percent, DollarSign, ShieldAlert, Zap, ShieldCheck, TrendingUp, Loader2, Play, AlertCircle, HelpCircle, ToggleLeft, ToggleRight } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useBusinessContext } from "../../../../contexts/BusinessContext";
 import { useBusinessAdmin } from "../../../../hooks/useBusinessAdmin";
+import { useIdentity } from "../../../../modules/identity/IdentityContext";
 import { BusinessAdministrationRepository } from "../../../../repositories/BusinessAdministrationRepository";
+import { BusinessSettingsRepository } from "../../../../repositories/organization";
+import { PayrollPolicyRepository } from "../../../../repositories/PayrollPolicyRepository";
+import { BusinessResolver } from "../../../../services/business/BusinessResolver";
 import { TaxPolicyEngine } from "../../../../services/payroll/TaxPolicyEngine";
 import { ConfigurationResolver } from "../../../../services/config/ConfigurationResolver";
+import { PayrollPolicy } from "../../../../types/payrollPolicy";
 import { toast } from "sonner";
 import { isQuotaExceededError } from "../../../../utils/resilientFirestore";
 
+const getSafeStorage = (): Storage | null => {
+  if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
+  if (typeof localStorage !== "undefined") return localStorage;
+  return null;
+};
+
 export default function PayrollPoliciesSection() {
   const { businessSettings, business } = useBusinessContext();
+  const { identity } = useIdentity();
   const { updateSettings, loading: hookLoading } = useBusinessAdmin();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activePolicy, setActivePolicy] = useState<PayrollPolicy | null>(null);
 
   // Resolution Test Panel States
   const [testKey, setTestKey] = useState("commission_rate");
@@ -23,16 +36,114 @@ export default function PayrollPoliciesSection() {
   const [isResolving, setIsResolving] = useState(false);
   const [canonicalMode, setCanonicalMode] = useState<"STRICT" | "CUSTOM">("STRICT");
 
-  const businessId = business?.id || "BIZ_MAIN";
+  const rawBusinessId = business?.id || identity?.business?.id;
+  const isTenantResolved = Boolean(rawBusinessId && rawBusinessId.trim() && rawBusinessId !== "none" && rawBusinessId !== "BIZ_MAIN");
+  const businessId = isTenantResolved ? rawBusinessId! : "";
+  const prevBusinessIdRef = useRef<string>(businessId);
 
-  const resolvedIsTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
-  const resolvedIsFloorEnabled = TaxPolicyEngine.isSurvivalFloorEnabled(businessSettings);
-  const resolvedFloorAmount = TaxPolicyEngine.getSurvivalFloorAmount(businessSettings);
-  const resolvedRates = TaxPolicyEngine.resolveRates(businessSettings);
-  const resolvedIsAttendanceRequired = TaxPolicyEngine.isAttendanceRequiredForPayroll(businessSettings);
+  const getInitialFormValues = () => {
+    try {
+      if (businessId) {
+        const storage = getSafeStorage();
+        if (storage) {
+          let raw = storage.getItem(`finops_payroll_policy_${businessId}`);
+          if (!raw) {
+            const latestRaw = storage.getItem("finops_payroll_policy_latest");
+            if (latestRaw) {
+              const parsedLatest = JSON.parse(latestRaw);
+              if (parsedLatest && (parsedLatest.businessId === businessId || parsedLatest.business_id === businessId)) {
+                raw = latestRaw;
+              }
+            }
+          }
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === "object" && (p.businessId === businessId || p.business_id === businessId)) {
+            const isTaxVal = p.socialContributions?.enabled !== undefined
+              ? Boolean(p.socialContributions.enabled)
+              : p.enable_social_taxes !== undefined
+                ? Boolean(p.enable_social_taxes)
+                : p.enableTaxes !== undefined
+                  ? Boolean(p.enableTaxes)
+                  : true;
 
-  const { register, handleSubmit, watch, reset } = useForm({
-    defaultValues: {
+            const isFloorVal = p.survivalFloor?.enabled !== undefined
+              ? Boolean(p.survivalFloor.enabled)
+              : p.enable_survival_floor !== undefined
+                ? Boolean(p.enable_survival_floor)
+                : p.enableSurvivalFloor !== undefined
+                  ? Boolean(p.enableSurvivalFloor)
+                  : true;
+
+            const isAttVal = p.attendance?.excludeWithoutRecords !== undefined
+              ? Boolean(p.attendance.excludeWithoutRecords)
+              : p.require_attendance_for_payroll !== undefined
+                ? Boolean(p.require_attendance_for_payroll)
+                : p.requireAttendanceForPayroll !== undefined
+                  ? Boolean(p.requireAttendanceForPayroll)
+                  : true;
+
+            const floorHtg = p.survivalFloor?.minimumNetHTG !== undefined
+              ? p.survivalFloor.minimumNetHTG
+              : p.survival_floor_htg !== undefined
+                ? p.survival_floor_htg
+                : p.survivalFloor !== undefined && typeof p.survivalFloor === "number"
+                  ? p.survivalFloor
+                  : 15000;
+
+            const onaEmp = p.socialContributions?.cnssOna?.employeeRate !== undefined
+              ? Math.round(p.socialContributions.cnssOna.employeeRate * 100)
+              : (p.tax_cnss_employee !== undefined ? Math.round(Number(p.tax_cnss_employee)) : 6);
+
+            const onaEmpr = p.socialContributions?.cnssOna?.employerRate !== undefined
+              ? Math.round(p.socialContributions.cnssOna.employerRate * 100)
+              : (p.tax_cnss_employer !== undefined ? Math.round(Number(p.tax_cnss_employer)) : 6);
+
+            const ofatmaEmp = p.socialContributions?.ofatmaCns?.employeeRate !== undefined
+              ? Math.round(p.socialContributions.ofatmaCns.employeeRate * 100)
+              : (p.tax_cns_employee !== undefined ? Math.round(Number(p.tax_cns_employee)) : 2);
+
+            const ofatmaEmpr = p.socialContributions?.ofatmaCns?.employerRate !== undefined
+              ? Math.round(p.socialContributions.ofatmaCns.employerRate * 100)
+              : (p.tax_cns_employer !== undefined ? Math.round(Number(p.tax_cns_employer)) : 3);
+
+            const commRate = p.commissions?.defaultSalesRate !== undefined
+              ? Math.round(p.commissions.defaultSalesRate * 100)
+              : (p.default_commission_rate !== undefined ? Math.round(Number(p.default_commission_rate)) : 5);
+
+            return {
+              frequency: p.frequency || "BIWEEKLY",
+              currency: p.currency || "HTG",
+              standard_hours: p.standardHoursPerCycle ?? p.standard_hours ?? 96,
+              attendance_tolerance_hours: p.attendanceToleranceHours ?? p.attendance_tolerance_hours ?? 94,
+              working_days_basis: p.workingDaysBasis ?? p.working_days_basis ?? 22,
+              ot_rate_normal: p.overtime?.normalRate ?? p.ot_rate_normal ?? 1.5,
+              ot_rate_holiday: p.overtime?.holidayRate ?? p.ot_rate_holiday ?? 2.0,
+              late_penalty_cents: p.penalties?.lateFixedCents ?? p.late_penalty_cents ?? 0,
+              absence_penalty_cents: p.penalties?.absencePerDayCents ?? p.absence_penalty_cents ?? 0,
+              tax_cnss_employee: onaEmp,
+              tax_cnss_employer: onaEmpr,
+              tax_cns_employee: ofatmaEmp,
+              tax_cns_employer: ofatmaEmpr,
+              enable_social_taxes: isTaxVal,
+              enable_survival_floor: isFloorVal,
+              survival_floor_htg: floorHtg,
+              default_commission_rate: commRate,
+              require_attendance_for_payroll: isAttVal,
+            };
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+    const resolvedIsTaxEnabled = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
+    const resolvedIsFloorEnabled = TaxPolicyEngine.isSurvivalFloorEnabled(businessSettings);
+    const resolvedFloorAmount = TaxPolicyEngine.getSurvivalFloorAmount(businessSettings);
+    const resolvedRates = TaxPolicyEngine.resolveRates(businessSettings);
+    const resolvedIsAttendanceRequired = TaxPolicyEngine.isAttendanceRequiredForPayroll(businessSettings);
+
+    return {
       ...(businessSettings?.payroll || {}),
       frequency: businessSettings?.payroll?.frequency || businessSettings?.payroll_policies?.frequency || "BIWEEKLY",
       currency: businessSettings?.payroll?.currency || businessSettings?.payroll_policies?.currency || "HTG",
@@ -52,51 +163,178 @@ export default function PayrollPoliciesSection() {
       survival_floor_htg: resolvedFloorAmount,
       default_commission_rate: (businessSettings?.payroll?.default_commission_rate ?? ((businessSettings?.payroll_policies?.defaultCommissionRate || 0) * 100)),
       require_attendance_for_payroll: resolvedIsAttendanceRequired,
-    }
+    };
+  };
+
+  const { register, handleSubmit, watch, reset, setValue, formState: { isDirty } } = useForm({
+    defaultValues: getInitialFormValues()
   });
 
-  useEffect(() => {
-    if (businessSettings) {
-      const isTax = TaxPolicyEngine.isSocialTaxEnabled(businessSettings);
-      const isFloor = TaxPolicyEngine.isSurvivalFloorEnabled(businessSettings);
-      const floor = TaxPolicyEngine.getSurvivalFloorAmount(businessSettings);
-      const rates = TaxPolicyEngine.resolveRates(businessSettings);
-      const isAtt = TaxPolicyEngine.isAttendanceRequiredForPayroll(businessSettings);
+  const applyPolicyToForm = useCallback((pol: any, fallbackSettings?: any) => {
+    const p = pol || {};
+    const isTax = p.socialContributions?.enabled !== undefined
+      ? Boolean(p.socialContributions.enabled)
+      : p.enable_social_taxes !== undefined
+        ? Boolean(p.enable_social_taxes)
+        : p.enableTaxes !== undefined
+          ? Boolean(p.enableTaxes)
+          : TaxPolicyEngine.isSocialTaxEnabled(fallbackSettings);
 
-      reset({
-        ...(businessSettings.payroll || {}),
-        frequency: businessSettings.payroll?.frequency || businessSettings.payroll_policies?.frequency || "BIWEEKLY",
-        currency: businessSettings.payroll?.currency || businessSettings.payroll_policies?.currency || "HTG",
-        standard_hours: businessSettings.payroll?.standard_hours ?? businessSettings.payroll_policies?.standardHoursPerCycle ?? businessSettings.payroll_policies?.standardQuinzaineHours ?? 96,
-        attendance_tolerance_hours: businessSettings.payroll?.attendance_tolerance_hours ?? businessSettings.payroll_policies?.attendanceToleranceHours ?? 94,
-        working_days_basis: businessSettings.payroll?.working_days_basis ?? businessSettings.payroll_policies?.workingDaysBasis ?? 22,
-        ot_rate_normal: businessSettings.payroll?.ot_rate_normal ?? businessSettings.payroll_policies?.overtimeRate150 ?? 1.5,
-        ot_rate_holiday: businessSettings.payroll?.ot_rate_holiday ?? businessSettings.payroll_policies?.overtimeRate200 ?? 2.0,
-        late_penalty_cents: businessSettings.payroll?.late_penalty_cents ?? businessSettings.payroll_policies?.latePenaltyCents ?? 0,
-        absence_penalty_cents: businessSettings.payroll?.absence_penalty_cents ?? businessSettings.payroll_policies?.absencePenaltyCents ?? 0,
-        tax_cnss_employee: Math.round(rates.employeeOnaRate * 100),
-        tax_cnss_employer: Math.round(rates.employerOnaRate * 100),
-        tax_cns_employee: Math.round(rates.employeeOfatmaRate * 100),
-        tax_cns_employer: Math.round(rates.employerOfatmaRate * 100),
-        enable_social_taxes: isTax,
-        enable_survival_floor: isFloor,
-        survival_floor_htg: floor,
-        default_commission_rate: (businessSettings.payroll?.default_commission_rate ?? ((businessSettings.payroll_policies?.defaultCommissionRate || 0) * 100)),
-        require_attendance_for_payroll: isAtt,
-      });
+    const isFloor = p.survivalFloor?.enabled !== undefined
+      ? Boolean(p.survivalFloor.enabled)
+      : p.enable_survival_floor !== undefined
+        ? Boolean(p.enable_survival_floor)
+        : p.enableSurvivalFloor !== undefined
+          ? Boolean(p.enableSurvivalFloor)
+          : TaxPolicyEngine.isSurvivalFloorEnabled(fallbackSettings);
+
+    const floor = p.survivalFloor?.minimumNetHTG !== undefined
+      ? p.survivalFloor.minimumNetHTG
+      : p.survival_floor_htg !== undefined
+        ? p.survival_floor_htg
+        : p.survivalFloor !== undefined && typeof p.survivalFloor === "number"
+          ? p.survivalFloor
+          : TaxPolicyEngine.getSurvivalFloorAmount(fallbackSettings);
+
+    const isAtt = p.attendance?.excludeWithoutRecords !== undefined
+      ? Boolean(p.attendance.excludeWithoutRecords)
+      : p.require_attendance_for_payroll !== undefined
+        ? Boolean(p.require_attendance_for_payroll)
+        : p.requireAttendanceForPayroll !== undefined
+          ? Boolean(p.requireAttendanceForPayroll)
+          : TaxPolicyEngine.isAttendanceRequiredForPayroll(fallbackSettings);
+
+    const rates = TaxPolicyEngine.resolveRates(fallbackSettings);
+    const onaEmp = p.socialContributions?.cnssOna?.employeeRate !== undefined
+      ? Math.round(p.socialContributions.cnssOna.employeeRate * 100)
+      : (p.tax_cnss_employee !== undefined ? Math.round(Number(p.tax_cnss_employee)) : Math.round(rates.employeeOnaRate * 100));
+
+    const onaEmpr = p.socialContributions?.cnssOna?.employerRate !== undefined
+      ? Math.round(p.socialContributions.cnssOna.employerRate * 100)
+      : (p.tax_cnss_employer !== undefined ? Math.round(Number(p.tax_cnss_employer)) : Math.round(rates.employerOnaRate * 100));
+
+    const ofatmaEmp = p.socialContributions?.ofatmaCns?.employeeRate !== undefined
+      ? Math.round(p.socialContributions.ofatmaCns.employeeRate * 100)
+      : (p.tax_cns_employee !== undefined ? Math.round(Number(p.tax_cns_employee)) : Math.round(rates.employeeOfatmaRate * 100));
+
+    const ofatmaEmpr = p.socialContributions?.ofatmaCns?.employerRate !== undefined
+      ? Math.round(p.socialContributions.ofatmaCns.employerRate * 100)
+      : (p.tax_cns_employer !== undefined ? Math.round(Number(p.tax_cns_employer)) : Math.round(rates.employerOfatmaRate * 100));
+
+    const commRate = p.commissions?.defaultSalesRate !== undefined
+      ? Math.round(p.commissions.defaultSalesRate * 100)
+      : (fallbackSettings?.payroll?.default_commission_rate ?? ((fallbackSettings?.payroll_policies?.defaultCommissionRate || 0) * 100));
+
+    reset({
+      frequency: p.frequency || fallbackSettings?.payroll?.frequency || fallbackSettings?.payroll_policies?.frequency || "BIWEEKLY",
+      currency: p.currency || fallbackSettings?.payroll?.currency || fallbackSettings?.payroll_policies?.currency || "HTG",
+      standard_hours: p.standardHoursPerCycle ?? p.standard_hours ?? fallbackSettings?.payroll?.standard_hours ?? 96,
+      attendance_tolerance_hours: p.attendanceToleranceHours ?? p.attendance_tolerance_hours ?? fallbackSettings?.payroll?.attendance_tolerance_hours ?? 94,
+      working_days_basis: p.workingDaysBasis ?? p.working_days_basis ?? fallbackSettings?.payroll?.working_days_basis ?? 22,
+      ot_rate_normal: p.overtime?.normalRate ?? p.ot_rate_normal ?? fallbackSettings?.payroll?.ot_rate_normal ?? 1.5,
+      ot_rate_holiday: p.overtime?.holidayRate ?? p.ot_rate_holiday ?? fallbackSettings?.payroll?.ot_rate_holiday ?? 2.0,
+      late_penalty_cents: p.penalties?.lateFixedCents ?? p.late_penalty_cents ?? fallbackSettings?.payroll?.late_penalty_cents ?? 0,
+      absence_penalty_cents: p.penalties?.absencePerDayCents ?? p.absence_penalty_cents ?? fallbackSettings?.payroll?.absence_penalty_cents ?? 0,
+      tax_cnss_employee: onaEmp,
+      tax_cnss_employer: onaEmpr,
+      tax_cns_employee: ofatmaEmp,
+      tax_cns_employer: ofatmaEmpr,
+      enable_social_taxes: isTax,
+      enable_survival_floor: isFloor,
+      survival_floor_htg: floor,
+      default_commission_rate: commRate,
+      require_attendance_for_payroll: isAtt,
+    });
+
+    if (p.resolution?.mode) {
+      setCanonicalMode(p.resolution.mode);
     }
-  }, [businessSettings, reset]);
+  }, [reset]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const isTenantChanged = prevBusinessIdRef.current !== businessId;
+    prevBusinessIdRef.current = businessId;
+
+    async function hydratePolicy() {
+      if (!businessId) return;
+
+      try {
+        let pol = await PayrollPolicyRepository.getEffectivePolicy(businessId, undefined, true);
+        if (!pol) {
+          const storage = getSafeStorage();
+          if (storage) {
+            try {
+              let raw = storage.getItem(`finops_payroll_policy_${businessId}`);
+              if (!raw) {
+                const latestRaw = storage.getItem("finops_payroll_policy_latest");
+                if (latestRaw) {
+                  const parsedLatest = JSON.parse(latestRaw);
+                  if (parsedLatest && (parsedLatest.businessId === businessId || parsedLatest.business_id === businessId)) {
+                    raw = latestRaw;
+                  }
+                }
+              }
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                if (
+                  parsed &&
+                  typeof parsed === "object" &&
+                  (parsed.businessId === businessId || parsed.business_id === businessId) &&
+                  !parsed.isUnsynchronized &&
+                  parsed.syncStatus !== "UNSYNCHRONIZED"
+                ) {
+                  pol = parsed;
+                }
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (isMounted) {
+          // If tenant changed, always reset form to new tenant
+          // If same tenant and form is dirty (user currently editing), do NOT overwrite user edits!
+          if (isTenantChanged || !isDirty) {
+            if (pol) {
+              setActivePolicy(pol);
+              applyPolicyToForm(pol, businessSettings);
+            } else if (businessSettings) {
+              applyPolicyToForm({}, businessSettings);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[PayrollPoliciesSection] Error loading effective policy:", err);
+      }
+    }
+
+    if (businessId) {
+      hydratePolicy();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [businessId, businessSettings, applyPolicyToForm, isDirty]);
 
   const isSocialTaxEnabled = watch("enable_social_taxes");
   const isSurvivalFloorEnabled = watch("enable_survival_floor");
 
   const onSubmit = async (data: any) => {
+    if (!businessId) {
+      toast.error("Veuillez sélectionner une entreprise valide avant d'enregistrer les politiques.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const enableTaxes = !!data.enable_social_taxes;
       const enableSurvivalFloor = !!data.enable_survival_floor;
       const requireAttendance = !!data.require_attendance_for_payroll;
-      const survivalFloor = Number(data.survival_floor_htg) || 15000;
+      const parsedSurvivalFloor = Number(data.survival_floor_htg);
+      const survivalFloor = (!isNaN(parsedSurvivalFloor) && data.survival_floor_htg !== "" && data.survival_floor_htg !== null && data.survival_floor_htg !== undefined)
+        ? parsedSurvivalFloor
+        : 15000;
       const standardHours = Number(data.standard_hours) || 96;
       const attendanceTolerance = Number(data.attendance_tolerance_hours) || 94;
       const workingDaysBasis = Number(data.working_days_basis) || 22;
@@ -163,6 +401,61 @@ export default function PayrollPoliciesSection() {
         requireAttendanceForPayroll: requireAttendance,
       };
 
+      const savedPolicy = await PayrollPolicyRepository.saveAndActivatePolicy(
+        businessId,
+        {
+          effectiveFrom: data.effective_from || new Date().toISOString().split("T")[0],
+          frequency: data.frequency,
+          currency: data.currency,
+          standardHoursPerCycle: standardHours,
+          attendanceToleranceHours: attendanceTolerance,
+          workingDaysBasis: workingDaysBasis,
+          overtime: {
+            normalRate: Number(data.ot_rate_normal) || 1.5,
+            holidayRate: Number(data.ot_rate_holiday) || 2.0,
+          },
+          penalties: {
+            lateFixedCents: latePenaltyCents,
+            absencePerDayCents: absencePenaltyCents,
+          },
+          socialContributions: {
+            enabled: enableTaxes,
+            cnssOna: {
+              employeeRate: onaEmpRate,
+              employerRate: onaEmprRate,
+            },
+            ofatmaCns: {
+              employeeRate: ofatmaEmpRate,
+              employerRate: ofatmaEmprRate,
+            },
+          },
+          commissions: {
+            defaultSalesRate: (Number(data.default_commission_rate) || 0) / 100,
+          },
+          survivalFloor: {
+            enabled: enableSurvivalFloor,
+            minimumNetHTG: survivalFloor,
+          },
+          attendance: {
+            excludeWithoutRecords: requireAttendance,
+          },
+          resolution: {
+            mode: canonicalMode,
+          },
+        },
+        { id: "usr_admin", role: "ADMIN" },
+        { baseVersion: activePolicy?.version }
+      );
+
+      setActivePolicy(savedPolicy);
+      const storage = getSafeStorage();
+      if (storage) {
+        try {
+          storage.setItem(`finops_payroll_policy_${businessId}`, JSON.stringify(savedPolicy));
+          storage.setItem("finops_payroll_policy_latest", JSON.stringify(savedPolicy));
+        } catch (e) {}
+      }
+
       try {
         await updateSettings({
           ...businessSettings,
@@ -189,51 +482,50 @@ export default function PayrollPoliciesSection() {
             survivalFloorHTG: survivalFloor,
           }
         });
-      } catch (adminErr) {
-        console.warn("[PayrollPoliciesSection] updateSettings fallback:", adminErr);
-      }
-      
-      await BusinessAdministrationRepository.savePayrollPolicy(
-        businessId,
-        {
-          version: "v4.0.0-canonical",
-          frequency: data.frequency,
-          currency: data.currency,
-          standardHoursPerCycle: standardHours,
-          standardQuinzaineHours: standardHours,
-          attendanceToleranceHours: attendanceTolerance,
-          workingDaysBasis: workingDaysBasis,
-          enableTaxes: enableTaxes,
-          enableSocialTaxes: enableTaxes,
-          onaEmployeeRate: onaEmpRate,
-          onaEmployerRate: onaEmprRate,
-          ofatmaEmployeeRate: ofatmaEmpRate,
-          ofatmaEmployerRate: ofatmaEmprRate,
-          enableSurvivalFloor: enableSurvivalFloor,
-          survivalFloor: survivalFloor,
-          survivalFloorHTG: survivalFloor,
-          overtimeRate150: Number(data.ot_rate_normal) || 1.5,
-          overtimeRate200: Number(data.ot_rate_holiday) || 2.0,
-          latePenaltyCents: latePenaltyCents,
-          absencePenaltyCents: absencePenaltyCents,
-          defaultCommissionRate: (Number(data.default_commission_rate) || 0) / 100,
-          requireAttendanceForPayroll: requireAttendance,
-        },
-        "usr_admin"
-      );
 
-      await BusinessAdministrationRepository.updateTaxConfiguration(
-        businessId,
-        {
+        await BusinessSettingsRepository.update(businessId, {
+          ...(businessSettings || {}),
+          enable_social_taxes: enableTaxes,
+          enableSocialTaxes: enableTaxes,
           enableTaxes: enableTaxes,
-          cnssRateEmployee: onaEmpRate,
-          cnssRateEmployer: onaEmprRate,
-          cnsRateEmployee: ofatmaEmpRate,
-          cnsRateEmployer: ofatmaEmprRate,
-          survivalFloorHTG: survivalFloor,
-        },
-        "usr_admin"
-      );
+          enable_survival_floor: enableSurvivalFloor,
+          enableSurvivalFloor: enableSurvivalFloor,
+          survival_floor_htg: survivalFloor,
+          survivalFloor: survivalFloor,
+          require_attendance_for_payroll: requireAttendance,
+          requireAttendanceForPayroll: requireAttendance,
+          payroll: updatedPayroll,
+          payroll_policies: updatedPayrollPolicies,
+        });
+
+        await BusinessAdministrationRepository.savePayrollPolicy(businessId, {
+          ...updatedPayrollPolicies,
+          policyId: savedPolicy.id,
+          version: savedPolicy.versionLabel,
+          effectiveFrom: savedPolicy.effectiveFrom,
+        });
+
+        BusinessResolver.invalidateCache(businessId);
+      } catch (e) {
+        console.warn("[PayrollPoliciesSection] Settings synchronization warning:", e);
+      }
+
+      const mergedSettings = {
+        ...(businessSettings || {}),
+        payroll: updatedPayroll,
+        payroll_policies: updatedPayrollPolicies,
+        enable_social_taxes: enableTaxes,
+        enableSocialTaxes: enableTaxes,
+        enableTaxes: enableTaxes,
+        enable_survival_floor: enableSurvivalFloor,
+        enableSurvivalFloor: enableSurvivalFloor,
+        survival_floor_htg: survivalFloor,
+        survivalFloor: survivalFloor,
+        require_attendance_for_payroll: requireAttendance,
+        requireAttendanceForPayroll: requireAttendance,
+      };
+
+      applyPolicyToForm(savedPolicy, mergedSettings);
 
       toast.success(
         enableTaxes 
@@ -263,20 +555,31 @@ export default function PayrollPoliciesSection() {
     }
   };
 
-  const isButtonDisabled = isSubmitting;
+  const isButtonDisabled = !isDirty || isSubmitting || !businessId;
 
   return (
     <div className="space-y-8" id="payroll-policies-root">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-bold text-slate-100 uppercase tracking-tight">Politiques de Paie & Fiscalité</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-lg font-bold text-slate-100 uppercase tracking-tight">Politiques de Paie & Fiscalité</h3>
+            {activePolicy && (
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-950/60 border border-cyan-500/30 text-cyan-300">
+                {activePolicy.versionLabel || `v${activePolicy.version}.0.0-canonical`} (Effective: {activePolicy.effectiveFrom})
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 font-medium mt-1">Configurez les règles de calcul, les taxes et les cycles de rémunération.</p>
         </div>
         <button 
           type="button"
           onClick={handleSubmit(onSubmit, onInvalid)}
           disabled={isButtonDisabled}
-          className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-bold rounded-lg shadow-md shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg shadow-md transition-all ${
+            isButtonDisabled
+              ? "bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60 shadow-none"
+              : "bg-cyan-500 hover:bg-cyan-600 text-slate-950 shadow-cyan-500/20 active:scale-95 cursor-pointer"
+          }`}
         >
           {isSubmitting ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -418,6 +721,11 @@ export default function PayrollPoliciesSection() {
               <input 
                 type="checkbox" 
                 {...register("enable_social_taxes")}
+                checked={!!watch("enable_social_taxes")}
+                onChange={(e) => {
+                  register("enable_social_taxes").onChange(e);
+                  setValue("enable_social_taxes", e.target.checked, { shouldDirty: true });
+                }}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-slate-900 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600 peer-checked:border-emerald-500"></div>
@@ -475,7 +783,16 @@ export default function PayrollPoliciesSection() {
                   Plancher de Survie Social (Protéger le Salaire Net)
                 </span>
                 <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input type="checkbox" {...register("enable_survival_floor")} className="sr-only peer" />
+                  <input 
+                    type="checkbox" 
+                    {...register("enable_survival_floor")} 
+                    checked={!!watch("enable_survival_floor")}
+                    onChange={(e) => {
+                      register("enable_survival_floor").onChange(e);
+                      setValue("enable_survival_floor", e.target.checked, { shouldDirty: true });
+                    }}
+                    className="sr-only peer" 
+                  />
                   <div className="w-9 h-5 bg-slate-900 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600 peer-checked:border-cyan-500"></div>
                 </label>
               </div>
@@ -500,7 +817,16 @@ export default function PayrollPoliciesSection() {
                   Exclure Employés Sans Présence (Attendance Records)
                 </span>
                 <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input type="checkbox" {...register("require_attendance_for_payroll")} className="sr-only peer" />
+                  <input 
+                    type="checkbox" 
+                    {...register("require_attendance_for_payroll")} 
+                    checked={!!watch("require_attendance_for_payroll")}
+                    onChange={(e) => {
+                      register("require_attendance_for_payroll").onChange(e);
+                      setValue("require_attendance_for_payroll", e.target.checked, { shouldDirty: true });
+                    }}
+                    className="sr-only peer" 
+                  />
                   <div className="w-9 h-5 bg-slate-900 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:border-emerald-500"></div>
                 </label>
               </div>

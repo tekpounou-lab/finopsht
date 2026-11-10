@@ -65,24 +65,28 @@ export class ExecutiveScoreEngine {
     const attRate = snapshot.attendanceRate.currentValue;
     const underperformingStaff = activeScorecards.filter(e => e.underperformanceSignal).length;
     const staffRatio = activeScorecards.length > 0 ? (underperformingStaff / activeScorecards.length) : 0;
-    let opScore = Math.round(attRate * 0.8 + (1 - staffRatio) * 20);
+    let opScore = attRate !== null
+      ? Math.round(attRate * 0.8 + (1 - staffRatio) * 20)
+      : Math.round((1 - staffRatio) * 100);
     opScore = Math.max(0, Math.min(100, opScore));
     scorecards.push(this.buildMetric(
       "Operational Health",
       opScore,
       snapshot.attendanceRate.trend as "UP" | "DOWN" | "STABLE",
-      `Driven by average attendance consistency (${attRate.toFixed(1)}%) and low staff underperformance indicators.`,
+      attRate !== null
+        ? `Driven by average attendance consistency (${attRate.toFixed(1)}%) and low staff underperformance indicators.`
+        : `Driven by staff performance indicators (contractual attendance utilization N/D).`,
       opScore > 80 ? "LOW" : opScore > 60 ? "MEDIUM" : "HIGH",
       opScore > 80 ? "Acknowledge high performing branches and preserve schedule pacing." : "Audit branch scheduling systems and conduct immediate employee reviews."
     ));
 
     // 3. Payroll Health Score
     // Driven by overtime exposure and commission distribution balance
-    const commissionsPaid = snapshot.commissionsPaid.currentValue;
+    const commissionsPaid = snapshot.commissionsPaid?.currentValue || 0;
     const commissionRatio = payrollCost > 0 ? (commissionsPaid / payrollCost) * 100 : 0;
     const totalOvertime = activeScorecards.reduce((sum, e) => sum + (e.overtimeHours || 0), 0);
     let payScore = 90 - (commissionRatio > 20 ? 15 : 0) - (totalOvertime > 50 ? 15 : 0);
-    if (snapshot.payrollCost.differencePercentage > 15) payScore -= 10;
+    if ((snapshot.payrollCost?.differencePercentage || 0) > 15) payScore -= 10;
     payScore = Math.max(0, Math.min(100, Math.round(payScore)));
     scorecards.push(this.buildMetric(
       "Payroll Health",
@@ -95,7 +99,7 @@ export class ExecutiveScoreEngine {
 
     // 4. Attendance Health Score
     // Driven directly by overall attendance consistency and absenteeism
-    const absenceRate = snapshot.absenceRate.currentValue;
+    const absenceRate = snapshot.absenceRate?.currentValue ?? 0;
     const attHealthScore = Math.max(0, Math.min(100, Math.round(100 - (absenceRate * 4))));
     scorecards.push(this.buildMetric(
       "Attendance Health",
@@ -121,8 +125,8 @@ export class ExecutiveScoreEngine {
 
     // 6. Cash Flow Score
     // Driven by cash balance health vs burn rate
-    const cash = snapshot.cashOnHand.currentValue;
-    const burn = snapshot.burnRate.currentValue;
+    const cash = snapshot.cashOnHand?.currentValue || 0;
+    const burn = snapshot.burnRate?.currentValue || 0;
     let cashScore = Math.round(Math.min(100, (cash / 120000) * 100));
     if (burn > cash) cashScore -= 20;
     cashScore = Math.max(0, Math.min(100, cashScore));
@@ -149,7 +153,7 @@ export class ExecutiveScoreEngine {
 
     // 8. Growth Score
     // Measured by revenue and staffing expansion rates
-    const growthRate = snapshot.revenue.differencePercentage;
+    const growthRate = snapshot.revenue?.differencePercentage || 0;
     const growthScore = Math.round(Math.max(0, Math.min(100, 50 + (growthRate * 2))));
     scorecards.push(this.buildMetric(
       "Strategic Growth Rate",

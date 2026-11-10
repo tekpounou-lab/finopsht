@@ -31,8 +31,17 @@ export function useBIUIState(params?: UseBIUIStateParams) {
   const endDate = filters.endDate;
   const setEndDate = (date: string) => updateFilter("endDate", date);
 
-  const isSimplifiedMode = filters.accountingMode === "CASH";
-  const setIsSimplifiedMode = (val: boolean) => updateFilter("accountingMode", val ? "CASH" : "ACCRUAL");
+  const accountingBasis = filters.accountingBasis || filters.accountingMode || "CASH";
+  const setAccountingBasis = (basis: "CASH" | "ACCRUAL") => {
+    updateFilter("accountingBasis", basis);
+    updateFilter("accountingMode", basis);
+  };
+
+  const presentationMode = filters.presentationMode || "SIMPLIFIED";
+  const setPresentationMode = (mode: "SIMPLIFIED" | "EXPERT") => updateFilter("presentationMode", mode);
+
+  const isSimplifiedMode = presentationMode === "SIMPLIFIED";
+  const setIsSimplifiedMode = (val: boolean) => setPresentationMode(val ? "SIMPLIFIED" : "EXPERT");
 
   const selectedEmployeeId = filters.employeeId;
   const setSelectedEmployeeId = (id: string) => updateFilter("employeeId", id);
@@ -85,6 +94,10 @@ export function useBIUIState(params?: UseBIUIStateParams) {
     setActiveBiTab,
     isSimplifiedMode,
     setIsSimplifiedMode,
+    accountingBasis,
+    setAccountingBasis,
+    presentationMode,
+    setPresentationMode,
     selectedDeptForExpenseModal,
     setSelectedDeptForExpenseModal,
     radarActiveMetric,

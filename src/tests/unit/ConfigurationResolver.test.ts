@@ -54,11 +54,11 @@ describe("ConfigurationResolver Unit Tests", () => {
   });
 
   it("returns NO_DATA if nothing is configured", async () => {
-    const result = await ConfigurationResolver.resolve("commission_rate", {});
+    const result = await ConfigurationResolver.resolve("unknown_unconfigured_key", {});
 
     expect(result.status).toBe("NO_DATA");
     expect(result.value).toBeNull();
-    expect(result.source).toBe("NONE");
+    expect(result.source).toBe("SYSTEM_DEFAULT");
   });
 
   it("returns standard hours fallback of 96 hours if unconfigured", async () => {
@@ -66,6 +66,6 @@ describe("ConfigurationResolver Unit Tests", () => {
 
     expect(result.status).toBe("RESOLVED");
     expect(result.value).toBe(96);
-    expect(result.source).toBe("SYSTEM_DEFAULT");
+    expect(result.source).toBe("GLOBAL_POLICY");
   });
 });

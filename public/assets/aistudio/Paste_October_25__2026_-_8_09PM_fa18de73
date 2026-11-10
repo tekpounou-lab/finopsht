@@ -1,0 +1,512 @@
+# FINOPS ERP / FINAYITI FUSION — POST-ENG-05
+## Targeted Engineering Correction: Payroll Recovery, Accounting Integrity, Atomic Idempotency & Reporting Consistency
+
+**Execution mode:** Targeted code inspection, implementation, and automated regression testing  
+**Project:** FINOPS ERP / FINAYITI FUSION  
+**Baseline:** ENG-05 Payroll Reversal Integrity  
+**Priority:** High — financial correctness and data integrity  
+**Production deployment:** PROHIBITED  
+**Production data mutation:** PROHIBITED  
+**Git commit/push:** PROHIBITED unless separately authorized
+
+---
+
+## 1. MISSION
+
+Continue from the existing ENG-05 implementation. Inspect the actual repository and current implementation before making changes.
+
+Implement and verify the missing recovery workflow for payroll reversals involving payroll amounts that have already been disbursed.
+
+The approved business policy is:
+
+1. Create and track an employee receivable for an approved overpayment recovery.
+2. Reconcile the receivable against actual, confirmed employee repayments.
+3. Require explicit human authorization before activating or executing recovery for an already-paid payroll.
+4. Track partial repayments and the outstanding balance until the receivable is fully settled or formally resolved.
+5. Preserve the original payroll, original bank disbursement, sealed-cycle history, and audit trail.
+6. Prevent duplicate receivables, duplicate repayments, and duplicate accounting entries, including under concurrent requests.
+7. Ensure that payroll reports, accounting reports, tax calculations, and AI CFO aggregates do not double-count original payroll amounts and reversal records.
+
+Do not rebuild the payroll reversal feature from scratch. Preserve valid ENG-05 changes and modify only the code required to close the defects identified below.
+
+**Important:** The reported ENG-05 test results are a starting point, not independently verified evidence. Reinspect the current files and run the relevant tests against the actual implementation.
+
+---
+
+## 2. NON-NEGOTIABLE SAFETY RULES
+
+- Never modify production data or execute a production migration.
+- Never deploy, publish, or push code.
+- Never issue a real payment, bank transaction, employee deduction, or refund.
+- Do not create a new accounting account or invent an account mapping without confirming the existing chart of accounts and obtaining the required accounting-owner approval.
+- Do not assume statutory tax rates, payroll deduction rules, or legal authority to deduct from future wages.
+- Do not automatically recover an overpayment from a future payroll.
+- Do not mark a receivable as paid unless a real, confirmed repayment has been recorded and reconciled.
+- Do not modify or delete the original sealed payroll or its original disbursement.
+- Do not use mock data as evidence that the real frontend/backend integration works.
+- Never report a test as passed unless it was actually executed and its result is available.
+- If a required account, business rule, permission, or transaction capability is missing, fail safely and document the blocker instead of inventing a workaround.
+
+Use isolated unit/integration test fixtures or a dedicated non-production environment. Do not connect tests to production services.
+
+---
+
+## 3. STEP 1 — INSPECT THE EXISTING IMPLEMENTATION
+
+Inspect the current code, types, repositories, accounting mappings, security rules, and tests related to:
+
+- `src/services/payroll/PayrollService.ts`
+- `src/services/AccountingEngine.ts`
+- `src/services/payroll/PayrollRepository.ts`
+- `src/types.ts`
+- Existing payroll reversal and payroll record schemas
+- Existing accounting chart of accounts and journal-entry models
+- Existing employee receivable or accounts-receivable functionality, if any
+- Existing payment/receipt recording and reconciliation functionality
+- Existing Firestore transaction or equivalent atomic persistence patterns
+- Existing role-based access control and Maker-Checker enforcement
+- Payroll, tax, financial statement, and AI CFO aggregation queries
+- Existing tests from ENG-05 and related accounting modules
+
+Search for the exact current implementations before editing. Do not assume the ENG-05 summary matches the current branch.
+
+Produce a concise defect-to-file map. Then implement the necessary corrections in the same execution, unless a business-critical ambiguity requires an explicit decision from the owner.
+
+Do not stop after writing an audit report or proposed plan if the required behavior can be safely implemented using existing approved architecture.
+
+---
+
+## 4. STEP 2 — IMPLEMENT THE EMPLOYEE RECEIVABLE WORKFLOW
+
+### 4.1 Recovery state model
+
+Implement or adapt a typed, persistent recovery record linked to the relevant entities:
+
+- Original payroll cycle ID
+- Original payroll record / payslip ID
+- Reversal cycle ID and reversal payroll record ID, where applicable
+- Employee ID
+- Business/tenant ID
+- Currency
+- Approved recoverable amount
+- Amount actually recovered
+- Outstanding amount
+- Recovery status
+- Human approver ID
+- Approval timestamp
+- Approval reason
+- Creation timestamp and creator ID
+- Last reconciliation timestamp and actor
+- Linked repayment/receipt IDs
+- Audit metadata
+
+Reuse the existing domain model if an equivalent structure already exists. Do not create redundant collections or duplicate sources of truth without justification.
+
+Use integer minor currency units for monetary calculations wherever the existing application supports them. Never mix HTG and USD amounts or reconcile a repayment against a receivable in a different currency without an explicit, supported FX workflow.
+
+The record must support, at minimum, the following lifecycle:
+
+`PENDING_HUMAN_APPROVAL → APPROVED_PENDING_RECOVERY → PARTIALLY_RECOVERED → RECOVERED`
+
+Also support appropriate blocked, rejected, cancelled, or formally written-off states if consistent with existing accounting controls. A write-off must require its own authorized approval and accounting treatment.
+
+State transitions must be validated by the backend, not only by frontend controls.
+
+### 4.2 Validate the receivable account
+
+Before posting any receivable journal entry:
+
+1. Inspect the existing chart of accounts.
+2. Determine whether an appropriate employee receivable account already exists and is active.
+3. Confirm the account type, currency rules, and accounting mapping.
+4. Reuse the approved account if its meaning and configuration are appropriate.
+5. If the account does not exist or the mapping is ambiguous, block posting and report that accounting-owner approval or configuration is required.
+
+Do not silently reuse employee advances, payroll clearing, bank, cash, or another account whose accounting meaning is different.
+
+Never create a journal entry against a guessed account code.
+
+### 4.3 Human approval for already-paid payroll
+
+If the original payroll has already been disbursed:
+
+- Create a recovery proposal or pending receivable workflow, as supported by the existing architecture.
+- Set its initial status to pending human approval.
+- Do not automatically post an actionable recovery, collect money, deduct wages, or initiate a bank operation.
+- Require an authorized approver who is not the initiator, in accordance with Maker-Checker controls.
+- Validate the approver's role, tenant scope, and permission on the backend.
+- Record the approval decision, actor, timestamp, and reason.
+- Reject self-approval and unauthorized or cross-tenant approval attempts.
+- Do not treat reversal of a payroll accrual as proof that the original cash payment was returned.
+
+If approval is absent, invalid, or unavailable, the recovery must remain blocked.
+
+### 4.4 Preserve actual payment history
+
+A payroll reversal must not fabricate a bank refund.
+
+The original disbursement must remain intact. Recovery is recorded only when an actual employee repayment has been received and confirmed through the application's authorized receipt/payment process.
+
+A reversal journal entry may correct payroll accruals, expenses, liabilities, or other approved accounting balances. It must not increase bank or cash balances merely because the payroll accrual is reversed.
+
+Separate these concepts in the data model and UI:
+
+- Payroll reversal
+- Proposed employee receivable
+- Approved employee receivable
+- Actual repayment received
+- Repayment reconciliation
+- Outstanding receivable balance
+
+Do not conflate any of these states.
+
+---
+
+## 5. STEP 3 — MANDATORY PARTIAL RECOVERY TRACKING
+
+Partial recovery tracking is mandatory.
+
+For each approved receivable, maintain a reliable ledger of repayments and the remaining balance.
+
+The core invariant is:
+
+`Outstanding = Approved Recoverable Amount − Sum(Confirmed, Non-Reversed Repayments)`
+
+Calculate the result in integer minor units and apply the existing currency precision rules. Do not rely on a mutable frontend total as the source of truth.
+
+Enforce these rules:
+
+- A repayment must reference an existing approved receivable.
+- A repayment must match the employee, tenant, and currency.
+- A repayment must have a unique identifier and an auditable source transaction or receipt.
+- Unconfirmed receipts must not reduce the outstanding balance.
+- Duplicate repayment submissions must not reduce the balance twice.
+- Repayments cannot exceed the remaining balance unless an explicitly approved overpayment workflow exists.
+- Reversed or voided repayments must be excluded from the net recovered amount and must produce the appropriate accounting correction.
+- Partial repayments must update the remaining balance correctly.
+- A fully recovered receivable must not accept further repayment allocations.
+- A write-off must not be disguised as a repayment.
+- Every balance-changing event must have an audit trail.
+
+Provide or adapt a backend service for reconciling actual repayments. Reuse the existing receipt/payment infrastructure when suitable.
+
+The UI must show, based on backend-persisted data:
+
+- Original recoverable amount
+- Total confirmed repayments
+- Outstanding amount
+- Recovery status
+- Pending approval status, where applicable
+- Repayment history and references
+- Who approved the recovery
+- Last reconciliation details
+
+Prevent double submission in the UI, but do not treat a disabled button as an idempotency or concurrency guarantee.
+
+---
+
+## 6. STEP 4 — ATOMIC IDEMPOTENCY AND CONCURRENCY
+
+Inspect the current ENG-05 guard around `cycle.isReversed`, `reversalCycleId`, and any related journal-entry creation.
+
+A read-then-write guard is insufficient if two concurrent requests can both observe an unreversed cycle.
+
+Implement atomic idempotency using the repository's existing supported transaction mechanism, such as a Firestore transaction or another genuine atomic persistence primitive.
+
+Within the same atomic boundary, or through an equivalent durable uniqueness mechanism, ensure that:
+
+1. The original payroll cycle is still eligible for reversal.
+2. No completed or pending reversal already owns the same original cycle.
+3. The reversal cycle and its unique linkage to the original are created consistently.
+4. The original cycle's reversal metadata is updated consistently.
+5. The recovery proposal/receivable has a unique idempotency key or unique business linkage.
+6. Repayment identifiers cannot be applied twice.
+7. The associated journal-entry creation is idempotent and linked to the correct business operation.
+
+Do not assume a multi-document operation is atomic unless the underlying persistence mechanism guarantees it.
+
+If the accounting engine and repository cannot participate in one transaction, use a safe, persistent orchestration pattern with explicit pending/completed/failed states and idempotent retries. Document the consistency model and recovery behavior after partial failure.
+
+Do not solve concurrency by relying solely on in-memory locks, frontend state, request timing, or a non-atomic existence check.
+
+### Required concurrency tests
+
+Test at least:
+
+- Two simultaneous reversal requests for the same sealed payroll.
+- Two simultaneous requests to create a recovery record for the same overpayment.
+- Two simultaneous submissions of the same repayment.
+- Two different repayment requests competing for the final outstanding balance.
+- A retry after a simulated failure occurring after one part of the workflow has been persisted.
+- A retry after the journal entry has been created but before the response was returned.
+
+Expected result: exactly one valid business operation for each unique action, no duplicate receivable, no duplicate repayment allocation, and no orphaned or inconsistent journal entries.
+
+---
+
+## 7. STEP 5 — VERIFY ACCOUNTING ECONOMIC CONSISTENCY
+
+Do not consider `totalDebitCents === totalCreditCents` sufficient proof of accounting correctness.
+
+For each relevant scenario, inspect the actual journal lines and prove both:
+
+1. **Mechanical balance:** total debits equal total credits in the journal entry.
+2. **Economic correctness:** the accounts, signs, currency, and net balances represent the actual business events.
+
+Review the existing ENG-05 logic in `AccountingEngine.ts`, especially treatment of:
+
+- `5100_PAYROLL_EXPENSE`
+- `2100_PAYROLL_CLEARING`
+- `2100_ONA_TAXES_PAYABLE`
+- `2110_OFATMA_TAXES_PAYABLE`
+- `1300_EMPLOYEE_ADVANCES`
+- `5110_EMPLOYER_TAX_EXPENSE`
+- `2200_TAXES_PAYABLE`
+- `1010_BANK`
+- `1000_CASH`
+
+These codes are investigation targets, not authorization to invent mappings or post entries blindly.
+
+For each account, confirm its configured accounting meaning, normal balance, and treatment under the applicable reversal scenario.
+
+Test separately:
+
+### Scenario A — Payroll not yet disbursed
+
+- The original payroll accrual is reversed correctly.
+- Payroll liabilities and expenses are corrected as appropriate.
+- No employee cash receivable is fabricated if no overpayment was actually disbursed.
+- No bank or cash refund is recorded.
+
+### Scenario B — Payroll already disbursed, recovery awaiting approval
+
+- The original disbursement remains unchanged.
+- The original cycle remains auditable and sealed.
+- Recovery is pending human approval.
+- No money is considered recovered.
+- No automatic deduction, cash receipt, or fictitious bank refund is generated.
+- No actionable receivable posting occurs before the required approval and account validation.
+
+### Scenario C — Payroll already disbursed, recovery approved
+
+- The approved recoverable amount is supported by the underlying payroll and reversal records.
+- An appropriate employee receivable is recorded exactly once.
+- The original bank disbursement is preserved.
+- The journal entry balances and has economically correct account mappings.
+- The receivable is linked to the original payroll, reversal, employee, and tenant.
+
+### Scenario D — Partial repayment
+
+- Only the confirmed repayment is reconciled.
+- The receivable outstanding balance decreases by exactly the confirmed amount.
+- The accounting entries reflect the actual receipt and receivable reduction.
+- The remaining balance stays open.
+- No bank/cash increase occurs before the receipt is confirmed and recorded.
+
+### Scenario E — Full repayment
+
+- The outstanding balance reaches zero.
+- The receivable is marked recovered only after all confirmed repayment allocations are accounted for.
+- No duplicate or excess receipt allocation occurs.
+
+### Scenario F — Repayment reversal or void
+
+- The original receipt remains auditable.
+- The correction is represented explicitly.
+- The net recovered amount and outstanding balance are recalculated correctly.
+- Accounting entries are corrected without deleting history.
+
+If the existing accounting architecture cannot safely represent one of these cases, stop the affected posting path and report the precise blocker. Do not force a balanced but economically incorrect entry.
+
+---
+
+## 8. STEP 6 — REPORTING, TAX, AND AI CFO CONSISTENCY
+
+Inspect all relevant aggregations and queries for:
+
+- Payroll registers
+- Employee payslips and payroll history
+- Payroll expense reports
+- Net payroll disbursement totals
+- Employee and employer contribution reports
+- Tax and statutory reporting
+- General ledger and trial balance
+- Cash and bank movement reports
+- Employee receivables and recovery aging
+- Financial statements
+- AI CFO summaries, KPIs, recommendations, and forecasts
+
+Determine whether reversal payroll records are included alongside their original records and whether negative amounts are double-counted.
+
+Define and implement explicit aggregation rules:
+
+- Original payroll records remain available for historical traceability.
+- Reversal records must be represented consistently according to the report's purpose.
+- A reversal must not be treated as a second ordinary payroll payment.
+- Gross payroll, net paid, employer cost, employee deductions, and statutory liabilities must not be unintentionally doubled or incorrectly netted.
+- Historical disbursements must reflect actual money movements, not accounting accrual reversals.
+- Employee receivable creation is not a cash receipt.
+- A pending recovery proposal is not a confirmed recovery.
+- Only confirmed repayments count as recovered amounts.
+- Outstanding receivables must remain visible until recovered or formally resolved.
+- AI CFO must consume the same validated accounting/business aggregates as the application's authoritative reports, rather than independently re-adding reversal and original records.
+
+Do not blindly exclude every reversal record from every report. Preserve the ability to audit historical corrections and provide report-specific, semantically correct calculations.
+
+Add regression tests for the aggregation rules and compare expected totals with actual computed output.
+
+---
+
+## 9. STEP 7 — SECURITY AND TENANT ISOLATION
+
+Enforce backend authorization and tenant isolation for every recovery operation.
+
+Verify that:
+
+- Users cannot create or approve recoveries outside their authorized business.
+- Employees cannot approve their own recovery where Maker-Checker applies.
+- Unauthorized users cannot approve, post, reconcile, void, or write off recoveries.
+- Employee IDs and payroll IDs are validated against the same tenant.
+- The client cannot supply a trusted outstanding balance or bypass status transitions.
+- Approval and repayment operations re-read authoritative persisted state.
+- Audit metadata identifies the actual authenticated actor, not a client-supplied user ID.
+- All failure paths preserve the original payroll and existing accounting history.
+
+Reuse the project's established authentication and authorization patterns. Do not weaken existing security rules to make tests pass.
+
+---
+
+## 10. STEP 8 — AUTOMATED REGRESSION TESTS
+
+Add focused tests using the existing test framework and conventions.
+
+Cover at minimum:
+
+1. Unpaid payroll reversal does not create an employee receivable without an actual overpayment.
+2. Already-paid payroll creates a pending recovery proposal and cannot execute recovery automatically.
+3. Unauthorized approval is rejected.
+4. Self-approval is rejected where Maker-Checker applies.
+5. Missing or ambiguous receivable account mapping blocks posting.
+6. Approved recovery creates one appropriate receivable.
+7. Partial repayments correctly reduce outstanding balance.
+8. Multiple partial repayments reconcile to the correct total.
+9. Duplicate repayment submission is idempotent.
+10. Over-repayment is rejected or routed through an explicitly supported, approved workflow.
+11. Voided/reversed repayments restore the outstanding balance correctly.
+12. Full repayment closes the receivable exactly once.
+13. Two concurrent reversal requests do not create duplicate reversal cycles.
+14. Two concurrent recovery requests do not create duplicate receivables.
+15. Concurrent repayment allocations cannot over-allocate the balance.
+16. Retry after partial failure does not leave duplicate or inconsistent accounting entries.
+17. Original bank disbursement is preserved.
+18. All generated journal entries balance mechanically.
+19. Journal entries also satisfy the expected economic account-level invariants.
+20. Payroll, tax, ledger, receivable, cash/bank, and AI CFO aggregates do not double-count the original and reversal records.
+21. Tenant isolation is enforced.
+22. Multi-currency records cannot be reconciled incorrectly.
+23. Existing ENG-05 regression tests continue to pass.
+
+Use deterministic fixtures and isolated test services. Do not use production data or credentials.
+
+Do not claim a test passed if it was skipped, mocked beyond its stated scope, or not executed.
+
+---
+
+## 11. STEP 9 — FRONTEND/BACKEND INTEGRATION
+
+Verify that the recovery UI uses real backend operations and persisted data.
+
+Inspect the complete path:
+
+`UI action → authenticated API/service → authorization → business validation → atomic persistence → accounting posting → persisted result → UI refresh`
+
+Ensure that:
+
+- Recovery status and balances are loaded from the backend.
+- Approval, repayment recording, reconciliation, and viewing history use the existing authenticated service layer.
+- The UI distinguishes pending approval, approved, partially recovered, recovered, and blocked states.
+- Loading, empty, error, conflict, and unauthorized states are handled explicitly.
+- Duplicate clicks cannot create duplicate operations.
+- The frontend never claims a repayment succeeded before the backend confirms it.
+- A stale client cannot overwrite a newer persisted balance.
+- No production view falls back to fabricated sample balances when the backend request fails.
+
+If a required backend endpoint or service method does not exist, implement it using established project conventions, with authorization and tests. Do not build a frontend-only simulation.
+
+---
+
+## 12. VERIFICATION AND DELIVERABLES
+
+After implementation, execute the relevant available checks:
+
+- Targeted unit tests
+- Relevant integration tests
+- ENG-05 regression suite
+- TypeScript/type checking
+- Lint
+- Build or compile checks
+- Concurrency tests using the actual supported persistence abstraction or a faithful isolated test implementation
+- Relevant frontend/backend integration tests
+
+Report the exact commands and actual results. Clearly distinguish executed tests from tests that could not run.
+
+Create or update:
+
+1. `docs/engineering/FINOPS_POST_ENG_05_RECOVERY_INTEGRITY.md`
+2. `docs/engineering/FINOPS_POST_ENG_05_MANUAL_VALIDATION_CHECKLIST.md`
+
+The engineering report must include:
+
+- Defects found in the actual current code
+- Files changed and the reason for each change
+- Recovery state model and approved account mapping used
+- Approval and authorization behavior
+- Atomicity/idempotency design and failure-recovery strategy
+- Journal-entry examples and account-level reconciliation results
+- Partial-repayment examples and outstanding balance calculations
+- Reporting and AI CFO aggregation rules
+- Tests actually executed, commands, and results
+- Remaining blockers and any accounting-owner decisions required
+- Confirmation that production deployment and production data mutation were not performed
+
+The manual checklist must be suitable for the owner to execute in an isolated staging/test environment. Include the expected result for each step and instructions for checking persisted backend records and accounting entries.
+
+---
+
+## 13. ACCEPTANCE CRITERIA
+
+This targeted correction is complete only if the evidence demonstrates all of the following:
+
+- Already-paid payroll recovery cannot execute without human approval.
+- Approved recovery uses a verified employee receivable account or safely blocks if the account is not configured.
+- Real repayments are reconciled against the receivable.
+- Partial repayments and outstanding balances are tracked accurately.
+- No recovery is inferred from a payroll reversal alone.
+- Original bank/cash disbursements are preserved.
+- Duplicate and concurrent operations cannot create duplicate recoveries, repayment allocations, or journal entries.
+- Journal entries are both mechanically balanced and economically correct.
+- Reports, tax calculations, and AI CFO outputs handle original and reversal records consistently.
+- Backend authorization, Maker-Checker, and tenant isolation remain enforced.
+- Existing ENG-05 regression tests still pass.
+- The frontend reflects persisted backend state rather than simulated success.
+- The engineering report and owner manual checklist are produced.
+- No production deployment, production data mutation, Git commit, or Git push occurs.
+
+If any criterion is not met, report the exact failure and classify the work as **PARTIALLY COMPLETE — BLOCKED**, rather than declaring success.
+
+## FINAL RESPONSE FORMAT
+
+Return a concise, evidence-based engineering summary with:
+
+1. **Verdict:** COMPLETE / PARTIALLY COMPLETE — BLOCKED
+2. **Actual defects found**
+3. **Code changes made**
+4. **Tests executed and results**
+5. **Accounting invariants verified**
+6. **Concurrency/idempotency evidence**
+7. **Reporting and AI CFO consistency evidence**
+8. **Manual validation steps for the owner**
+9. **Remaining blockers**
+10. **Production safety confirmation**
+
+Do not claim independent verification without actual test output or inspected code evidence. Do not deploy or push changes.

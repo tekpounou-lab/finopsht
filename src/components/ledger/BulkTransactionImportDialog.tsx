@@ -343,13 +343,13 @@ export default function BulkTransactionImportDialog({
           console.log(`[QuickBooks Import] Resolution table rendered with ${resolutions.size} entries.`);
           if (!hasUnresolved) {
             // Auto-confirm mapping if all were exact/high-confidence matches
-            await handleConfirmQuickBooksMapping(resolutions, rows);
+            await handleConfirmMapping(resolutions, rows);
           } else {
             setLoading(false);
           }
         } else {
           setIsResolving(false);
-          await handleConfirmQuickBooksMapping(resolutions, rows);
+          await handleConfirmMapping(resolutions, rows);
         }
       } catch (e: any) {
         console.error("[QuickBooks Import] Error during processing:", e);
@@ -366,8 +366,7 @@ export default function BulkTransactionImportDialog({
         const parsedData = (results.data || []) as RawImportRow[];
         const errs: string[] = [];
         const validRows: any[] = [];
-        const missingDeptsMap = new Map<string, PendingMissingDepartment>();
-
+        
         let activeEmployees = employees.length > 0 ? employees : activeEmployeesList;
         if (activeEmployees.length === 0) {
           try {
@@ -390,6 +389,30 @@ export default function BulkTransactionImportDialog({
           branches,
           accountingDate
         );
+
+        // Check for unresolved employees
+        const unresolved = resolvedRows.filter(r => r.rhStatus === 'UNKNOWN_EMPLOYEE');
+        
+        if (unresolved.length > 0) {
+          const newMap = new Map<string, AssociateResolution>();
+          unresolved.forEach(u => {
+            if (u.employeeEmail && !newMap.has(u.employeeEmail)) {
+              newMap.set(u.employeeEmail, {
+                rawName: u.employeeEmail,
+                status: 'UNRESOLVED',
+                matchedEmployeeId: null,
+                matchedEmail: null,
+                candidates: []
+              });
+            }
+          });
+          
+          setResolutionMap(newMap);
+          setIsResolving(true);
+          setLoading(false);
+          toast.warning(`${unresolved.length} employé(s) non assigné(s). Veuillez les mapper manuellement.`);
+          return;
+        }
 
         const report = OrganizationalDimensionResolver.generateReport(resolvedRows);
 
@@ -439,13 +462,13 @@ export default function BulkTransactionImportDialog({
         // Summary warnings from report
         if (report.unknownEmployees.length > 0) {
           parseStatsRef.current.warnings.push(
-            `${report.unknownEmployees.length} employé(s) introuvable(s) dans le registre RH (${report.unknownEmployees.slice(0, 5).join(', ')}${report.unknownEmployees.length > 5 ? '...' : ''}). Les lignes associées sont importées sans attribution RH.`
+            `${report.unknownEmployees.length} employé(s) introuvable(s) dans le registre RH. Les lignes associées sont importées sans attribution RH.`
           );
         }
 
         if (report.ambiguousMatches.length > 0) {
           parseStatsRef.current.warnings.push(
-            `${report.ambiguousMatches.length} nom(s) d'employés ambigus (homonymes). Veuillez vérifier l'attribution.`
+            `${report.ambiguousMatches.length} nom(s) d'employés ambigus. Veuillez vérifier l'attribution.`
           );
         }
 
@@ -462,7 +485,6 @@ export default function BulkTransactionImportDialog({
         }
 
         setPreview(validRows);
-        setPendingDepartments(Array.from(missingDeptsMap.values()));
         setErrors(errs);
         setLoading(false);
       },
@@ -476,7 +498,7 @@ export default function BulkTransactionImportDialog({
   // Open the Analysis Modal before importing
 
 
-  const handleConfirmQuickBooksMapping = async (
+  const handleConfirmMapping = async (
     optionalMap?: Map<string, AssociateResolution> | React.MouseEvent,
     optionalRows?: ParsedQuickBooksRow[]
   ) => {
@@ -494,27 +516,49 @@ export default function BulkTransactionImportDialog({
           setActiveEmployeesList(fetched);
         }
       } catch (empErr: any) {
-        console.warn("[QuickBooks Import] Could not load employees list:", empErr);
+        console.warn("[Import] Could not load employees list:", empErr);
       }
     }
 
-    // Convert QuickBooks rows to RawImportRow representation
-    const rawRows: RawImportRow[] = rowsToUse.map((row, i) => {
-      const res = mapToUse.get(row.associate);
-      return {
-        date: accountingDate,
-        type: 'INCOME',
-        category: row.itemName,
-        description: `Vente ${row.itemName}`,
-        amount: Number(row.extPrice.toFixed(2)),
-        currency: 'HTG',
-        employeeId: res?.matchedEmployeeId || undefined,
-        employee_email: res?.matchedEmail || undefined,
-        associate: row.associate,
-        department: row.department || undefined,
-        rowIndex: i
-      };
-    });
+    let rawRows: RawImportRow[] = [];
+
+    if (importMode === 'QUICKBOOKS') {
+      // Convert QuickBooks rows to RawImportRow representation
+      rawRows = rowsToUse.map((row, i) => {
+        const res = mapToUse.get(row.associate);
+        return {
+          date: accountingDate,
+          type: 'INCOME',
+          category: row.itemName,
+          description: `Vente ${row.itemName}`,
+          amount: Number(row.extPrice.toFixed(2)),
+          currency: 'HTG',
+          employeeId: res?.matchedEmployeeId || undefined,
+          employee_email: res?.matchedEmail || undefined,
+          associate: row.associate,
+          department: row.department || undefined,
+          rowIndex: i
+        };
+      });
+    } else {
+      // CSV Mapping confirmation: Use preview as the source of truth
+      rawRows = preview.map((p, i) => {
+        const res = mapToUse.get(p.employee_email);
+        return {
+          date: p.date,
+          type: p.type,
+          category: p.category,
+          description: p.description,
+          amount: p.amount,
+          currency: p.currency,
+          employeeId: res?.matchedEmployeeId || p.employeeId,
+          employee_email: res?.matchedEmail || p.employee_email,
+          branch: p.branch_code,
+          department: p.department_code,
+          rowIndex: i
+        };
+      });
+    }
 
     // Run Organizational Dimension Resolution with strict RH hierarchy (SSOT)
     const resolvedRows = OrganizationalDimensionResolver.resolveBatch(
@@ -562,12 +606,12 @@ export default function BulkTransactionImportDialog({
         branch_code: resolved.branchCode || undefined,
         branchId: resolved.branchId || undefined,
         branchName: resolved.branchName || undefined,
-        department_code: resolved.departmentCode || rowsToUse[index]?.department || undefined,
+        department_code: resolved.departmentCode || (importMode === 'QUICKBOOKS' ? rowsToUse[index]?.department : undefined),
         departmentId: resolved.departmentId || undefined,
         departmentName: resolved.departmentName || undefined,
-        employee_email: resolved.employeeEmail || mapToUse.get(rowsToUse[index]?.associate)?.matchedEmail || undefined,
+        employee_email: resolved.employeeEmail || mapToUse.get(importMode === 'QUICKBOOKS' ? rowsToUse[index]?.associate : preview[index]?.employee_email)?.matchedEmail || undefined,
         employeeId: resolved.employeeId || undefined,
-        employeeName: resolved.employeeName || rowsToUse[index]?.associate || undefined,
+        employeeName: resolved.employeeName || (importMode === 'QUICKBOOKS' ? rowsToUse[index]?.associate : undefined),
         rhStatus: resolved.rhStatus,
         statusLabel: resolved.statusLabel,
         warnings: resolved.warnings
@@ -577,19 +621,19 @@ export default function BulkTransactionImportDialog({
     // Summary warnings from report
     if (report.unknownEmployees.length > 0) {
       parseStatsRef.current.warnings.push(
-        `${report.unknownEmployees.length} employé(s) introuvable(s) dans le registre RH (${report.unknownEmployees.slice(0, 5).join(', ')}${report.unknownEmployees.length > 5 ? '...' : ''}). Les lignes associées sont importées sans attribution RH.`
+        `${report.unknownEmployees.length} employé(s) introuvable(s) dans le registre RH. Les lignes associées sont importées sans attribution RH.`
       );
     }
 
     if (report.ambiguousMatches.length > 0) {
       parseStatsRef.current.warnings.push(
-        `${report.ambiguousMatches.length} nom(s) d'employés ambigus (homonymes). Veuillez vérifier l'attribution.`
+        `${report.ambiguousMatches.length} nom(s) d'employés ambigus. Veuillez vérifier l'attribution.`
       );
     }
 
     if (report.departmentMismatchCount > 0) {
       parseStatsRef.current.warnings.push(
-        `${report.departmentMismatchCount} incohérence(s) de département détectée(s) entre QuickBooks et le dossier RH de l'employé.`
+        `${report.departmentMismatchCount} incohérence(s) de département détectée(s) entre le fichier et le dossier RH de l'employé.`
       );
     }
 
@@ -1449,7 +1493,7 @@ export default function BulkTransactionImportDialog({
 
                   {isResolving ? (
                     <button 
-                      onClick={handleConfirmQuickBooksMapping}
+                      onClick={handleConfirmMapping}
                       className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 text-xs font-bold rounded-xl transition shadow-lg shadow-emerald-900/20 cursor-pointer"
                     >
                       <CheckCircle className="w-4 h-4" /> Confirmer le Mapping

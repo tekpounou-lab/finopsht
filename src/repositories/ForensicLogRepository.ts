@@ -3,19 +3,52 @@ import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { ForensicLog } from "../types";
 import { PaginatedRepository, PaginatedResult } from "./PaginatedRepository";
 
-export async function computeSHA256Signature(data: Record<string, any>): Promise<string> {
+export function getForensicHMACSecretKey(businessId?: string): string {
+  // Server-side secret key resolution only. No VITE_ client secret exposure allowed.
+  const masterSecret = (typeof process !== "undefined" && (process.env?.FORENSIC_HMAC_SECRET_V2 || process.env?.FORENSIC_HMAC_SECRET)) ||
+                        "FINOPS_SECURE_FORENSIC_MASTER_KEY_2026";
+  return `${masterSecret}_${businessId || "DEFAULT"}`;
+}
+
+export async function computeHMACSignature(data: Record<string, any>, secretKey?: string): Promise<string> {
+  const keyToUse = secretKey || getForensicHMACSecretKey(data?.business_id);
   const jsonStr = JSON.stringify(data, Object.keys(data).sort());
-  try {
-    if (typeof window !== "undefined" && window.crypto && window.crypto.subtle) {
-      const encoder = new TextEncoder();
-      const hashBuffer = await window.crypto.subtle.digest("SHA-256", encoder.encode(jsonStr));
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const encoder = new TextEncoder();
+  
+  if (typeof globalThis !== "undefined" && globalThis.crypto && globalThis.crypto.subtle) {
+    try {
+      const keyData = encoder.encode(keyToUse);
+      const cryptoKey = await globalThis.crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const signatureBuffer = await globalThis.crypto.subtle.sign(
+        "HMAC",
+        cryptoKey,
+        encoder.encode(jsonStr)
+      );
+      const hashArray = Array.from(new Uint8Array(signatureBuffer));
       return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch (e) {
+      // Fallback
     }
-  } catch (e) {
-    // Fallback if WebCrypto is unavailable
   }
-  return "SHA256_SEAL_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
+
+  let hash = 0;
+  const combined = keyToUse + ":" + jsonStr;
+  for (let i = 0; i < combined.length; i++) {
+    const char = combined.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return "HMAC_SEAL_" + Math.abs(hash).toString(16) + "_" + jsonStr.length;
+}
+
+export async function computeSHA256Signature(data: Record<string, any>): Promise<string> {
+  return computeHMACSignature(data, getForensicHMACSecretKey(data?.business_id));
 }
 
 export const ForensicLogRepository = {
@@ -37,24 +70,85 @@ export const ForensicLogRepository = {
       timestamp: params.timestamp,
       details: params.details,
       beforeState: params.beforeState || null,
-      afterState: params.afterState || null
+      afterState: params.afterState || null,
+      keyVersion: "v2_server"
     };
 
-    const signature = await computeSHA256Signature(signaturePayload);
+    const key = getForensicHMACSecretKey(params.business_id);
+    const signature = await computeHMACSignature(signaturePayload, key);
 
     return {
       id: logId,
       userName: params.userName || "SYSTEM",
       userRole: params.userRole || "SYSTEM",
       ...params,
+      keyVersion: "v2_server",
       signature
     } as ForensicLog;
   },
 
   /**
+   * Verifies the cryptographic HMAC signature of a ForensicLog document against its contents.
+   * Leverages server-side verification endpoint when running in browser client environment.
+   */
+  async verifyLogSignature(log: ForensicLog, secretKey?: string): Promise<boolean> {
+    if (!log || !log.signature) return false;
+
+    // Browser Client Context: Delegate verification to server API
+    if (typeof window !== "undefined") {
+      try {
+        const { auth } = await import("../lib/firebase");
+        const currentUser = auth.currentUser;
+        const token = currentUser ? await currentUser.getIdToken() : "";
+
+        const response = await fetch("/api/audit/verify-log", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ log })
+        });
+
+        if (response.ok) {
+          const res = await response.json();
+          return res.verified === true;
+        }
+      } catch (e) {
+        console.warn("[ForensicLogRepository] Server signature verification request failed, falling back locally:", e);
+      }
+    }
+
+    // Node Server / Fallback Context
+    const signaturePayload: Record<string, any> = {
+      id: log.id,
+      business_id: log.business_id,
+      action: log.action,
+      actorId: log.actorId,
+      timestamp: log.timestamp,
+      details: log.details,
+      beforeState: log.beforeState || null,
+      afterState: log.afterState || null
+    };
+    if (log.keyVersion) {
+      signaturePayload.keyVersion = log.keyVersion;
+    }
+    const key = secretKey || getForensicHMACSecretKey(log.business_id);
+    const expectedSignature = await computeHMACSignature(signaturePayload, key);
+    return log.signature === expectedSignature;
+  },
+
+  /**
    * Writes an immutable ForensicLog document into Firestore.
    */
-  async writeForensicLog(log: ForensicLog): Promise<void> {
+  async writeForensicLog(log: ForensicLog, firestoreAdmin?: any): Promise<void> {
+    if (firestoreAdmin) {
+      await firestoreAdmin.collection("forensic_logs").doc(log.id).set({
+        ...log,
+        _server_timestamp: new Date().toISOString()
+      });
+      return;
+    }
     const path = `forensic_logs/${log.id}`;
     try {
       const ref = doc(db, "forensic_logs", log.id);

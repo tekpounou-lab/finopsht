@@ -19,7 +19,8 @@ export type AnalyticsPeriod =
   | "PREVIOUS_QUARTER"
   | "YEAR"
   | "PREVIOUS_YEAR"
-  | "CUSTOM";
+  | "CUSTOM"
+  | "ALL";
 
 export type MetricSemanticState =
   | "LOADING"
@@ -32,11 +33,11 @@ export type MetricSemanticState =
   | "UNDEFINED"
   | "INSUFFICIENT_DATA";
 
-export interface KPIComparison {
-  currentValue: number;
-  previousValue: number;
-  difference: number;
-  differencePercentage: number;
+export interface KPIComparison<T extends number | null = number> {
+  currentValue: T;
+  previousValue: T;
+  difference: T;
+  differencePercentage: T;
   trend: "UP" | "DOWN" | "STABLE";
   direction: "UP" | "DOWN" | "NEUTRAL";
   state?: MetricSemanticState;
@@ -51,7 +52,8 @@ export interface BranchPerformance {
   nonPayrollExpenses?: number;
   profit: number;
   margin: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
+  attendanceFrequency?: number | null;
   employeeCount: number;
   efficiencyScore: number;
 }
@@ -63,7 +65,8 @@ export interface DepartmentPerformance {
   payrollCost?: number;
   nonPayrollExpenses?: number;
   employeeCount: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
+  attendanceFrequency?: number | null;
   averageHours: number;
   revenue?: number;
   margin?: number;
@@ -83,7 +86,7 @@ export interface EmployeeScorecard {
   employeeName: string;
   branchId: string;
   departmentId: string;
-  attendanceConsistencyScore: number;
+  attendanceConsistencyScore: number | null;
   latenessScore: number;
   productivityIndex: number;
   overtimeHours: number;
@@ -149,7 +152,8 @@ export interface AnalyticsSnapshot {
   // HR & Payroll KPIs
   payrollCost: KPIComparison;
   activeStaff: KPIComparison;
-  attendanceRate: KPIComparison;
+  attendanceRate: KPIComparison<number | null>;
+  attendanceFrequency?: KPIComparison<number | null>;
   latenessRate: KPIComparison;
   absenceRate: KPIComparison;
   avgHoursWorked: KPIComparison;
@@ -169,6 +173,7 @@ export interface AnalyticsSnapshot {
   payrollCostRatio: number;
   hrROI?: number;
   payrollAggregates?: PayrollAggregates;
+  incompleteConfigCount?: number;
   isSocialTaxEnabled?: boolean;
   workforceProfitability?: WorkforceProfitabilitySnapshot;
 }

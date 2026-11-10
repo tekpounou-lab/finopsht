@@ -10,13 +10,29 @@ export interface PICFilters {
   departmentId: string;
   metricType: PICMetricType;
   searchQuery: string;
+  accountingBasis?: "CASH" | "ACCRUAL";
+  presentationMode?: "SIMPLIFIED" | "EXPERT";
+}
+
+export interface TillDiscrepancyAlert {
+  id: string;
+  tillId: string;
+  tillName: string;
+  branchId?: string;
+  branchName?: string;
+  tellerName: string;
+  discrepancyAmount: number;
+  currency: string;
+  closedAt: string;
+  sessionId: string;
+  notes?: string;
 }
 
 export interface SimplifiedMetrics {
   totalPayroll: number;
   activeHeadcount: number;
   turnoverRate: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
   totalRevenue: number;
   totalExpenses: number;
   netProfit: number;
@@ -28,6 +44,7 @@ export interface SimplifiedMetrics {
   totalCommissions: number;
   isDataAvailable: boolean;
   totalRecordsCount: number;
+  incompleteConfigCount?: number;
 }
 
 export interface DepartmentMetricBreakdown {
@@ -35,7 +52,7 @@ export interface DepartmentMetricBreakdown {
   departmentName: string;
   headcount: number;
   payroll: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
   revenue: number;
   expenses: number;
   netMargin: number;
@@ -47,7 +64,7 @@ export interface BranchMetricBreakdown {
   branchName: string;
   headcount: number;
   payroll: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
   revenue: number;
   efficiencyScore: number;
 }
@@ -58,7 +75,7 @@ export interface TrendDataPoint {
   payroll: number;
   revenue: number;
   headcount: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
   expenses: number;
 }
 
@@ -70,7 +87,7 @@ export interface EmployeePerformanceRanking {
   branchId: string;
   branchName: string;
   totalHours: number;
-  attendanceScore: number;
+  attendanceScore: number | null;
   salesVolume: number;
   commission: number;
   productivityIndex: number;
@@ -85,7 +102,7 @@ export interface CrossTableMatrixCell {
   headcount: number;
   payroll: number;
   revenue: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
 }
 
 export interface ExpertMetrics {
@@ -96,6 +113,7 @@ export interface ExpertMetrics {
   employeeRankings: EmployeePerformanceRanking[];
   crossTableMatrix: CrossTableMatrixCell[];
   isDataAvailable: boolean;
+  operationalAuditAlerts?: TillDiscrepancyAlert[];
 }
 
 export interface RawPerformanceDataSet {

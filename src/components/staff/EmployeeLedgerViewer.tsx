@@ -8,47 +8,66 @@ export default function EmployeeLedgerViewer({ employee, payrollRecords, ledgerT
     if (!employee) return [];
     const entries: any[] = [];
     
+    // 1. Process Payroll Records
     payrollRecords?.forEach((rec: any) => {
-      if (rec.employeeId !== employee.id) return;
+      if (rec.employeeId !== employee.id && rec.employee_id !== employee.id) return;
 
-      if (rec.grossSalary > 0) {
-        entries.push({ id: `pl_base_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "SALARY", title: "Salaire de Base", amount: rec.grossSalary, operator: "+" });
+      const pDate = rec.createdAt || rec.date || rec.created_at || new Date().toISOString();
+
+      if ((rec.grossSalary || 0) > 0 || (rec.baseSalary || 0) > 0) {
+        entries.push({ id: `pl_base_${rec.id}`, date: pDate, type: "SALARY", title: "Salaire de Base", amount: rec.grossSalary || rec.baseSalary, operator: "+" });
       }
-      if (rec.bonuses_cents > 0) {
-        entries.push({ id: `pl_bonus_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "BONUS", title: "Primes", amount: rec.bonuses_cents / 100, operator: "+" });
+      if ((rec.bonuses_cents || 0) > 0 || (rec.bonus || 0) > 0) {
+        const bAmt = rec.bonuses_cents ? rec.bonuses_cents / 100 : (rec.bonus || 0);
+        entries.push({ id: `pl_bonus_${rec.id}`, date: pDate, type: "BONUS", title: "Primes & Gratifications", amount: bAmt, operator: "+" });
       }
-      if (rec.commissions > 0) {
-        entries.push({ id: `pl_comm_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "COMMISSION", title: "Commissions", amount: rec.commissions, operator: "+" });
+      if ((rec.commissions || 0) > 0 || (rec.commission_cents || 0) > 0) {
+        const cAmt = rec.commission_cents ? rec.commission_cents / 100 : (rec.commissions || 0);
+        entries.push({ id: `pl_comm_${rec.id}`, date: pDate, type: "COMMISSION", title: "Commissions sur Ventes", amount: cAmt, operator: "+" });
       }
-      if (rec.penalties_cents > 0) {
-        entries.push({ id: `pl_pen_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "DEDUCTION", title: "Pénalités / Retards", amount: rec.penalties_cents / 100, operator: "-" });
+      if ((rec.penalties_cents || 0) > 0 || (rec.penalties || 0) > 0) {
+        const penAmt = rec.penalties_cents ? rec.penalties_cents / 100 : (rec.penalties || 0);
+        entries.push({ id: `pl_pen_${rec.id}`, date: pDate, type: "DEDUCTION", title: "Pénalités / Retards", amount: penAmt, operator: "-" });
       }
-      if (rec.advancesTreated > 0) {
-        entries.push({ id: `pl_adv_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "DEDUCTION", title: "Déduction Avance/Prêt", amount: rec.advancesTreated, operator: "-" });
+      if ((rec.advancesTreated || 0) > 0 || (rec.advances_cents || 0) > 0) {
+        const advAmt = rec.advances_cents ? rec.advances_cents / 100 : (rec.advancesTreated || 0);
+        entries.push({ id: `pl_adv_${rec.id}`, date: pDate, type: "DEDUCTION", title: "Déduction Avance/Prêt", amount: advAmt, operator: "-" });
       }
-      if (rec.cnssDeduction > 0) {
-        entries.push({ id: `pl_cnss_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "DEDUCTION", title: "Déduction CNSS (Assurance)", amount: rec.cnssDeduction, operator: "-" });
+      if ((rec.cnssDeduction || 0) > 0 || (rec.taxDeduction || 0) > 0) {
+        entries.push({ id: `pl_cnss_${rec.id}`, date: pDate, type: "DEDUCTION", title: "Déductions CNSS / Taxes", amount: rec.cnssDeduction || rec.taxDeduction, operator: "-" });
       }
       
-      entries.push({ id: `pl_net_${rec.id}`, date: rec.createdAt || new Date().toISOString(), type: "PAYMENT", title: "Validation Paie", amount: rec.netPaid, operator: "0" });
+      const netAmt = rec.netPaid || rec.net_salary || (rec.net_cents ? rec.net_cents / 100 : 0);
+      if (netAmt > 0) {
+        entries.push({ id: `pl_net_${rec.id}`, date: pDate, type: "PAYMENT", title: "Validation Bulletin de Paie", amount: netAmt, operator: "0" });
+      }
     });
 
+    // 2. Process General Ledger Transactions
     ledgerTransactions?.forEach((tx: any) => {
-        const isMatch = tx.employeeId === employee.id || 
-                        tx.employee_id === employee.id || 
-                        (tx.metadata && (tx.metadata.employeeId === employee.id || tx.metadata.employee_id === employee.id));
-        if (isMatch) {
-            const amount = tx.amount_cents ? tx.amount_cents / 100 : (tx.amount || 0);
-            const txDate = tx.date || tx.createdAt || new Date().toISOString();
-            
-            if (tx.type === "ADVANCE" || (tx.type === "EXPENSE" && (tx.category === "Avans" || tx.category === "Avance"))) {
-              entries.push({ id: `tx_${tx.id}`, date: txDate, type: "DEDUCTION", title: `Avance sur Salaire (${tx.category || "Avans"})`, amount, operator: "-" });
-            } else if (tx.type === "EXPENSE" && tx.status === "POSTED") {
-              entries.push({ id: `tx_${tx.id}`, date: txDate, type: "PAYMENT_DISBURSED", title: tx.description || "Paiement Effectué (Décaissement)", amount, operator: "0" });
-            } else if ((tx.type === "INCOME" || tx.type === "TRANSFER") && (tx.category === "Payé dèt" || tx.category === "Remboursement" || tx.category === "Debt Repayment")) {
-              entries.push({ id: `tx_${tx.id}`, date: txDate, type: "BONUS", title: "Remboursement Avance / Dette", amount, operator: "+" });
-            }
+      const isMatch = (tx.employeeId && tx.employeeId === employee.id) || 
+                      (tx.employee_id && tx.employee_id === employee.id) || 
+                      (tx.employeeEmail && employee.email && tx.employeeEmail.toLowerCase() === employee.email.toLowerCase()) ||
+                      (tx.employee_email && employee.email && tx.employee_email.toLowerCase() === employee.email.toLowerCase()) ||
+                      (tx.signerId && tx.signerId === employee.id) ||
+                      (tx.createdBy && employee.name && tx.createdBy.toLowerCase() === employee.name.toLowerCase()) ||
+                      (tx.metadata && (tx.metadata.employeeId === employee.id || tx.metadata.employee_id === employee.id));
+      
+      if (isMatch) {
+        const amount = tx.amount_cents ? tx.amount_cents / 100 : (tx.amount || 0);
+        const txDate = tx.date || tx.createdAt || tx.created_at || new Date().toISOString();
+        const desc = tx.description || tx.category || "Transaction Comptable";
+        
+        if (tx.type === "ADVANCE" || (tx.type === "EXPENSE" && (tx.category === "Avans" || tx.category === "Avance" || tx.category === "ADVANCE"))) {
+          entries.push({ id: `tx_${tx.id}`, date: txDate, type: "DEDUCTION", title: `Avance sur Salaire (${tx.category || "Avans"})`, amount, operator: "-" });
+        } else if (tx.type === "EXPENSE") {
+          entries.push({ id: `tx_${tx.id}`, date: txDate, type: "PAYMENT_DISBURSED", title: desc, amount, operator: "-" });
+        } else if (tx.type === "INCOME") {
+          entries.push({ id: `tx_${tx.id}`, date: txDate, type: "BONUS", title: desc, amount, operator: "+" });
+        } else {
+          entries.push({ id: `tx_${tx.id}`, date: txDate, type: "PAYMENT", title: desc, amount, operator: "0" });
         }
+      }
     });
     
     return entries.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());

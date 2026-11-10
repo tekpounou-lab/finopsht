@@ -27,6 +27,7 @@ interface ConnectedFinanceLedgerProps {
   selectedMonth?: number | string;
   employees?: Employee[];
   ledgerTransactions?: LedgerTransaction[];
+  initialView?: 'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION' | 'CASH_MANAGEMENT' | 'REPORT_CENTER';
 }
 
 export const ConnectedFinanceLedger: React.FC<ConnectedFinanceLedgerProps> = (props) => {
@@ -51,6 +52,7 @@ export const ConnectedFinanceLedger: React.FC<ConnectedFinanceLedgerProps> = (pr
   const onAddTransaction = props.onAddTransaction || (() => {});
   const onAddForensicLog = props.onAddForensicLog || (() => {});
   const onAddEvent = props.onAddEvent || (() => {});
+  const initialView = props.initialView;
 
   return (
     <Suspense fallback={<div className="text-xs text-slate-500 italic p-4">Chargement du Grand Livre Financier...</div>}>
@@ -67,6 +69,7 @@ export const ConnectedFinanceLedger: React.FC<ConnectedFinanceLedgerProps> = (pr
         onAddTransaction={onAddTransaction}
         onAddForensicLog={onAddForensicLog}
         onAddEvent={onAddEvent}
+        initialView={initialView}
       />
     </Suspense>
   );

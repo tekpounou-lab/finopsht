@@ -95,6 +95,7 @@ describe("Payroll Engine Calculation Rules & Rodson Charles Test Case", () => {
           standardQuinzaineHours: 96,
           enableSurvivalFloor: false,
           isTaxesEnabled: false,
+          requireAttendanceForPayroll: false,
         },
         onAddRecords: (records) => {
           calculatedRecords = records;
@@ -277,6 +278,7 @@ describe("Payroll Engine Calculation Rules & Rodson Charles Test Case", () => {
           onaEmployeeRate: 0.06,
           ofatmaEmployeeRate: 0.02,
           enableSurvivalFloor: false,
+          requireAttendanceForPayroll: false,
         },
         onAddRecords: (records) => {
           calculatedRecords = records;
@@ -328,6 +330,7 @@ describe("Payroll Engine Calculation Rules & Rodson Charles Test Case", () => {
           standardQuinzaineHours: 96,
           isTaxesEnabled: false,
           enableSurvivalFloor: false,
+          requireAttendanceForPayroll: false,
         },
         onAddRecords: (records) => {
           calculatedRecords = records;
@@ -371,6 +374,7 @@ describe("Payroll Engine Calculation Rules & Rodson Charles Test Case", () => {
           isTaxesEnabled: false,
           enable_social_taxes: false,
           enableSurvivalFloor: false,
+          requireAttendanceForPayroll: false,
         },
         taxConfig: {
           business_id: "biz_test",

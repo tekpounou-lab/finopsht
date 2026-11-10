@@ -26,7 +26,8 @@ export interface EnrichedDepartmentMetric {
   totalStaff?: number;
   averageHours: number;
   avgHours?: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
+  attendanceFrequency?: number | null;
   productivityScore: number;
   revenue: number;
   expenses: number;
@@ -43,7 +44,8 @@ export interface EnrichedBranchMetric {
   expenses: number;
   profit: number;
   margin: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
+  attendanceFrequency?: number | null;
   efficiencyScore: number;
 }
 
@@ -57,7 +59,7 @@ export interface EmployeeScorecard {
   hoursVariance: number;
   baseSalary: number;
   commissions: number;
-  attendanceConsistencyScore: number;
+  attendanceConsistencyScore: number | null;
   latenessScore: number;
   productivityIndex: number;
   hourlyEfficiencyRatio: number;

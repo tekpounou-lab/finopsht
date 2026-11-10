@@ -198,10 +198,13 @@ export class AnalyticsExplainabilityEngine {
     } else {
       // Attendance
       const kpi = snapshot.attendanceRate;
-      diff = kpi.difference;
-      diffPct = kpi.differencePercentage;
+      diff = kpi.difference ?? 0;
+      diffPct = kpi.differencePercentage ?? 0;
       direction = kpi.direction as "UP" | "DOWN" | "STABLE";
 
+      if (kpi.currentValue === null) {
+        causes.push("Contractual hours configuration incomplete or zero expected working days in period");
+      }
       if (snapshot.absenceRate.currentValue > 5) {
         causes.push(`Elevated absenteeism registered: ${snapshot.absenceRate.currentValue.toFixed(1)}%`);
       }
@@ -212,25 +215,33 @@ export class AnalyticsExplainabilityEngine {
 
       // Contributions
       deptPerf.forEach(d => {
-        deptCont.push({
-          name: d.departmentName,
-          amount: d.attendanceRate,
-          percentage: d.attendanceRate
-        });
+        if (d.attendanceRate !== null) {
+          deptCont.push({
+            name: d.departmentName,
+            amount: d.attendanceRate,
+            percentage: d.attendanceRate
+          });
+        }
       });
 
       branchPerf.forEach(b => {
-        branchCont.push({
-          name: b.branchName,
-          amount: b.attendanceRate,
-          percentage: b.attendanceRate
-        });
+        if (b.attendanceRate !== null) {
+          branchCont.push({
+            name: b.branchName,
+            amount: b.attendanceRate,
+            percentage: b.attendanceRate
+          });
+        }
       });
 
-      if (empScorecards.length > 0) {
-        const sortedEmp = [...empScorecards].sort((a, b) => b.attendanceConsistencyScore - a.attendanceConsistencyScore);
+      const computableScorecards = empScorecards.filter(
+        (e): e is typeof e & { attendanceConsistencyScore: number } =>
+          typeof e.attendanceConsistencyScore === "number"
+      );
+      if (computableScorecards.length > 0) {
+        const sortedEmp = [...computableScorecards].sort((a, b) => b.attendanceConsistencyScore - a.attendanceConsistencyScore);
         topPositiveDriver = `Model Punctuality: ${sortedEmp[0].employeeName} (${sortedEmp[0].attendanceConsistencyScore}%)`;
-        const lowEmp = [...empScorecards].sort((a, b) => a.attendanceConsistencyScore - b.attendanceConsistencyScore);
+        const lowEmp = [...computableScorecards].sort((a, b) => a.attendanceConsistencyScore - b.attendanceConsistencyScore);
         if (lowEmp[0] && lowEmp[0].attendanceConsistencyScore < 90) {
           topNegativeDriver = `Attendance Gap: ${lowEmp[0].employeeName} (${lowEmp[0].attendanceConsistencyScore}%)`;
         }

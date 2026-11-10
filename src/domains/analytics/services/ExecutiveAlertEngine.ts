@@ -19,9 +19,9 @@ export class ExecutiveAlertEngine {
     const alerts: ExecutiveAlert[] = [];
     const nowStr = new Date().toISOString();
 
-    // 1. Revenue drop alert
+    // 1. Revenue drop alert (only if previous period had revenue and current has active drop, excluding empty periods where both are 0)
     const rev = snapshot.revenue;
-    if (rev.differencePercentage < -5) {
+    if (rev.currentValue !== null && rev.previousValue !== null && rev.differencePercentage !== null && rev.currentValue > 0 && rev.previousValue > 0 && rev.differencePercentage < -5) {
       alerts.push({
         id: "alert_rev_drop",
         severity: "CRITICAL",
@@ -36,14 +36,12 @@ export class ExecutiveAlertEngine {
 
     // 2. Payroll exceeded forecast
     const payroll = snapshot.payrollCost;
-    const forecast = snapshot.forecast;
-    // Let's check if current monthly payroll exceeds the 30-days forecast divided or similar
-    if (payroll.differencePercentage > 10) {
+    if (payroll.currentValue !== null && payroll.differencePercentage !== null && payroll.currentValue > 0 && payroll.differencePercentage > 10) {
       alerts.push({
         id: "alert_payroll_spike",
         severity: "WARNING",
         title: "Personnel Budget Overrun Alert",
-        description: `Payroll costs rose by ${payroll.differencePercentage.toFixed(1)}% (+${payroll.difference.toLocaleString()} HTG). This indicates budget creep.`,
+        description: `Payroll costs rose by ${payroll.differencePercentage.toFixed(1)}% (+${(payroll.difference || 0).toLocaleString()} HTG). This indicates budget creep.`,
         source: "Human Resources",
         suggestedAction: "Review overtime hours, recently authorized contract rate upgrades, or commission disbursements.",
         relatedKpi: "Payroll Cost",
@@ -51,9 +49,10 @@ export class ExecutiveAlertEngine {
       });
     }
 
-    // 3. Attendance below threshold
+    // 3. Attendance below threshold (only if active staff and attendance observations exist)
     const attendance = snapshot.attendanceRate;
-    if (attendance.currentValue < 85) {
+    const hasActiveStaff = (snapshot.activeStaff?.currentValue || 0) > 0;
+    if (hasActiveStaff && attendance.currentValue !== null && attendance.currentValue > 0 && attendance.currentValue < 85) {
       alerts.push({
         id: "alert_low_attendance",
         severity: "CRITICAL",
@@ -68,7 +67,7 @@ export class ExecutiveAlertEngine {
 
     // 4. Cash Flow warning
     const cash = snapshot.cashOnHand;
-    if (cash.currentValue < 50000) {
+    if (cash.currentValue !== null && cash.currentValue > 0 && cash.currentValue < 50000) {
       alerts.push({
         id: "alert_cash_low",
         severity: "CRITICAL",
@@ -84,7 +83,6 @@ export class ExecutiveAlertEngine {
     // 5. Department over budget
     const depts = snapshot.departmentPerformance || [];
     depts.forEach(d => {
-      // If expenses in a department exceed standard bounds or has poor attendance
       if (d.expenses > 150000) {
         alerts.push({
           id: `alert_dept_budget_${d.departmentId}`,
@@ -99,14 +97,14 @@ export class ExecutiveAlertEngine {
       }
     });
 
-    // 6. Employee absenteeism increase
+    // 6. Employee absenteeism increase (only if attendance data exists)
     const absence = snapshot.absenceRate;
-    if (absence.currentValue > 10) {
+    if (hasActiveStaff && attendance.currentValue !== null && attendance.currentValue > 0 && absence.currentValue !== null && absence.currentValue > 10) {
       alerts.push({
         id: "alert_absenteeism_rising",
         severity: "WARNING",
         title: "Employee Absenteeism Rate Warning",
-        description: `Absenteeism rate reached ${absence.currentValue.toFixed(1)}% (+${absence.differencePercentage.toFixed(1)}% increase).`,
+        description: `Absenteeism rate reached ${absence.currentValue.toFixed(1)}% (+${(absence.differencePercentage || 0).toFixed(1)}% increase).`,
         source: "Staff Operations",
         suggestedAction: "Establish feedback loops with top-absentee employees, audit underperformance signals on scorecards.",
         relatedKpi: "Absenteeism Rate",

@@ -13,9 +13,15 @@ import { PICSimplifiedView } from "../components/performance/PICSimplifiedView";
 import { PICExpertView } from "../components/performance/PICExpertView";
 import { useBusinessContext } from "../contexts/BusinessContext";
 
+import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
+import { OperationalRiskAuditPanel } from "../components/performance/OperationalRiskAuditPanel";
+
 export const PerformanceIntelligenceCenter: React.FC = () => {
   const { business } = useBusinessContext();
-  const [isExpertMode, setIsExpertMode] = useState<boolean>(false);
+  const { filters: execFilters, setAccountingBasis, setPresentationMode } = useExecutiveFilters();
+
+  const isExpertMode = execFilters.presentationMode === "EXPERT";
+  const accountingBasis = execFilters.accountingBasis || execFilters.accountingMode || "CASH";
 
   const {
     filters,
@@ -40,11 +46,13 @@ export const PerformanceIntelligenceCenter: React.FC = () => {
   useEffect(() => {
     console.info(`[PIC] [PerformanceIntelligenceCenter] Rendered state:`, {
       mode: isExpertMode ? "Expert" : "Simplified",
+      basis: accountingBasis,
       filters,
       dataAvailable: simplifiedMetrics.isDataAvailable,
       totalRecords: simplifiedMetrics.totalRecordsCount,
+      incompleteConfigCount: simplifiedMetrics.incompleteConfigCount || 0,
     });
-  }, [isExpertMode, filters, simplifiedMetrics]);
+  }, [isExpertMode, accountingBasis, filters, simplifiedMetrics]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-6" id="performance-intelligence-center-page">
@@ -92,8 +100,22 @@ export const PerformanceIntelligenceCenter: React.FC = () => {
         branches={branches}
         departments={departments}
         isExpertMode={isExpertMode}
-        onToggleMode={setIsExpertMode}
+        onToggleMode={(exp) => setPresentationMode(exp ? "EXPERT" : "SIMPLIFIED")}
+        accountingBasis={accountingBasis}
+        onAccountingBasisChange={setAccountingBasis}
       />
+
+      {/* Incomplete Configuration Banner */}
+      {simplifiedMetrics.incompleteConfigCount && simplifiedMetrics.incompleteConfigCount > 0 ? (
+        <div className="bg-amber-950/40 border border-amber-800/80 rounded-2xl p-4 flex items-center justify-between gap-3 text-amber-300 text-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 shrink-0 text-amber-400" />
+            <span>
+              <strong>Configuration Incomplète :</strong> {simplifiedMetrics.incompleteConfigCount} employé(s) manquent de contrat ou d'heures hebdomadaires configurées. Leurs assiduités ne sont pas fabriquées artificiellement.
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       {/* Error Alert if any */}
       {error && (
@@ -149,18 +171,21 @@ export const PerformanceIntelligenceCenter: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               <span>
-                Mode Actif : <strong className="text-cyan-300 font-bold">{isExpertMode ? "Mode Expert — Vue Engagement (Économique)" : "Mode Simple — Vue Constaté (Trésorerie / Décaissement)"}</strong>
+                Mode Actif : <strong className="text-cyan-300 font-bold">{isExpertMode ? "Mode Expert — Vue Engagement (Économique)" : "Mode Simplifié — Vue Synthèse"}</strong> | Base Comptable : <strong className="text-emerald-300 font-bold">{accountingBasis === "CASH" ? "Trésorerie (CASH)" : "Engagement (ACCRUAL)"}</strong>
               </span>
             </div>
             <span className="text-[11px] text-slate-400">
-              {isExpertMode ? "Comptabilité d'engagement (Période de travail & salaires engagés)" : "Comptabilité de caisse (Décaissements effectifs & flux réels)"}
+              {accountingBasis === "ACCRUAL" ? "Comptabilité d'engagement (Droits constatés & exercices)" : "Comptabilité de caisse (Encaissements/décaissements effectifs)"}
             </span>
           </div>
 
           {!isExpertMode ? (
             <PICSimplifiedView metrics={simplifiedMetrics} onResetFilters={resetFilters} />
           ) : (
-            <PICExpertView metrics={expertMetrics} />
+            <div className="space-y-4">
+              <OperationalRiskAuditPanel alerts={expertMetrics.operationalAuditAlerts} />
+              <PICExpertView metrics={expertMetrics} />
+            </div>
           )}
         </div>
       )}

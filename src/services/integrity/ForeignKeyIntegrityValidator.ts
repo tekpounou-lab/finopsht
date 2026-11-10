@@ -14,7 +14,7 @@ import { db } from "../../lib/firebase";
 import { resilientGetDoc } from "../../utils/resilientFirestore";
 
 export class ForeignKeyIntegrityViolationError extends Error {
-  public readonly code: string = "FOREIGN_KEY_INTEGRITY_VIOLATION";
+  public readonly code: string;
   public readonly businessId: string;
   public readonly fieldName: string;
   public readonly referencedCollection: string;
@@ -26,9 +26,11 @@ export class ForeignKeyIntegrityViolationError extends Error {
     fieldName: string;
     referencedCollection: string;
     missingId: string;
+    code?: string;
   }) {
     super(params.message);
     this.name = "ForeignKeyIntegrityViolationError";
+    this.code = params.code || "FOREIGN_KEY_INTEGRITY_VIOLATION";
     this.businessId = params.businessId;
     this.fieldName = params.fieldName;
     this.referencedCollection = params.referencedCollection;
@@ -67,24 +69,101 @@ export class ForeignKeyIntegrityValidator {
     this.cache.set(key, { exists, expiresAt: Date.now() + this.CACHE_TTL_MS });
   }
 
-  /**
-   * Validates that the business exists.
-   */
-  public async validateBusinessExists(businessId: string): Promise<void> {
-    if (!businessId || businessId === "global") return;
+  private async fetchDocSnapshot(
+    collectionName: string,
+    docId: string,
+    businessId?: string,
+    adminDb?: any
+  ): Promise<{ exists: boolean; data: () => any }> {
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
+    if (isServerRuntime) {
+      let resolvedAdminDb = adminDb;
+      if (!resolvedAdminDb) {
+        const adminModulePath = "../../lib/firebaseAdmin";
+        const { getAdminFirestore } = await import(/* @vite-ignore */ adminModulePath);
+        resolvedAdminDb = getAdminFirestore();
+      }
+      const rootSnap = await resolvedAdminDb.doc(`${collectionName}/${docId}`).get();
+      if (rootSnap && rootSnap.exists) {
+        return {
+          exists: true,
+          data: () => (typeof rootSnap.data === "function" ? rootSnap.data() : rootSnap)
+        };
+      }
+      if (businessId && collectionName !== "businesses") {
+        const subSnap = await resolvedAdminDb
+          .doc(`businesses/${businessId}/${collectionName}/${docId}`)
+          .get();
+        if (subSnap && subSnap.exists) {
+          return {
+            exists: true,
+            data: () => (typeof subSnap.data === "function" ? subSnap.data() : subSnap)
+          };
+        }
+      }
+      return { exists: false, data: () => null };
+    }
 
-    const cacheKey = `biz_${businessId}`;
-    const cached = this.getCached(cacheKey);
-    if (cached === true) return;
-
-    const docSnap = await resilientGetDoc(doc(db, "businesses", businessId), {
+    let snap = await resilientGetDoc(doc(db, collectionName, docId), {
       timeoutMs: 2500,
       maxRetries: 1,
       fallbackToCache: true,
       throwOnNetworkFailure: false
     });
 
-    if (!docSnap || !docSnap.exists()) {
+    if ((!snap || !snap.exists()) && businessId && collectionName !== "businesses") {
+      snap = await resilientGetDoc(doc(db, "businesses", businessId, collectionName, docId), {
+        timeoutMs: 2500,
+        maxRetries: 1,
+        fallbackToCache: true,
+        throwOnNetworkFailure: false
+      });
+    }
+
+    if (!snap || !snap.exists()) {
+      return { exists: false, data: () => null };
+    }
+    return { exists: true, data: () => snap.data() };
+  }
+
+  private resolveDocTenantOrThrow(
+    data: any,
+    businessId: string,
+    fieldName: string,
+    referencedCollection: string,
+    entityId: string
+  ): string {
+    const b1 = typeof data?.business_id === "string" ? data.business_id.trim() : "";
+    const b2 = typeof data?.businessId === "string" ? data.businessId.trim() : "";
+    if (b1 && b2 && b1 !== b2) {
+      throw new ForeignKeyIntegrityViolationError({
+        code: "FORBIDDEN_TENANT_ACCESS",
+        message: `Erreur d'isolation multi-tenant : Contradiction business_id/businessId sur ${referencedCollection}/${entityId}.`,
+        businessId,
+        fieldName,
+        referencedCollection,
+        missingId: entityId
+      });
+    }
+    return b1 || b2;
+  }
+
+  /**
+   * Validates that the business exists.
+   */
+  public async validateBusinessExists(businessId: string, adminDb?: any): Promise<void> {
+    if (!businessId || businessId === "global") return;
+
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
+    const cacheKey = `biz_${businessId}`;
+    if (!isServerRuntime) {
+      const cached = this.getCached(cacheKey);
+      if (cached === true) return;
+    }
+
+    const docSnap = await this.fetchDocSnapshot("businesses", businessId, undefined, adminDb);
+
+    if (!docSnap.exists) {
       this.setCache(cacheKey, false);
       throw new ForeignKeyIntegrityViolationError({
         message: `Erreur d'intégrité référentielle : L'entreprise [${businessId}] n'existe pas dans le système.`,
@@ -101,32 +180,23 @@ export class ForeignKeyIntegrityValidator {
   /**
    * Validates that the department exists and belongs to the business tenant.
    */
-  public async validateDepartmentExists(businessId: string, departmentId: string): Promise<void> {
+  public async validateDepartmentExists(
+    businessId: string,
+    departmentId: string,
+    adminDb?: any
+  ): Promise<void> {
     if (!departmentId || departmentId === "DEPT_DEFAULT" || departmentId === "d_admin") return;
 
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
     const cacheKey = `dept_${businessId}_${departmentId}`;
-    const cached = this.getCached(cacheKey);
-    if (cached === true) return;
-
-    // Check root departments collection
-    let deptSnap = await resilientGetDoc(doc(db, "departments", departmentId), {
-      timeoutMs: 2500,
-      maxRetries: 1,
-      fallbackToCache: true,
-      throwOnNetworkFailure: false
-    });
-
-    // Fallback check subcollection
-    if (!deptSnap || !deptSnap.exists()) {
-      deptSnap = await resilientGetDoc(doc(db, "businesses", businessId, "departments", departmentId), {
-        timeoutMs: 2500,
-        maxRetries: 1,
-        fallbackToCache: true,
-        throwOnNetworkFailure: false
-      });
+    if (!isServerRuntime) {
+      const cached = this.getCached(cacheKey);
+      if (cached === true) return;
     }
 
-    if (!deptSnap || !deptSnap.exists()) {
+    const deptSnap = await this.fetchDocSnapshot("departments", departmentId, businessId, adminDb);
+
+    if (!deptSnap.exists) {
       this.setCache(cacheKey, false);
       throw new ForeignKeyIntegrityViolationError({
         message: `Erreur d'intégrité référentielle : Le département [${departmentId}] est introuvable pour l'entreprise [${businessId}].`,
@@ -138,9 +208,16 @@ export class ForeignKeyIntegrityValidator {
     }
 
     const data = deptSnap.data();
-    const docBizId = data?.business_id || data?.businessId;
+    const docBizId = this.resolveDocTenantOrThrow(
+      data,
+      businessId,
+      "departmentId",
+      "departments",
+      departmentId
+    );
     if (docBizId && businessId && docBizId !== businessId && docBizId !== "global") {
       throw new ForeignKeyIntegrityViolationError({
+        code: "FORBIDDEN_TENANT_ACCESS",
         message: `Erreur d'isolation multi-tenant : Le département [${departmentId}] appartient à un autre tenant (${docBizId} != ${businessId}).`,
         businessId,
         fieldName: "departmentId",
@@ -155,30 +232,23 @@ export class ForeignKeyIntegrityValidator {
   /**
    * Validates that the employee exists and belongs to the business tenant.
    */
-  public async validateEmployeeExists(businessId: string, employeeId: string): Promise<void> {
+  public async validateEmployeeExists(
+    businessId: string,
+    employeeId: string,
+    adminDb?: any
+  ): Promise<void> {
     if (!employeeId || employeeId === "SYSTEM" || employeeId === "UNASSIGNED") return;
 
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
     const cacheKey = `emp_${businessId}_${employeeId}`;
-    const cached = this.getCached(cacheKey);
-    if (cached === true) return;
-
-    let empSnap = await resilientGetDoc(doc(db, "employees", employeeId), {
-      timeoutMs: 2500,
-      maxRetries: 1,
-      fallbackToCache: true,
-      throwOnNetworkFailure: false
-    });
-
-    if (!empSnap || !empSnap.exists()) {
-      empSnap = await resilientGetDoc(doc(db, "businesses", businessId, "employees", employeeId), {
-        timeoutMs: 2500,
-        maxRetries: 1,
-        fallbackToCache: true,
-        throwOnNetworkFailure: false
-      });
+    if (!isServerRuntime) {
+      const cached = this.getCached(cacheKey);
+      if (cached === true) return;
     }
 
-    if (!empSnap || !empSnap.exists()) {
+    const empSnap = await this.fetchDocSnapshot("employees", employeeId, businessId, adminDb);
+
+    if (!empSnap.exists) {
       this.setCache(cacheKey, false);
       throw new ForeignKeyIntegrityViolationError({
         message: `Erreur d'intégrité référentielle : L'employé [${employeeId}] est introuvable pour l'entreprise [${businessId}].`,
@@ -190,9 +260,16 @@ export class ForeignKeyIntegrityValidator {
     }
 
     const data = empSnap.data();
-    const docBizId = data?.business_id || data?.businessId;
+    const docBizId = this.resolveDocTenantOrThrow(
+      data,
+      businessId,
+      "employeeId",
+      "employees",
+      employeeId
+    );
     if (docBizId && businessId && docBizId !== businessId && docBizId !== "global") {
       throw new ForeignKeyIntegrityViolationError({
+        code: "FORBIDDEN_TENANT_ACCESS",
         message: `Erreur d'isolation multi-tenant : L'employé [${employeeId}] appartient à un autre tenant (${docBizId} != ${businessId}).`,
         businessId,
         fieldName: "employeeId",
@@ -207,30 +284,23 @@ export class ForeignKeyIntegrityValidator {
   /**
    * Validates that the branch exists and belongs to the business tenant.
    */
-  public async validateBranchExists(businessId: string, branchId: string): Promise<void> {
+  public async validateBranchExists(
+    businessId: string,
+    branchId: string,
+    adminDb?: any
+  ): Promise<void> {
     if (!branchId || branchId === "BRANCH_DEFAULT" || branchId === "b_main") return;
 
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
     const cacheKey = `branch_${businessId}_${branchId}`;
-    const cached = this.getCached(cacheKey);
-    if (cached === true) return;
-
-    let branchSnap = await resilientGetDoc(doc(db, "branches", branchId), {
-      timeoutMs: 2500,
-      maxRetries: 1,
-      fallbackToCache: true,
-      throwOnNetworkFailure: false
-    });
-
-    if (!branchSnap || !branchSnap.exists()) {
-      branchSnap = await resilientGetDoc(doc(db, "businesses", businessId, "branches", branchId), {
-        timeoutMs: 2500,
-        maxRetries: 1,
-        fallbackToCache: true,
-        throwOnNetworkFailure: false
-      });
+    if (!isServerRuntime) {
+      const cached = this.getCached(cacheKey);
+      if (cached === true) return;
     }
 
-    if (!branchSnap || !branchSnap.exists()) {
+    const branchSnap = await this.fetchDocSnapshot("branches", branchId, businessId, adminDb);
+
+    if (!branchSnap.exists) {
       this.setCache(cacheKey, false);
       throw new ForeignKeyIntegrityViolationError({
         message: `Erreur d'intégrité référentielle : La succursale [${branchId}] est introuvable pour l'entreprise [${businessId}].`,
@@ -242,9 +312,16 @@ export class ForeignKeyIntegrityValidator {
     }
 
     const data = branchSnap.data();
-    const docBizId = data?.business_id || data?.businessId;
+    const docBizId = this.resolveDocTenantOrThrow(
+      data,
+      businessId,
+      "branchId",
+      "branches",
+      branchId
+    );
     if (docBizId && businessId && docBizId !== businessId && docBizId !== "global") {
       throw new ForeignKeyIntegrityViolationError({
+        code: "FORBIDDEN_TENANT_ACCESS",
         message: `Erreur d'isolation multi-tenant : La succursale [${branchId}] appartient à un autre tenant (${docBizId} != ${businessId}).`,
         businessId,
         fieldName: "branchId",
@@ -264,11 +341,37 @@ export class ForeignKeyIntegrityValidator {
    * Validates all foreign keys present on an arbitrary entity before creation or update.
    */
   public async validateEntityForeignKeys(
-    businessId: string, 
-    entity: Record<string, any>, 
-    entityType: string
+    businessId: string,
+    entity: Record<string, any>,
+    entityType: string,
+    adminDb?: any
   ): Promise<void> {
-    const bizId = entity.businessId || entity.business_id || businessId;
+    const entityBiz1 = typeof entity?.businessId === "string" ? entity.businessId.trim() : "";
+    const entityBiz2 = typeof entity?.business_id === "string" ? entity.business_id.trim() : "";
+    if (entityBiz1 && entityBiz2 && entityBiz1 !== entityBiz2) {
+      throw new ForeignKeyIntegrityViolationError({
+        code: "FORBIDDEN_TENANT_ACCESS",
+        message: "Erreur d'isolation multi-tenant : Contradiction entre businessId et business_id.",
+        businessId,
+        fieldName: "businessId",
+        referencedCollection: "businesses",
+        missingId: entityBiz1
+      });
+    }
+
+    const entityBiz = entityBiz1 || entityBiz2;
+    if (entityBiz && businessId && entityBiz !== businessId) {
+      throw new ForeignKeyIntegrityViolationError({
+        code: "FORBIDDEN_TENANT_ACCESS",
+        message: `Erreur d'isolation multi-tenant : L'entité appartient au tenant [${entityBiz}] et non à [${businessId}].`,
+        businessId,
+        fieldName: "businessId",
+        referencedCollection: "businesses",
+        missingId: entityBiz
+      });
+    }
+
+    const bizId = entityBiz || businessId;
     const branchId = entity.branchId || entity.branch_id;
     const departmentId = entity.departmentId || entity.department_id;
     const employeeId = entity.employeeId || entity.employee_id;
@@ -276,16 +379,16 @@ export class ForeignKeyIntegrityValidator {
     const validations: Promise<void>[] = [];
 
     if (bizId) {
-      validations.push(this.validateBusinessExists(bizId));
+      validations.push(this.validateBusinessExists(bizId, adminDb));
     }
     if (branchId) {
-      validations.push(this.validateBranchExists(bizId, branchId));
+      validations.push(this.validateBranchExists(bizId, branchId, adminDb));
     }
     if (departmentId) {
-      validations.push(this.validateDepartmentExists(bizId, departmentId));
+      validations.push(this.validateDepartmentExists(bizId, departmentId, adminDb));
     }
     if (employeeId) {
-      validations.push(this.validateEmployeeExists(bizId, employeeId));
+      validations.push(this.validateEmployeeExists(bizId, employeeId, adminDb));
     }
 
     await Promise.all(validations);

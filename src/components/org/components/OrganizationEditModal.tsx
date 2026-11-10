@@ -1,9 +1,10 @@
 import React from "react";
 import { Branch, Department, Role, ERPEvent, ForensicLog, Business } from "../../../types";
-import { MapPin, Layers, X, Plus, AlertCircle } from "lucide-react";
+import { MapPin, Layers, X, Plus, AlertCircle, Sparkles, Hash } from "lucide-react";
 import { generateSignature, getLocalIP } from "../../../data";
 import { db } from "../../../lib/firebase";
 import { doc, setDoc } from "firebase/firestore";
+import { OrganizationCodeService } from "../../../services/organization/OrganizationCodeService";
 
 interface OrganizationEditModalProps {
   isOpen: boolean;
@@ -33,11 +34,17 @@ export const OrganizationEditModal: React.FC<OrganizationEditModalProps> = ({
   onAddForensicLog,
 }) => {
   const [name, setName] = React.useState("");
-  const [code, setCode] = React.useState("");
   const [location, setLocation] = React.useState("");
   const [selectedBranchId, setSelectedBranchId] = React.useState(branches[0]?.id || "");
   const [error, setError] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  // Auto-calculated preview code handled by FinOps
+  const generatedCodePreview = React.useMemo(() => {
+    return type === "BRANCH"
+      ? OrganizationCodeService.generateBranchCode(branches)
+      : OrganizationCodeService.generateDepartmentCode(departments);
+  }, [type, branches, departments]);
 
   if (!isOpen) return null;
 
@@ -54,15 +61,19 @@ export const OrganizationEditModal: React.FC<OrganizationEditModalProps> = ({
     try {
       if (type === "BRANCH") {
         const newBranchId = "br_" + Math.random().toString(36).substring(2, 9);
+        const autoCode = OrganizationCodeService.generateBranchCode(branches);
         const newBranch: Branch = {
           id: newBranchId,
           business_id: currentBusiness.id,
+          businessId: currentBusiness.id,
           name: name.trim(),
+          code: autoCode,
           location: location.trim() || "Principal",
           status: "ACTIVE",
           is_active: true,
+          isActive: true,
           created_at: new Date().toISOString(),
-        };
+        } as Branch;
 
         const branchDocRef = doc(db, "branches", newBranchId);
         await setDoc(branchDocRef, newBranch);
@@ -73,23 +84,26 @@ export const OrganizationEditModal: React.FC<OrganizationEditModalProps> = ({
           business_id: currentBusiness.id,
           timestamp: new Date().toISOString(),
           type: "BRANCH_CREATED",
-          payload: { message: `Création de la succursale ${newBranch.name}` },
+          payload: { message: `Création de la succursale ${newBranch.name} (${autoCode})` },
           checksum: generateSignature(newBranch.id),
         };
         onAddEvent(ev);
       } else {
         const newDeptId = "d_" + Math.random().toString(36).substring(2, 9);
+        const autoCode = OrganizationCodeService.generateDepartmentCode(departments);
         const newDept: Department = {
           id: newDeptId,
           business_id: currentBusiness.id,
+          businessId: currentBusiness.id,
           branchId: selectedBranchId,
           branch_id: selectedBranchId,
           name: name.trim(),
-          code: code.trim().toUpperCase() || undefined,
+          code: autoCode,
           status: "ACTIVE",
           is_active: true,
+          isActive: true,
           created_at: new Date().toISOString(),
-        };
+        } as Department;
 
         const deptDocRef = doc(db, "departments", newDeptId);
         await setDoc(deptDocRef, newDept);
@@ -100,7 +114,7 @@ export const OrganizationEditModal: React.FC<OrganizationEditModalProps> = ({
           business_id: currentBusiness.id,
           timestamp: new Date().toISOString(),
           type: "DEPARTMENT_CREATED",
-          payload: { message: `Création du département ${newDept.name}` },
+          payload: { message: `Création du département ${newDept.name} (${autoCode})` },
           checksum: generateSignature(newDept.id),
         };
         onAddEvent(ev);
@@ -175,33 +189,40 @@ export const OrganizationEditModal: React.FC<OrganizationEditModalProps> = ({
               />
             </div>
           ) : (
-            <>
-              <div>
-                <label className="block text-slate-400 font-medium mb-1">Succursale de rattachement</label>
-                <select
-                  value={selectedBranchId}
-                  onChange={(e) => setSelectedBranchId(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
-                >
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.location || "Principal"})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-slate-400 font-medium mb-1">Code Département (Optionnel)</label>
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="Ex: OPS-01"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono uppercase placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </>
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Succursale de rattachement</label>
+              <select
+                value={selectedBranchId}
+                onChange={(e) => setSelectedBranchId(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.location || "Principal"})
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
+
+          {/* Automatic FinOps Code Attribution Badge */}
+          <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Hash className="w-4 h-4 text-indigo-400" />
+              <div>
+                <span className="text-slate-300 font-medium block text-xs">
+                  Code {type === "BRANCH" ? "Succursale" : "Département"}
+                </span>
+                <span className="text-slate-500 text-[10px] block">
+                  Attribué et géré automatiquement par FinOps
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono font-semibold text-xs">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>{generatedCodePreview}</span>
+            </div>
+          </div>
 
           <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
             <button

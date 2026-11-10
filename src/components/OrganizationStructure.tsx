@@ -16,7 +16,9 @@ import { useOrganizationTree } from "./org/hooks/useOrganizationTree";
 import { OrganizationTreeView } from "./org/components/OrganizationTreeView";
 import { OrganizationNodeDetails } from "./org/components/OrganizationNodeDetails";
 import { OrganizationEditModal } from "./org/components/OrganizationEditModal";
-import { OrganizationBulkImportModal } from "./org/components/OrganizationBulkImportModal";
+import { OrganizationBulkImportModal, BulkImportEntityType } from "./org/components/OrganizationBulkImportModal";
+import { BranchesListView } from "./org/components/BranchesListView";
+import { DepartmentsListView } from "./org/components/DepartmentsListView";
 import { DepartmentAssignmentManager } from "./organization/DepartmentAssignmentManager";
 import { DepartmentMappingReviewModal } from "./organization/DepartmentMappingReviewModal";
 import { InvitationManagement } from "./organization/InvitationManagement";
@@ -140,6 +142,7 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
 
   const [modalType, setModalType] = useState<"BRANCH" | "DEPARTMENT" | null>(null);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+  const [bulkImportInitialType, setBulkImportInitialType] = useState<BulkImportEntityType>("branches");
   const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
   const [selectedEmpForAssignmentId, setSelectedEmpForAssignmentId] = useState<string>(employees[0]?.id || "");
 
@@ -200,22 +203,36 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
         )}
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards with Click-to-View Interactivity */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-xl">
+        <div 
+          onClick={() => setActiveSubTab("branches")}
+          className="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800/80 hover:border-emerald-500/40 p-3.5 rounded-xl cursor-pointer transition shadow-sm group"
+          title="Cliquer pour afficher la liste complète des succursales"
+        >
           <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs">Succursales</span>
+            <span className="text-xs group-hover:text-emerald-300 font-medium transition">Succursales</span>
             <MapPin className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-xl font-bold text-white">{businessBranches.length}</div>
+          <div className="flex items-baseline justify-between">
+            <div className="text-xl font-bold text-white">{businessBranches.length}</div>
+            <span className="text-[10px] text-emerald-400 font-semibold group-hover:underline">Voir liste →</span>
+          </div>
         </div>
 
-        <div className="bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-xl">
+        <div 
+          onClick={() => setActiveSubTab("departments")}
+          className="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800/80 hover:border-sky-500/40 p-3.5 rounded-xl cursor-pointer transition shadow-sm group"
+          title="Cliquer pour afficher la liste complète des départements"
+        >
           <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-xs">Départements</span>
+            <span className="text-xs group-hover:text-sky-300 font-medium transition">Départements</span>
             <Layers className="w-4 h-4 text-sky-400" />
           </div>
-          <div className="text-xl font-bold text-white">{businessDepts.length}</div>
+          <div className="flex items-baseline justify-between">
+            <div className="text-xl font-bold text-white">{businessDepts.length}</div>
+            <span className="text-[10px] text-sky-400 font-semibold group-hover:underline">Voir liste →</span>
+          </div>
         </div>
 
         <div className="bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-xl">
@@ -240,29 +257,61 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
         <button
           type="button"
           onClick={() => setActiveSubTab("structures")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeSubTab === "structures"
               ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
               : "text-slate-400 hover:text-white hover:bg-slate-800"
           }`}
         >
           <Network className="w-4 h-4" />
-          <span>Arborescence & Organigramme</span>
+          <span>Arborescence</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("branches")}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+            activeSubTab === "branches"
+              ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
+              : "text-slate-400 hover:text-white hover:bg-slate-800"
+          }`}
+        >
+          <MapPin className="w-4 h-4 text-emerald-400" />
+          <span>Succursales</span>
+          <span className="bg-slate-800 border border-slate-700 text-emerald-300 text-[10px] px-1.5 py-0.2 rounded-full font-mono ml-0.5">
+            {businessBranches.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("departments")}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+            activeSubTab === "departments"
+              ? "bg-sky-600 text-white shadow-lg shadow-sky-600/20"
+              : "text-slate-400 hover:text-white hover:bg-slate-800"
+          }`}
+        >
+          <Layers className="w-4 h-4 text-sky-400" />
+          <span>Départements</span>
+          <span className="bg-slate-800 border border-slate-700 text-sky-300 text-[10px] px-1.5 py-0.2 rounded-full font-mono ml-0.5">
+            {businessDepts.length}
+          </span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab("invitations")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeSubTab === "invitations"
               ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
               : "text-slate-400 hover:text-white hover:bg-slate-800"
           }`}
         >
           <Mail className="w-4 h-4" />
-          <span>Gestion des Invitations</span>
+          <span>Invitations</span>
           {invitations.length > 0 && (
-            <span className="bg-slate-800 border border-slate-700 text-indigo-300 text-[10px] px-1.5 py-0.2 rounded-full font-mono ml-1">
+            <span className="bg-slate-800 border border-slate-700 text-indigo-300 text-[10px] px-1.5 py-0.2 rounded-full font-mono ml-0.5">
               {invitations.length}
             </span>
           )}
@@ -271,27 +320,70 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
         <button
           type="button"
           onClick={() => setActiveSubTab("import")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeSubTab === "import"
               ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
               : "text-slate-400 hover:text-white hover:bg-slate-800"
           }`}
         >
           <GitFork className="w-4 h-4" />
-          <span>Allocations Multi-Départements</span>
+          <span>Allocations Multi-Dept</span>
         </button>
 
         <button
           type="button"
           onClick={() => setIsMappingModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-emerald-400 hover:bg-slate-800 transition cursor-pointer ml-auto"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-emerald-400 hover:bg-slate-800 transition cursor-pointer ml-auto"
         >
           <Tag className="w-4 h-4 text-emerald-400" />
-          <span>Mappage SSOT & Aliases</span>
+          <span>Mappage SSOT</span>
         </button>
       </div>
 
       {/* Main Content Area Based on Sub-Tab */}
+      {activeSubTab === "branches" && (
+        <BranchesListView
+          branches={businessBranches}
+          departments={businessDepts}
+          employees={employees}
+          isOwnerOrManager={isOwnerOrManager}
+          onOpenAddBranch={() => setModalType("BRANCH")}
+          onOpenBulkImport={(type) => {
+            setBulkImportInitialType(type);
+            setIsBulkImportOpen(true);
+          }}
+          onSelectBranchInTree={(branchId) => {
+            const found = treeData.children?.find((c) => c.id === branchId);
+            if (found) setSelectedNode(found);
+            setActiveSubTab("structures");
+          }}
+        />
+      )}
+
+      {activeSubTab === "departments" && (
+        <DepartmentsListView
+          departments={businessDepts}
+          branches={businessBranches}
+          employees={employees}
+          isOwnerOrManager={isOwnerOrManager}
+          onOpenAddDept={() => setModalType("DEPARTMENT")}
+          onOpenBulkImport={(type) => {
+            setBulkImportInitialType(type);
+            setIsBulkImportOpen(true);
+          }}
+          onSelectDeptInTree={(deptId) => {
+            for (const bNode of treeData.children || []) {
+              const dNode = bNode.children?.find((c) => c.id === deptId);
+              if (dNode) {
+                setSelectedNode(dNode);
+                break;
+              }
+            }
+            setActiveSubTab("structures");
+          }}
+        />
+      )}
+
       {activeSubTab === "invitations" && (
         <InvitationManagement
           currentBusiness={currentBusiness}
@@ -303,9 +395,44 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
           setInvitations={setInvitations}
         />
       )}
+
       {activeSubTab === "structures" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <div className="lg:col-span-5 space-y-3">
+          <div className="lg:col-span-5 space-y-3 bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80 shadow-md">
+            {/* Quick Navigation / Action Bar */}
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-800/60">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("branches")}
+                className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 font-semibold text-[11px] flex items-center justify-center gap-1.5 border border-emerald-500/20 transition cursor-pointer"
+                title="Voir la liste tabulaire de toutes les succursales"
+              >
+                <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Succursales ({businessBranches.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("departments")}
+                className="flex-1 py-1.5 px-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 font-semibold text-[11px] flex items-center justify-center gap-1.5 border border-sky-500/20 transition cursor-pointer"
+                title="Voir la liste tabulaire de tous les départements"
+              >
+                <Layers className="w-3.5 h-3.5 text-sky-400" />
+                <span>Départements ({businessDepts.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkImportInitialType("branches");
+                  setIsBulkImportOpen(true);
+                }}
+                className="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-[11px] flex items-center gap-1 border border-slate-700 transition cursor-pointer"
+                title="Ouvrir l'outil d'import massif"
+              >
+                <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Import</span>
+              </button>
+            </div>
+
             <div className="relative">
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -313,7 +440,7 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Rechercher une entité ou un collaborateur..."
-                className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
               />
             </div>
 
@@ -420,10 +547,16 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
       {isBulkImportOpen && (
         <OrganizationBulkImportModal
           isOpen={isBulkImportOpen}
+          initialType={bulkImportInitialType}
           currentBusiness={currentBusiness}
           branches={businessBranches}
           departments={businessDepts}
-          onSuccess={() => {}}
+          existingEmployees={employees}
+          onAddBranch={onAddBranch}
+          onAddDept={onAddDept}
+          onSuccess={(count, type) => {
+            toast.success(`Import massif de ${count} ${type} terminé avec succès.`);
+          }}
           onClose={() => setIsBulkImportOpen(false)}
         />
       )}

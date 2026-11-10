@@ -10,23 +10,30 @@ interface ExecutiveAttendanceProps {
 const ExecutiveAttendanceComponent: React.FC<ExecutiveAttendanceProps> = ({ snapshot }) => {
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_ATTENDANCE", snapshot);
 
-  const attRate = Math.min(
-    100,
-    Math.max(0, Math.round(stabilizedSnapshot?.attendanceRate?.currentValue ?? 71))
-  );
-  const activeStaffCount = stabilizedSnapshot?.activeStaff?.currentValue ?? 16;
-  const checkedInCount = Math.round((activeStaffCount * attRate) / 100);
-  const absenceRate = stabilizedSnapshot?.absenceRate?.currentValue ?? Math.max(0, 100 - attRate);
-  const latenessRate = stabilizedSnapshot?.latenessRate?.currentValue ?? 0;
+  const rawAttRate = stabilizedSnapshot?.attendanceRate?.currentValue ?? null;
+  const attRate =
+    typeof rawAttRate === "number" && !isNaN(rawAttRate)
+      ? Math.min(100, Math.max(0, Math.round(rawAttRate)))
+      : null;
+  const activeStaffCount = stabilizedSnapshot?.activeStaff?.currentValue ?? 0;
+  const checkedInCount = attRate !== null ? Math.round((activeStaffCount * attRate) / 100) : null;
+  const absenceRate =
+    stabilizedSnapshot?.absenceRate?.currentValue ??
+    (attRate !== null ? Math.max(0, 100 - attRate) : null);
+  const latenessRate = stabilizedSnapshot?.latenessRate?.currentValue ?? null;
 
   const borderTone =
-    attRate >= 90
+    attRate === null
+      ? "border-slate-700/60"
+      : attRate >= 90
       ? "border-emerald-500/40"
       : attRate >= 70
       ? "border-indigo-500/40"
       : "border-amber-500/40";
   const badgeTone =
-    attRate >= 90
+    attRate === null
+      ? "bg-slate-800 text-slate-400 border-slate-700"
+      : attRate >= 90
       ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
       : attRate >= 70
       ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
@@ -42,11 +49,13 @@ const ExecutiveAttendanceComponent: React.FC<ExecutiveAttendanceProps> = ({ snap
           <UserCheck className="w-4 h-4 text-emerald-400" />
         </div>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-2xl font-black font-mono text-slate-50">{attRate}%</span>
+          <span className="text-2xl font-black font-mono text-slate-50">
+            {attRate !== null ? `${attRate}%` : "N/D"}
+          </span>
           <span className="text-[10px] text-slate-400 font-bold uppercase">Taux période</span>
         </div>
         <div className="text-emerald-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
-          <TrendingUp className="w-3 h-3" /> {checkedInCount} / {activeStaffCount} collaborateurs présents
+          <TrendingUp className="w-3 h-3" /> {checkedInCount !== null ? checkedInCount : "N/D"} / {activeStaffCount} collaborateurs présents
         </div>
 
         <div className="space-y-2 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
@@ -56,16 +65,20 @@ const ExecutiveAttendanceComponent: React.FC<ExecutiveAttendanceProps> = ({ snap
           </div>
           <div className="flex justify-between">
             <span>Taux d'absence constaté :</span>
-            <span className="text-rose-400 font-semibold">{absenceRate.toFixed(1)}%</span>
+            <span className="text-rose-400 font-semibold">
+              {absenceRate !== null ? `${absenceRate.toFixed(1)}%` : "N/D"}
+            </span>
           </div>
           <div className="flex justify-between">
             <span>Taux de retard :</span>
-            <span className="text-slate-200 font-mono">{latenessRate.toFixed(1)}%</span>
+            <span className="text-slate-200 font-mono">
+              {latenessRate !== null ? `${latenessRate.toFixed(1)}%` : "N/D"}
+            </span>
           </div>
           <div className="flex justify-between items-center">
             <span>Évaluation assiduité :</span>
             <span className={`font-mono font-bold text-[10px] uppercase px-1.5 py-0.5 rounded border ${badgeTone}`}>
-              {attRate >= 90 ? "Excellente" : attRate >= 70 ? "Normale" : "À Surveiller"}
+              {attRate === null ? "N/D" : attRate >= 90 ? "Excellente" : attRate >= 70 ? "Normale" : "À Surveiller"}
             </span>
           </div>
         </div>

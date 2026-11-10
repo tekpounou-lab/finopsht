@@ -13,6 +13,8 @@ import {
 } from "firebase/firestore";
 import { Business, Branch, Department } from "../../types";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
+import { PermissionService } from "../PermissionService";
+import { FeatureResolver } from "../FeatureResolver";
 
 import { DepartmentRepository, BranchRepository } from "../../repositories/organization";
 import { OrganizationIntegrityService } from "../../domains/organization/services/OrganizationIntegrityService";
@@ -153,9 +155,23 @@ export class BusinessAdministrationRepository {
   }
 
   static async updateFeatures(businessId: string, features: any): Promise<void> {
+    const userRole = PermissionService.getRole();
+    if (userRole !== "SUPER_ADMIN") {
+      throw new Error("Action réservée au Super Admin : Seul le Super Admin de la plateforme ou la souscription d'un forfait supérieur peut modifier l'activation globale des modules.");
+    }
+
     await setDoc(doc(db, "features", businessId), {
       ...features,
       updatedAt: serverTimestamp()
     }, { merge: true });
+
+    // Synchronize modern settings path businesses/{businessId}/settings/features
+    await setDoc(doc(db, "businesses", businessId, "settings", "features"), {
+      businessId,
+      features,
+      updatedAt: serverTimestamp()
+    }, { merge: true }).catch(() => {});
+
+    FeatureResolver.clearCache(businessId);
   }
 }

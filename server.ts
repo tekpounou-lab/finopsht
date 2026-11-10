@@ -12,11 +12,30 @@ import { AICFOResponseFilter } from "./src/services/cfo/AICFOResponseFilter";
 import { AICFOAuditService } from "./src/services/cfo/AICFOAuditService";
 import { IdentityUserContext } from "./src/services/cfo/AICFOGovernanceTypes";
 import { FinancialRatioEngine } from "./src/services/cfo/FinancialRatioEngine";
-import { getAdminApp } from "./src/lib/firebaseAdmin";
+import { getAdminApp, getAdminFirestore } from "./src/lib/firebaseAdmin";
 import { ServerProvisioningService } from "./src/services/business/ServerProvisioningService";
+import {
+  ServerTillProvisioningService,
+  TILL_PROVISIONING_AUTHORIZED_ROLES
+} from "./src/services/business/ServerTillProvisioningService";
+import { TillSessionEngine } from "./src/domains/cash/services/TillSessionEngine";
 import { BusinessActivationService } from "./src/services/business/BusinessActivationService";
-import { InvitationService } from "./src/services/business/InvitationService";
+import { InvitationService, ASSIGNABLE_INVITE_ROLES, INVITE_SENDER_ROLES } from "./src/services/business/InvitationService";
+import {
+  RECEIVABLE_READ_ROLES as CANONICAL_RECEIVABLE_READ_ROLES,
+  RECEIVABLE_APPROVE_ROLES as CANONICAL_RECEIVABLE_APPROVE_ROLES,
+  RECEIVABLE_REPAYMENT_ROLES as CANONICAL_RECEIVABLE_REPAYMENT_ROLES,
+  resolveReceivableTenantId
+} from "./src/services/payroll/EmployeeReceivableService";
 import { approvalRouter } from "./src/modules/workflow/approval/serverApprovalRoutes";
+import { transferRouter } from "./src/routes/transferRoutes";
+import {
+  authenticateToken,
+  authenticateIdentityOnly,
+  requireSuperAdmin,
+  AuthenticatedRequest,
+  isInvalidTenantId
+} from "./src/modules/workflow/approval/serverAuthMiddleware";
 import firebaseConfig from "./firebase-applet-config.json";
 
 import crypto from "crypto";
@@ -333,9 +352,10 @@ export async function createApp() {
     if (isStateChanging) {
       const clientCsrfToken = req.headers["x-csrf-token"];
       const requestedWith = req.headers["x-requested-with"];
+      const hasCookieSession = Boolean(req.headers.cookie);
 
-      // Verify presence of anti-CSRF or AJAX token
-      if (!clientCsrfToken && !requestedWith && !req.headers["authorization"]) {
+      // Verify presence of anti-CSRF or AJAX token when a cookie session is present
+      if (hasCookieSession && !clientCsrfToken && !requestedWith && !req.headers["authorization"]) {
         serverWarn(`[CSRF Protection] State-changing ${method} request to ${req.originalUrl} rejected: missing CSRF token`);
         return res.status(403).json({ error: "Invalid or missing anti-CSRF security token." });
       }
@@ -351,7 +371,7 @@ export async function createApp() {
   // API endpoint: Event Orchestrator Handler
   app.post("/api/orchestrator", async (req, res) => {
     try {
-      const { event, payload } = req.body || {};
+      const { event } = req.body || {};
       console.log(`[Server Orchestrator API] Received event: ${event || "PING"}`);
       res.json({
         success: true,
@@ -361,7 +381,10 @@ export async function createApp() {
       });
     } catch (err: any) {
       console.error("[Server Orchestrator API] Error:", err);
-      res.status(500).json({ error: err.message || "Failed to process orchestrator event" });
+      res.status(500).json({
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to process orchestrator event."
+      });
     }
   });
 
@@ -377,7 +400,10 @@ export async function createApp() {
       });
     } catch (err: any) {
       console.error("[Server Telemetry API] Error:", err);
-      res.status(500).json({ error: err.message || "Failed to process telemetry" });
+      res.status(500).json({
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to process telemetry."
+      });
     }
   });
 
@@ -391,37 +417,180 @@ export async function createApp() {
     });
   });
 
+  function resolveServerRouteTenant(
+    req: AuthenticatedRequest,
+    res: express.Response,
+    explicitBizId?: string
+  ): string | null {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
+      return null;
+    }
+
+    const explicitStr = typeof explicitBizId === "string" ? explicitBizId.trim() : "";
+    const bodyBizCamel = typeof req.body?.businessId === "string" ? req.body.businessId.trim() : "";
+    const bodyBizSnake = typeof req.body?.business_id === "string" ? req.body.business_id.trim() : "";
+    const queryBizCamel = typeof req.query?.businessId === "string" ? req.query.businessId.trim() : "";
+    const queryBizSnake = typeof req.query?.business_id === "string" ? req.query.business_id.trim() : "";
+    const headerBizRaw = req.headers["x-business-id"];
+    const headerBiz = typeof headerBizRaw === "string" ? headerBizRaw.trim() : "";
+
+    const providedTenants = [
+      explicitStr,
+      bodyBizCamel,
+      bodyBizSnake,
+      queryBizCamel,
+      queryBizSnake,
+      headerBiz
+    ].filter(Boolean);
+
+    if (providedTenants.length > 1) {
+      const uniqueTenants = new Set(providedTenants);
+      if (uniqueTenants.size > 1) {
+        res.status(403).json({
+          error: "FORBIDDEN_TENANT_ACCESS",
+          message: "Contradictory tenant identifiers (businessId vs business_id or header) in request."
+        });
+        return null;
+      }
+    }
+
+    const requestedBizId = providedTenants[0] || "";
+
+    if (user.isSuperAdmin) {
+      const targetBiz = requestedBizId || user.business_id || "";
+      if (!targetBiz || isInvalidTenantId(targetBiz)) {
+        res.status(400).json({
+          error: "MISSING_TENANT_CONTEXT",
+          message: "SuperAdmin must specify a valid target businessId."
+        });
+        return null;
+      }
+      return targetBiz;
+    }
+
+    if (requestedBizId && requestedBizId !== user.business_id) {
+      res.status(403).json({
+        error: "FORBIDDEN_TENANT_ACCESS",
+        message: "Client is not authorized to operate on another tenant."
+      });
+      return null;
+    }
+
+    if (!user.business_id || isInvalidTenantId(user.business_id)) {
+      res.status(403).json({
+        error: "TENANT_BINDING_REQUIRED",
+        message: "No verified business/tenant association found for this user."
+      });
+      return null;
+    }
+
+    return user.business_id;
+  }
+
+  const MAINTENANCE_ADMIN_ROLES = new Set(["OWNER", "ADMIN", "SUPER_ADMIN"]);
+  const INTEGRITY_VALIDATION_ROLES = new Set([
+    "OWNER",
+    "ADMIN",
+    "MANAGER",
+    "ACCOUNTANT",
+    "FINANCE",
+    "HEAD_TELLER",
+    "AUDITOR",
+    "SUPER_ADMIN"
+  ]);
+  const RECEIVABLE_READ_ROLES = new Set<string>(CANONICAL_RECEIVABLE_READ_ROLES);
+  const RECEIVABLE_APPROVE_ROLES = new Set<string>(CANONICAL_RECEIVABLE_APPROVE_ROLES);
+  const RECEIVABLE_REPAYMENT_ROLES = new Set<string>(CANONICAL_RECEIVABLE_REPAYMENT_ROLES);
+
   // API endpoint: Snapshot Retention Pruning (Scheduled Cron / Cloud Function endpoint)
   // Prunes snapshots older than 30 days across metric_snapshots and performance collections
-  app.post("/api/maintenance/prune-snapshots", async (req, res) => {
+  app.post("/api/maintenance/prune-snapshots", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-      const { businessId = "biz_default", retentionDays = 30 } = req.body || {};
+      const businessId = resolveServerRouteTenant(req, res, req.body?.businessId);
+      if (!businessId) return;
+
+      const userRole = (req.user!.role || "").toUpperCase();
+      if (!req.user!.isSuperAdmin && !MAINTENANCE_ADMIN_ROLES.has(userRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE",
+          message: "Only tenant Owners/Admins or SuperAdmins can prune snapshots."
+        });
+      }
+
+      const rawRetention = req.body?.retentionDays;
+      const retentionDays =
+        rawRetention !== undefined ? Number(rawRetention) : 30;
+      if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+        return res.status(400).json({
+          error: "INVALID_RETENTION_DAYS",
+          message: "retentionDays must be a valid integer between 1 and 3650."
+        });
+      }
+
       const { SnapshotRetentionManager } = await import("./src/services/business/snapshot/SnapshotRetentionManager");
-      const result = await SnapshotRetentionManager.getInstance().purgeExpiredSnapshots(businessId, {
-        retentionDays,
-        dailyRetentionDays: retentionDays,
-        weeklyRetentionDays: 90
-      });
+      const adminFirestore = getAdminFirestore();
+      const result = await SnapshotRetentionManager.getInstance().purgeExpiredSnapshots(
+        businessId,
+        {
+          retentionDays,
+          dailyRetentionDays: retentionDays,
+          weeklyRetentionDays: 90
+        },
+        adminFirestore
+      );
 
       console.log(`[Maintenance API] Snapshot purge completed for ${businessId}:`, result);
       res.json({
         success: true,
+        businessId,
         message: `Purged snapshots older than ${retentionDays} days`,
         ...result,
         timestamp: new Date().toISOString()
       });
     } catch (err: any) {
       console.error("[Maintenance API] Snapshot prune error:", err);
-      res.status(500).json({ error: err.message || "Failed to prune snapshots" });
+      const code = err?.code || err?.message || "";
+      if (code === "TENANT_ISOLATION_VIOLATION") {
+        return res.status(403).json({
+          error: "TENANT_ISOLATION_VIOLATION",
+          message: "Tenant isolation violation detected during snapshot purge."
+        });
+      }
+      if (code === "MISSING_TENANT_CONTEXT") {
+        return res.status(400).json({
+          error: "MISSING_TENANT_CONTEXT",
+          message: "Valid businessId is required."
+        });
+      }
+      res.status(500).json({
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to prune snapshots."
+      });
     }
   });
 
   // API endpoint: SSOT Data Redundancy Cleanup Migration (Phase 1.2)
-  app.post("/api/maintenance/ssot-cleanup", async (req, res) => {
+  app.post("/api/maintenance/ssot-cleanup", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-      const { businessId = "biz_default" } = req.body || {};
+      const businessId = resolveServerRouteTenant(req, res, req.body?.businessId);
+      if (!businessId) return;
+
+      const userRole = (req.user!.role || "").toUpperCase();
+      if (!req.user!.isSuperAdmin && !MAINTENANCE_ADMIN_ROLES.has(userRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE",
+          message: "Only tenant Owners/Admins or SuperAdmins can run SSOT cleanup."
+        });
+      }
+
       const { DataCleanupAndSSOTService } = await import("./src/services/business/DataCleanupAndSSOTService");
-      const summary = await DataCleanupAndSSOTService.getInstance().runSSOTCleanupMigration(businessId);
+      const adminFirestore = getAdminFirestore();
+      const summary = await DataCleanupAndSSOTService.getInstance().runSSOTCleanupMigration(
+        businessId,
+        adminFirestore
+      );
 
       console.log(`[Maintenance API] SSOT cleanup completed for ${businessId}:`, summary);
       res.json({
@@ -430,39 +599,110 @@ export async function createApp() {
       });
     } catch (err: any) {
       console.error("[Maintenance API] SSOT cleanup error:", err);
-      res.status(500).json({ error: err.message || "Failed to execute SSOT cleanup" });
+      const code = err?.code || err?.message || "";
+      if (code === "TENANT_ISOLATION_VIOLATION") {
+        return res.status(403).json({
+          error: "TENANT_ISOLATION_VIOLATION",
+          message: "Tenant isolation violation detected during SSOT cleanup."
+        });
+      }
+      if (code === "MISSING_TENANT_CONTEXT") {
+        return res.status(400).json({
+          error: "MISSING_TENANT_CONTEXT",
+          message: "Valid businessId is required."
+        });
+      }
+      res.status(500).json({
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to execute SSOT cleanup."
+      });
     }
   });
 
   // API endpoint: Referential & Foreign Key Integrity Validator (Phase 2.2 Trigger & Scan)
-  app.post("/api/integrity/validate-foreign-keys", async (req, res) => {
+  app.post("/api/integrity/validate-foreign-keys", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-      const { businessId = "biz_default", entityType, entityData } = req.body || {};
-      const { IntegrityValidator } = await import("./src/services/integrity/ForeignKeyIntegrityValidator");
-      
-      if (entityData && entityType) {
-        await IntegrityValidator.validateEntityForeignKeys(businessId, entityData, entityType);
-        return res.json({
-          valid: true,
-          businessId,
-          entityType,
-          message: "Foreign key referential constraints satisfied."
+      const businessId = resolveServerRouteTenant(req, res, req.body?.businessId);
+      if (!businessId) return;
+
+      const userRole = (req.user!.role || "").toUpperCase();
+      if (!req.user!.isSuperAdmin && !INTEGRITY_VALIDATION_ROLES.has(userRole)) {
+        return res.status(403).json({
+          valid: false,
+          error: "FORBIDDEN_ROLE",
+          message: "Your role is not authorized to run referential integrity checks."
         });
       }
 
-      res.json({
+      const { entityType, entityData } = req.body || {};
+      if (!entityType || typeof entityType !== "string" || !entityData || typeof entityData !== "object") {
+        return res.status(400).json({
+          valid: false,
+          error: "INVALID_INTEGRITY_PAYLOAD",
+          message: "Both entityType (string) and entityData (object) are required when validating an entity."
+        });
+      }
+
+      const entityBiz1 = typeof entityData.businessId === "string" ? entityData.businessId.trim() : "";
+      const entityBiz2 = typeof entityData.business_id === "string" ? entityData.business_id.trim() : "";
+      if (entityBiz1 && entityBiz2 && entityBiz1 !== entityBiz2) {
+        return res.status(403).json({
+          valid: false,
+          error: "FORBIDDEN_TENANT_ACCESS",
+          message: "Contradictory businessId and business_id on entityData."
+        });
+      }
+
+      const entityBiz = entityBiz1 || entityBiz2;
+      if (entityBiz && entityBiz !== businessId) {
+        return res.status(403).json({
+          valid: false,
+          error: "FORBIDDEN_TENANT_ACCESS",
+          message: "Entity businessId does not match authorized tenant."
+        });
+      }
+
+      const { IntegrityValidator } = await import("./src/services/integrity/ForeignKeyIntegrityValidator");
+      const adminFirestore = getAdminFirestore();
+      await IntegrityValidator.validateEntityForeignKeys(businessId, entityData, entityType, adminFirestore);
+
+      return res.json({
         valid: true,
         businessId,
-        message: "Referential integrity validation engine active."
+        entityType,
+        message: "Foreign key referential constraints satisfied."
       });
     } catch (err: any) {
       console.error("[Integrity API] Foreign key integrity violation:", err);
-      res.status(400).json({
+      if (err?.code === "FORBIDDEN_TENANT_ACCESS") {
+        return res.status(403).json({
+          valid: false,
+          error: "FORBIDDEN_TENANT_ACCESS",
+          code: "FORBIDDEN_TENANT_ACCESS",
+          message: "Cross-tenant foreign key reference is forbidden.",
+          fieldName: err.fieldName,
+          missingId: err.missingId,
+          referencedCollection: err.referencedCollection
+        });
+      }
+      if (
+        err?.name === "ForeignKeyIntegrityViolationError" ||
+        err?.code === "FOREIGN_KEY_INTEGRITY_VIOLATION"
+      ) {
+        return res.status(400).json({
+          valid: false,
+          error: "FOREIGN_KEY_VIOLATION",
+          code: err.code || "FOREIGN_KEY_VIOLATION",
+          message: "Referential integrity constraint failed.",
+          fieldName: err.fieldName,
+          missingId: err.missingId,
+          referencedCollection: err.referencedCollection
+        });
+      }
+      res.status(500).json({
         valid: false,
-        error: err.message || "Referential integrity constraint failed",
-        code: err.code || "FOREIGN_KEY_VIOLATION",
-        missingId: err.missingId,
-        referencedCollection: err.referencedCollection
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to validate referential integrity."
       });
     }
   });
@@ -470,19 +710,548 @@ export async function createApp() {
   // API endpoint: Phase 6A Approval Gateway
   app.use("/api/approvals", approvalRouter);
 
-  // API endpoint: Enterprise Provisioning (Bypasses rules, updates claims)
-  app.post("/api/provisioning/create-business", async (req, res) => {
+  // API endpoints: Phase 3 Transfer Intake & Payout Gateway & Forensic Verification
+  app.use("/api/cash/transfers", transferRouter);
+  app.use("/api/audit", transferRouter);
+
+  // API endpoint: Phase D2 — Controlled Server-Side Auto-Provisioning of Tills & Safes (Firebase Admin SDK)
+  app.post("/api/cash/tills/auto-provision", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-      const { founder, businessName, options } = req.body || {};
-      
-      if (!founder?.uid || !businessName) {
-        return res.status(400).json({ error: "Missing founder info or business name" });
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "UNAUTHORIZED",
+          message: "Authentication required."
+        });
       }
 
-      // 1. PERFORM PROVISIONING
-      const result = await ServerProvisioningService.provision(founder, businessName, options);
+      const body = req.body || {};
+      if (
+        (body.businessId !== undefined && typeof body.businessId !== "string") ||
+        (body.business_id !== undefined && typeof body.business_id !== "string")
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_PROVISIONING_PARAMS",
+          message: "businessId and business_id must be valid strings when provided."
+        });
+      }
 
-      console.log(`[Provisioning API] Successfully provisioned business ${result.businessId} for user ${founder.uid}`);
+      if (
+        (body.actorUid && body.actorUid !== req.user.uid) ||
+        (body.userId && body.userId !== req.user.uid) ||
+        (body.actor?.uid && body.actor.uid !== req.user.uid)
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "Actor UID must match the authenticated user."
+        });
+      }
+
+      const businessId = resolveServerRouteTenant(req, res, body.businessId);
+      if (!businessId) return;
+
+      const userRole = (req.user.role || "").trim().toUpperCase();
+      if (!req.user.isSuperAdmin && !TILL_PROVISIONING_AUTHORIZED_ROLES.has(userRole)) {
+        return res.status(403).json({
+          success: false,
+          error: "FORBIDDEN_ROLE",
+          message: "Your role is not authorized to auto-provision tills."
+        });
+      }
+
+      const actor = {
+        uid: req.user.uid,
+        email: req.user.email || "",
+        name: req.user.email || req.user.uid,
+        role: req.user.isSuperAdmin ? "SUPER_ADMIN" : userRole,
+        business_id: businessId,
+        isSuperAdmin: Boolean(req.user.isSuperAdmin)
+      };
+
+      const result = await ServerTillProvisioningService.autoProvisionTillsForBusiness(
+        businessId,
+        actor,
+        {
+          branchId: body.branchId,
+          initialEmployees: body.initialEmployees,
+          requestedTillIds: body.requestedTillIds,
+          requestedSafeIds: body.requestedSafeIds
+        }
+      );
+
+      serverLog(
+        `[Cash Provisioning API] Auto-provisioned tills for ${businessId}: created=${result.tillsCreated}, existing=${result.existingTillsCount}`
+      );
+
+      return res.json({
+        success: true,
+        businessId,
+        ...result
+      });
+    } catch (error: any) {
+      serverError("[Cash Provisioning API] Error:", error);
+      const code = error?.code || error?.message || "";
+      if (code === "UNAUTHORIZED") {
+        return res.status(401).json({
+          success: false,
+          error: "UNAUTHORIZED",
+          message: "Authentication required."
+        });
+      }
+      if (
+        code === "FORBIDDEN_ROLE" ||
+        code === "FORBIDDEN_TENANT_ACCESS" ||
+        code === "TENANT_OVERWRITE_FORBIDDEN" ||
+        code === "TENANT_ISOLATION_VIOLATION" ||
+        code === "IDENTITY_SPOOFING_DETECTED"
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: code,
+          code,
+          message:
+            code === "FORBIDDEN_ROLE"
+              ? "Your role is not authorized to auto-provision tills."
+              : code === "TENANT_OVERWRITE_FORBIDDEN"
+              ? "Target till or safe identifier is already bound to another tenant."
+              : "Cross-tenant till provisioning is forbidden."
+        });
+      }
+      if (
+        code === "INVALID_BUSINESS_ID" ||
+        code === "INVALID_PROVISIONING_PARAMS" ||
+        code === "MALFORMED_EXISTING_DOCUMENT" ||
+        code === "MISSING_ACCOUNT_MAPPING" ||
+        code === "CURRENCY_ACCOUNT_MISMATCH" ||
+        code === "INVALID_SAFE_ACCOUNT"
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: code,
+          code,
+          message: "Invalid or malformed till provisioning parameters."
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to auto-provision tills."
+      });
+    }
+  });
+
+  // API endpoint: Transactional Server-Side Till Session Closure (Phase D3 / D3.1)
+  app.post("/api/cash/sessions/close", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const body = req.body || {};
+    let resolvedBusinessId: string | null = null;
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "UNAUTHORIZED",
+          message: "Authentication required."
+        });
+      }
+
+      if (
+        (body.businessId !== undefined && typeof body.businessId !== "string") ||
+        (body.business_id !== undefined && typeof body.business_id !== "string")
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_BUSINESS_ID",
+          message: "businessId and business_id must be valid strings when provided."
+        });
+      }
+
+      const businessId = resolveServerRouteTenant(req, res, body.businessId);
+      if (!businessId) return;
+      resolvedBusinessId = businessId;
+
+      const userRole = (req.user.role || "").trim().toUpperCase();
+      const effectiveRole = req.user.isSuperAdmin ? "SUPER_ADMIN" : userRole;
+
+      // D3.1-A: Strict operator identity enforcement — never trust client-supplied operatorId
+      if (
+        body.operatorId !== undefined &&
+        body.operatorId !== null &&
+        (typeof body.operatorId !== "string" ||
+          (body.operatorId.trim() !== "" && body.operatorId.trim() !== req.user.uid))
+      ) {
+        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+          businessId,
+          actorId: req.user.uid,
+          actorName: req.user.email || req.user.uid,
+          actorRole: effectiveRole,
+          action: "TILL_SESSION_CLOSE_REFUSED",
+          sessionId: typeof body.sessionId === "string" ? body.sessionId : "UNKNOWN",
+          tillId: typeof body.tillId === "string" ? body.tillId : undefined,
+          result: "REFUSED",
+          errorCode: "IDENTITY_SPOOFING_DETECTED",
+          details: `Tentative d'usurpation d'identité bloquée sur /api/cash/sessions/close : operatorId fourni (${String(body.operatorId)}) différent de req.user.uid (${req.user.uid}).`
+        });
+        return res.status(403).json({
+          success: false,
+          error: "IDENTITY_SPOOFING_DETECTED",
+          code: "IDENTITY_SPOOFING_DETECTED",
+          message: "operatorId must match the authenticated user."
+        });
+      }
+
+      const operatorId = req.user.uid;
+      const operatorName =
+        typeof body.operatorName === "string" && body.operatorName.trim()
+          ? body.operatorName.trim()
+          : req.user.email || req.user.uid;
+
+      const adminDb = getAdminFirestore();
+      const result = await TillSessionEngine.closeSessionWithAdmin(adminDb, {
+        sessionId: body.sessionId,
+        tillId: body.tillId,
+        businessId,
+        currency: body.currency,
+        actualClosingCents: body.actualClosingCents,
+        denominationBreakdown: body.denominationBreakdown,
+        operatorId,
+        operatorName,
+        operatorRole: effectiveRole,
+        authenticatedUid: req.user.uid,
+        notes: body.notes,
+        idempotencyKey: body.idempotencyKey
+      });
+
+      return res.json({
+        success: true,
+        businessId,
+        ...result
+      });
+    } catch (error: any) {
+      serverError("[Cash Session Close API] Error:", error);
+      const code = error?.code || "";
+      if (
+        req.user &&
+        (code === "TENANT_ISOLATION_VIOLATION" ||
+          code === "FORBIDDEN_TENANT_ACCESS" ||
+          code === "FORBIDDEN_ROLE" ||
+          code === "UNAUTHORIZED_SESSION_OPERATOR" ||
+          code === "IDENTITY_SPOOFING_DETECTED")
+      ) {
+        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+          businessId: resolvedBusinessId || req.user.business_id || "UNKNOWN",
+          actorId: req.user.uid,
+          actorName: req.user.email || req.user.uid,
+          actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : (req.user.role || "USER").trim().toUpperCase(),
+          action: "TILL_SESSION_CLOSE_REFUSED",
+          sessionId: typeof body.sessionId === "string" ? body.sessionId : "UNKNOWN",
+          tillId: typeof body.tillId === "string" ? body.tillId : undefined,
+          result: "REFUSED",
+          errorCode: code,
+          details: `Refus de sécurité lors de la clôture de session [${String(body.sessionId || "UNKNOWN")}] (${code}).`
+        });
+      }
+      if (code === "SESSION_NOT_FOUND" || code === "TILL_NOT_FOUND") {
+        return res.status(404).json({
+          success: false,
+          error: code,
+          code,
+          message: "Requested till session or till does not exist."
+        });
+      }
+      if (
+        code === "TENANT_ISOLATION_VIOLATION" ||
+        code === "FORBIDDEN_TENANT_ACCESS" ||
+        code === "FORBIDDEN_ROLE" ||
+        code === "UNAUTHORIZED_SESSION_OPERATOR" ||
+        code === "IDENTITY_SPOOFING_DETECTED"
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: code,
+          code,
+          message: "Forbidden session closure operation."
+        });
+      }
+      if (
+        code === "SESSION_ALREADY_CLOSED" ||
+        code === "SESSION_NOT_ACTIVE" ||
+        code === "TILL_NOT_OPEN" ||
+        code === "ACTIVE_SESSION_MISMATCH" ||
+        code === "DUPLICATE_VARIANCE_GL_ENTRY" ||
+        code === "PENDING_TRANSFERS_BLOCKADE" ||
+        code === "CONCURRENT_CLOSURE_CONFLICT" ||
+        code === "TILL_BALANCE_DIVERGENCE"
+      ) {
+        return res.status(409).json({
+          success: false,
+          error: code,
+          code,
+          message: "Session closure conflict or pending operations detected."
+        });
+      }
+      if (
+        code === "INVALID_SESSION_ID" ||
+        code === "INVALID_CLOSING_AMOUNT" ||
+        code === "INVALID_DENOMINATION_BREAKDOWN" ||
+        code === "INVALID_DENOMINATION" ||
+        code === "INVALID_DENOMINATION_COUNT" ||
+        code === "DENOMINATION_TOTAL_MISMATCH" ||
+        code === "CURRENCY_MISMATCH" ||
+        code === "CURRENCY_ACCOUNT_MISMATCH" ||
+        code === "UNSUPPORTED_CURRENCY" ||
+        code === "VARIANCE_JUSTIFICATION_REQUIRED" ||
+        code === "SESSION_TILL_MISMATCH" ||
+        code === "MALFORMED_SESSION_TENANT" ||
+        code === "INVALID_OPENING_BALANCE" ||
+        code === "CORRUPT_MOVEMENT_AMOUNT" ||
+        code === "INVALID_MOVEMENT_FLOW" ||
+        code === "NEGATIVE_EXPECTED_BALANCE" ||
+        code === "INVALID_TILL_BALANCE" ||
+        code === "INVALID_VARIANCE_LEDGER_ENTRY"
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: code,
+          code,
+          message: "Invalid or inconsistent session closure parameters."
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to close till session."
+      });
+    }
+  });
+
+  // API endpoint: Transactional Server-Side Till Session Reopen (Phase D3 / D3.1)
+  app.post("/api/cash/sessions/reopen", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const body = req.body || {};
+    let resolvedBusinessId: string | null = null;
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "UNAUTHORIZED",
+          message: "Authentication required."
+        });
+      }
+
+      if (
+        (body.businessId !== undefined && typeof body.businessId !== "string") ||
+        (body.business_id !== undefined && typeof body.business_id !== "string")
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_BUSINESS_ID",
+          message: "businessId and business_id must be valid strings when provided."
+        });
+      }
+
+      const businessId = resolveServerRouteTenant(req, res, body.businessId);
+      if (!businessId) return;
+      resolvedBusinessId = businessId;
+
+      const userRole = (req.user.role || "").trim().toUpperCase();
+      const effectiveRole = req.user.isSuperAdmin ? "SUPER_ADMIN" : userRole;
+
+      if (
+        body.approverId !== undefined &&
+        body.approverId !== null &&
+        (typeof body.approverId !== "string" ||
+          (body.approverId.trim() !== "" && body.approverId.trim() !== req.user.uid))
+      ) {
+        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+          businessId,
+          actorId: req.user.uid,
+          actorName: req.user.email || req.user.uid,
+          actorRole: effectiveRole,
+          action: "TILL_SESSION_REOPEN_REFUSED",
+          sessionId: typeof body.previousSessionId === "string" ? body.previousSessionId : "UNKNOWN",
+          tillId: typeof body.tillId === "string" ? body.tillId : undefined,
+          result: "REFUSED",
+          errorCode: "IDENTITY_SPOOFING_DETECTED",
+          details: `Tentative d'usurpation d'identité bloquée sur /api/cash/sessions/reopen : approverId fourni (${String(body.approverId)}) différent de req.user.uid (${req.user.uid}).`
+        });
+        return res.status(403).json({
+          success: false,
+          error: "IDENTITY_SPOOFING_DETECTED",
+          code: "IDENTITY_SPOOFING_DETECTED",
+          message: "approverId must match the authenticated user."
+        });
+      }
+
+      const adminDb = getAdminFirestore();
+      const result = await TillSessionEngine.reopenSessionWithAdmin(adminDb, {
+        tillId: body.tillId,
+        previousSessionId: body.previousSessionId,
+        businessId,
+        requesterId: body.requesterId,
+        requesterName: body.requesterName,
+        approverId: req.user.uid,
+        approverName: body.approverName || req.user.email || req.user.uid,
+        approverRole: effectiveRole,
+        authenticatedApproverUid: req.user.uid,
+        reason: body.reason,
+        idempotencyKey: body.idempotencyKey
+      });
+
+      return res.json({
+        success: true,
+        businessId,
+        ...result
+      });
+    } catch (error: any) {
+      serverError("[Cash Session Reopen API] Error:", error);
+      const code = error?.code || "";
+      if (req.user && code) {
+        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+          businessId: resolvedBusinessId || req.user.business_id || "UNKNOWN",
+          actorId: req.user.uid,
+          actorName: req.user.email || req.user.uid,
+          actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : (req.user.role || "USER").trim().toUpperCase(),
+          action: "TILL_SESSION_REOPEN_REFUSED",
+          sessionId: typeof body.previousSessionId === "string" ? body.previousSessionId : "UNKNOWN",
+          tillId: typeof body.tillId === "string" ? body.tillId : undefined,
+          result: "REFUSED",
+          errorCode: code,
+          details: `Refus lors de la tentative de réouverture de la session [${String(body.previousSessionId || "UNKNOWN")}] (${code}).`
+        });
+      }
+      if (
+        code === "TILL_NOT_FOUND" ||
+        code === "PREVIOUS_SESSION_NOT_FOUND" ||
+        code === "REQUESTER_NOT_FOUND"
+      ) {
+        return res.status(404).json({
+          success: false,
+          error: code,
+          code,
+          message: "Requested till, previous session, or requester does not exist."
+        });
+      }
+      if (
+        code === "TENANT_ISOLATION_VIOLATION" ||
+        code === "FORBIDDEN_TENANT_ACCESS" ||
+        code === "UNAUTHORIZED_APPROVER" ||
+        code === "MAKER_CHECKER_VIOLATION" ||
+        code === "IDENTITY_SPOOFING_DETECTED" ||
+        code === "INACTIVE_REQUESTER" ||
+        code === "UNAUTHORIZED_REQUESTER_ROLE"
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: code,
+          code,
+          message: "Forbidden session reopen operation."
+        });
+      }
+      if (
+        code === "SESSION_ALREADY_REOPENED" ||
+        code === "SESSION_NOT_CLOSED" ||
+        code === "TILL_ALREADY_OPEN" ||
+        code === "CONCURRENT_CLOSURE_CONFLICT"
+      ) {
+        return res.status(409).json({
+          success: false,
+          error: code,
+          code,
+          message: "Session cannot be reopened in its current state."
+        });
+      }
+      if (
+        code === "INVALID_TILL_ID" ||
+        code === "INVALID_SESSION_ID" ||
+        code === "INVALID_REQUESTER_ID" ||
+        code === "REOPEN_REASON_REQUIRED" ||
+        code === "SESSION_TILL_MISMATCH"
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: code,
+          code,
+          message: "Invalid session reopen parameters."
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to reopen till session."
+      });
+    }
+  });
+
+  // API endpoint: Enterprise Provisioning (Bypasses rules, updates claims)
+  app.post("/api/provisioning/create-business", authenticateIdentityOnly, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
+      }
+
+      const { founder, businessName, options } = req.body || {};
+      if (!businessName || !String(businessName).trim()) {
+        return res.status(400).json({ error: "INVALID_REQUEST", message: "Missing business name." });
+      }
+
+      // Reject spoofing of founder UID or email
+      if (founder?.uid && founder.uid !== req.user.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "founder.uid must match the authenticated user."
+        });
+      }
+
+      const tokenEmail = (req.user.email || "").toLowerCase().trim();
+      const bodyEmail = (founder?.email || "").toLowerCase().trim();
+      if (tokenEmail && bodyEmail && tokenEmail !== bodyEmail) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "founder.email must match the authenticated user email."
+        });
+      }
+
+      // Prevent users already bound to an active tenant (via Custom Claims or Firestore) from provisioning a second tenant (D1.1-R-02)
+      const targetBizId =
+        typeof options?.businessId === "string" && options.businessId.trim()
+          ? options.businessId.trim()
+          : `biz_${req.user.uid}`;
+
+      if (
+        req.user.business_id &&
+        !isInvalidTenantId(req.user.business_id) &&
+        !req.user.isSuperAdmin &&
+        targetBizId !== req.user.business_id
+      ) {
+        return res.status(403).json({
+          error: "USER_ALREADY_BOUND_TO_TENANT",
+          message: "Authenticated user is already bound to another tenant."
+        });
+      }
+
+      const verifiedFounder = {
+        uid: req.user.uid,
+        email: tokenEmail || bodyEmail,
+        name: founder?.name || tokenEmail.split("@")[0] || "Propriétaire",
+        existingBusinessId: req.user.business_id,
+        isSuperAdmin: req.user.isSuperAdmin
+      };
+
+      if (!verifiedFounder.email) {
+        return res.status(400).json({
+          error: "MISSING_FOUNDER_EMAIL",
+          message: "A valid founder email is required."
+        });
+      }
+
+      // Perform atomic server provisioning
+      const result = await ServerProvisioningService.provision(
+        verifiedFounder,
+        String(businessName).trim(),
+        options || {}
+      );
+
+      console.log(`[Provisioning API] Successfully provisioned business ${result.businessId} for user ${verifiedFounder.uid}`);
 
       res.json({
         success: true,
@@ -491,72 +1260,241 @@ export async function createApp() {
       });
     } catch (error: any) {
       console.error("[Provisioning API] Error:", error);
-      res.status(500).json({ 
-        error: error.message || "Failed to provision business",
-        code: error.code || "INTERNAL_ERROR"
+      const msg = error?.message || "";
+      if (
+        msg === "TENANT_OVERWRITE_FORBIDDEN" ||
+        msg === "USER_ALREADY_BOUND_TO_TENANT"
+      ) {
+        return res.status(403).json({ error: msg, code: msg });
+      }
+      if (msg === "BUSINESS_ALREADY_EXISTS") {
+        return res.status(409).json({ error: msg, code: msg });
+      }
+      if (msg === "INVALID_BUSINESS_ID" || msg === "INVALID_PROVISIONING_PARAMS") {
+        return res.status(400).json({ error: msg, code: msg });
+      }
+      res.status(500).json({
+        error: "INTERNAL_SERVER_ERROR",
+        code: "INTERNAL_ERROR",
+        message: "Failed to provision business."
       });
     }
   });
 
   // API endpoint: Business Activation (Phase 2 - Superadmin Only)
-  app.post("/api/provisioning/activate-business", async (req, res) => {
+  app.post("/api/provisioning/activate-business", authenticateToken, requireSuperAdmin, async (req: AuthenticatedRequest, res) => {
     try {
-      const { businessId, actor } = req.body || {};
-      if (!businessId || !actor?.uid) {
-        return res.status(400).json({ error: "Missing businessId or actor info" });
+      const { businessId } = req.body || {};
+      if (!businessId) {
+        return res.status(400).json({ error: "Missing businessId" });
       }
       
-      // Note: In production, verify actor.uid is a superadmin using admin.auth() and custom claims
+      // Enforce actor identity EXCLUSIVELY from verified Bearer token
+      const actor = {
+        uid: req.user!.uid,
+        email: req.user!.email || ""
+      };
+
       await BusinessActivationService.activate(businessId, actor);
       res.json({ success: true });
     } catch (error: any) {
       console.error("[Activation API] Error:", error);
-      res.status(500).json({ error: error.message || "Failed to activate business" });
+      res.status(500).json({
+        error: "INTERNAL_SERVER_ERROR",
+        message: "Failed to activate business."
+      });
     }
   });
 
   // API endpoint: Send Colleague Invitation
-  app.post("/api/invitations/send", async (req, res) => {
+  app.post("/api/invitations/send", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-      const { businessId, email, role, sender } = req.body || {};
-      if (!businessId || !email || !sender?.uid) {
-        return res.status(400).json({ error: "Missing invitation details" });
+      if (!req.user) {
+        return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
       }
-      const inviteId = await InvitationService.sendInvitation(businessId, email, role, sender);
+
+      const { businessId: bodyBizId, email, role, sender } = req.body || {};
+      if (sender?.uid && sender.uid !== req.user.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "sender.uid must match the authenticated user."
+        });
+      }
+
+      const businessId = resolveServerRouteTenant(req, res, bodyBizId);
+      if (!businessId) return;
+
+      const senderRole = (req.user.role || "").trim().toUpperCase();
+      if (!req.user.isSuperAdmin && !INVITE_SENDER_ROLES.has(senderRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE",
+          message: "Your role is not authorized to send invitations."
+        });
+      }
+
+      const targetRole = (role || "EMPLOYEE").trim().toUpperCase();
+      if (targetRole === "SUPER_ADMIN" || !ASSIGNABLE_INVITE_ROLES.has(targetRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE_ASSIGNMENT",
+          message: "Cannot assign SUPER_ADMIN or unapproved role via invitation."
+        });
+      }
+
+      if (
+        !req.user.isSuperAdmin &&
+        senderRole === "MANAGER" &&
+        (targetRole === "OWNER" || targetRole === "ADMIN")
+      ) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE_ASSIGNMENT",
+          message: "Managers cannot invite OWNER or ADMIN roles."
+        });
+      }
+
+      if (!email || !String(email).trim()) {
+        return res.status(400).json({ error: "MISSING_INVITATION_DETAILS", message: "Missing recipient email." });
+      }
+
+      const verifiedSender = {
+        uid: req.user.uid,
+        name: sender?.name || req.user.email || req.user.uid,
+        role: senderRole,
+        business_id: businessId,
+        isSuperAdmin: req.user.isSuperAdmin
+      };
+
+      const inviteId = await InvitationService.sendInvitation(
+        businessId,
+        String(email).trim(),
+        targetRole,
+        verifiedSender
+      );
       res.json({ success: true, inviteId });
     } catch (error: any) {
       console.error("[Invitation API] Send Error:", error);
-      res.status(500).json({ error: error.message || "Failed to send invitation" });
+      const msg = error?.message || "";
+      if (
+        msg === "FORBIDDEN_TENANT_ACCESS" ||
+        msg === "FORBIDDEN_ROLE" ||
+        msg === "FORBIDDEN_ROLE_ASSIGNMENT"
+      ) {
+        return res.status(403).json({ error: msg });
+      }
+      if (msg === "MISSING_INVITATION_DETAILS") {
+        return res.status(400).json({ error: msg });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to send invitation." });
     }
   });
 
   // API endpoint: Accept Colleague Invitation
-  app.post("/api/invitations/accept", async (req, res) => {
+  app.post("/api/invitations/accept", authenticateIdentityOnly, async (req: AuthenticatedRequest, res) => {
     try {
-      const { inviteId, user } = req.body || {};
-      if (!inviteId || !user?.uid) {
-        return res.status(400).json({ error: "Missing inviteId or user info" });
+      if (!req.user) {
+        return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
       }
-      await InvitationService.acceptInvitation(inviteId, user);
+
+      const { inviteId, user } = req.body || {};
+      if (!inviteId) {
+        return res.status(400).json({ error: "MISSING_INVITE_ID", message: "Missing inviteId." });
+      }
+
+      if (user?.uid && user.uid !== req.user.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "user.uid must match the authenticated user."
+        });
+      }
+
+      const tokenEmail = (req.user.email || "").toLowerCase().trim();
+      if (!tokenEmail || req.user.emailVerified !== true) {
+        return res.status(403).json({
+          error: "EMAIL_VERIFICATION_REQUIRED",
+          message: "A verified email on the authentication token is required to accept an invitation."
+        });
+      }
+
+      if (user?.email && String(user.email).toLowerCase().trim() !== tokenEmail) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "user.email must match the authenticated user email."
+        });
+      }
+
+      const verifiedUser = {
+        uid: req.user.uid,
+        email: tokenEmail,
+        name: user?.name || tokenEmail.split("@")[0] || "Collaborateur",
+        emailVerified: req.user.emailVerified,
+        existingBusinessId: req.user.business_id,
+        isSuperAdmin: req.user.isSuperAdmin
+      };
+
+      await InvitationService.acceptInvitation(inviteId, verifiedUser);
       res.json({ success: true });
     } catch (error: any) {
       console.error("[Invitation API] Accept Error:", error);
-      res.status(500).json({ error: error.message || "Failed to accept invitation" });
+      const msg = error?.message || "";
+      if (
+        msg === "INVITATION_RECIPIENT_MISMATCH" ||
+        msg === "FORBIDDEN_ROLE_ASSIGNMENT" ||
+        msg === "TENANT_CONFLICT_EXISTING_MEMBERSHIP" ||
+        msg === "EMAIL_VERIFICATION_REQUIRED" ||
+        msg === "INVALID_INVITATION_TENANT"
+      ) {
+        return res.status(403).json({ error: msg });
+      }
+      if (msg === "INVITATION_NOT_FOUND") {
+        return res.status(404).json({ error: msg });
+      }
+      if (msg === "INVITATION_NOT_PENDING" || msg === "INVITATION_EXPIRED") {
+        return res.status(409).json({ error: msg });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to accept invitation." });
     }
   });
 
   // API endpoint: Reject Colleague Invitation
-  app.post("/api/invitations/reject", async (req, res) => {
+  app.post("/api/invitations/reject", authenticateIdentityOnly, async (req: AuthenticatedRequest, res) => {
     try {
-      const { inviteId, userId } = req.body || {};
-      if (!inviteId || !userId) {
-        return res.status(400).json({ error: "Missing inviteId or userId" });
+      if (!req.user) {
+        return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
       }
-      await InvitationService.rejectInvitation(inviteId, userId);
+
+      const { inviteId, userId } = req.body || {};
+      if (!inviteId) {
+        return res.status(400).json({ error: "MISSING_INVITE_ID", message: "Missing inviteId." });
+      }
+
+      if (userId && userId !== req.user.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "userId must match the authenticated user."
+        });
+      }
+
+      await InvitationService.rejectInvitation(inviteId, {
+        uid: req.user.uid,
+        email: req.user.email,
+        emailVerified: req.user.emailVerified,
+        role: req.user.role,
+        business_id: req.user.business_id,
+        isSuperAdmin: req.user.isSuperAdmin
+      });
       res.json({ success: true });
     } catch (error: any) {
       console.error("[Invitation API] Reject Error:", error);
-      res.status(500).json({ error: error.message || "Failed to reject invitation" });
+      const msg = error?.message || "";
+      if (msg === "UNAUTHORIZED_INVITATION_ACTION" || msg === "EMAIL_VERIFICATION_REQUIRED") {
+        return res.status(403).json({ error: msg });
+      }
+      if (msg === "INVITATION_NOT_FOUND") {
+        return res.status(404).json({ error: msg });
+      }
+      if (msg === "INVITATION_NOT_PENDING") {
+        return res.status(409).json({ error: msg });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to reject invitation." });
     }
   });
 
@@ -568,12 +1506,238 @@ export async function createApp() {
       res.json({ success: true, plans });
     } catch (error: any) {
       console.error("[Subscription Plans API] Error:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch plans" });
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to fetch plans." });
     }
   });
 
-  // API endpoint: AI CFO Insights utilizing Gemini 3.5 Flash & Role-Based Governance
-  app.post(["/api/cfo/analyze", "/cfo/analyze"], async (req, res) => {
+  // API endpoints: Employee Overpayment Receivables & Recovery Workflow (POST-ENG-05)
+  app.get("/api/payroll/receivables", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const businessId = resolveServerRouteTenant(req, res, req.query.businessId as string);
+      if (!businessId) return;
+
+      const userRole = (req.user!.role || "").toUpperCase();
+      if (!req.user!.isSuperAdmin && !RECEIVABLE_READ_ROLES.has(userRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE",
+          message: "Your role is not authorized to view employee receivables."
+        });
+      }
+
+      const { EmployeeReceivableRepository } = await import("./src/repositories/EmployeeReceivableRepository");
+      const adminFirestore = getAdminFirestore();
+      const receivables = await EmployeeReceivableRepository.listReceivablesByBusiness(businessId, adminFirestore);
+      res.json({ success: true, receivables });
+    } catch (error: any) {
+      console.error("[Receivables API] Fetch error:", error);
+      if (error?.code === "TENANT_ISOLATION_VIOLATION") {
+        return res.status(403).json({
+          error: "TENANT_ISOLATION_VIOLATION",
+          message: "Tenant isolation violation detected on employee receivable record."
+        });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to fetch receivables." });
+    }
+  });
+
+  app.post("/api/payroll/receivables/approve", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { receivableId, businessId: bodyBizId, approver, approvalReason } = req.body || {};
+      if (!receivableId || typeof receivableId !== "string") {
+        return res.status(400).json({ error: "MISSING_RECEIVABLE_ID", message: "Missing receivableId." });
+      }
+
+      const businessId = resolveServerRouteTenant(req, res, bodyBizId);
+      if (!businessId) return;
+
+      const userRole = (req.user!.role || "").toUpperCase();
+      if (!req.user!.isSuperAdmin && !RECEIVABLE_APPROVE_ROLES.has(userRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE",
+          message: `Role '${req.user!.role}' is not authorized to approve employee receivable proposals.`
+        });
+      }
+
+      if (approver?.id && approver.id !== req.user!.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "approver.id must match the authenticated user."
+        });
+      }
+
+      const verifiedApprover = {
+        id: req.user!.uid,
+        name: req.user!.email || req.user!.uid,
+        role: req.user!.isSuperAdmin ? "SUPER_ADMIN" : userRole
+      };
+
+      const { EmployeeReceivableService } = await import("./src/services/payroll/EmployeeReceivableService");
+      const { FinopsException } = await import("./src/modules/runtime/FinopsException");
+      const firestore = getAdminFirestore();
+
+      const result = await firestore.runTransaction(async (transaction) => {
+        const recRef = firestore.collection("employee_receivables").doc(receivableId);
+        const recSnap = await transaction.get(recRef);
+        if (!recSnap.exists) {
+          throw new FinopsException("RECEIVABLE_NOT_FOUND", `Proposition de recouvrement ${receivableId} introuvable.`);
+        }
+        const proposal = { id: recSnap.id, ...recSnap.data() } as any;
+        const proposalBizId = resolveReceivableTenantId(proposal);
+        if (!proposalBizId || proposalBizId !== businessId) {
+          throw new FinopsException(
+            "TENANT_ISOLATION_VIOLATION",
+            `La créance (${receivableId}) n'appartient pas à l'entreprise (${businessId}).`
+          );
+        }
+
+        const approved = EmployeeReceivableService.approveProposal(proposal, {
+          receivableId,
+          businessId,
+          approver: verifiedApprover,
+          approvalReason
+        });
+
+        transaction.set(recRef, approved.approvedReceivable, { merge: true });
+        if (approved.journalEntry) {
+          transaction.set(
+            firestore.collection("journal_entries").doc(approved.journalEntry.id),
+            approved.journalEntry,
+            { merge: true }
+          );
+        }
+        for (const tx of approved.ledgerTransactions) {
+          transaction.set(firestore.collection("ledger_transactions").doc(tx.id), tx, { merge: true });
+        }
+        return approved;
+      });
+
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("[Receivables API] Approval error:", error);
+      const code = error?.code || "";
+      if (
+        code === "TENANT_ISOLATION_VIOLATION" ||
+        code === "SEGREGATION_OF_DUTIES_VIOLATION" ||
+        code === "UNAUTHORIZED_APPROVER"
+      ) {
+        return res.status(403).json({ error: code, message: "Approval forbidden by security policy." });
+      }
+      if (code === "RECEIVABLE_NOT_FOUND") {
+        return res.status(404).json({ error: code, message: "Receivable proposal not found." });
+      }
+      if (code === "INVALID_STATUS_TRANSITION" || code === "INVALID_ACCOUNT_MAPPING") {
+        return res.status(400).json({ error: code, message: "Invalid receivable status or account mapping." });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to approve receivable proposal." });
+    }
+  });
+
+  app.post("/api/payroll/receivables/repayment", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { receivableId, businessId: bodyBizId, amount, amountCents, paymentMethod, method, recordedBy, notes } = req.body || {};
+      const numericAmount =
+        amount !== undefined
+          ? Number(amount)
+          : amountCents !== undefined
+            ? Number(amountCents) / 100
+            : NaN;
+      if (!receivableId || typeof receivableId !== "string" || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+        return res.status(400).json({ error: "MISSING_REPAYMENT_PARAMS", message: "Valid receivableId and positive amount are required." });
+      }
+
+      const businessId = resolveServerRouteTenant(req, res, bodyBizId);
+      if (!businessId) return;
+
+      const userRole = (req.user!.role || "").toUpperCase();
+      if (!req.user!.isSuperAdmin && !RECEIVABLE_REPAYMENT_ROLES.has(userRole)) {
+        return res.status(403).json({
+          error: "FORBIDDEN_ROLE",
+          message: `Role '${req.user!.role}' is not authorized to record employee receivable repayments.`
+        });
+      }
+
+      if (recordedBy?.id && recordedBy.id !== req.user!.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "recordedBy.id must match the authenticated user."
+        });
+      }
+
+      const verifiedRecorder = {
+        id: req.user!.uid,
+        name: req.user!.email || req.user!.uid,
+        role: req.user!.isSuperAdmin ? "SUPER_ADMIN" : userRole
+      };
+
+      const { EmployeeReceivableService } = await import("./src/services/payroll/EmployeeReceivableService");
+      const { FinopsException } = await import("./src/modules/runtime/FinopsException");
+      const firestore = getAdminFirestore();
+
+      const result = await firestore.runTransaction(async (transaction) => {
+        const recRef = firestore.collection("employee_receivables").doc(receivableId);
+        const recSnap = await transaction.get(recRef);
+        if (!recSnap.exists) {
+          throw new FinopsException("RECEIVABLE_NOT_FOUND", `Créance employé ${receivableId} introuvable.`);
+        }
+        const existingReceivable = { id: recSnap.id, ...recSnap.data() } as any;
+        const recBizId = resolveReceivableTenantId(existingReceivable);
+        if (!recBizId || recBizId !== businessId) {
+          throw new FinopsException(
+            "TENANT_ISOLATION_VIOLATION",
+            `La créance (${receivableId}) n'appartient pas à l'entreprise (${businessId}).`
+          );
+        }
+
+        const reconciled = EmployeeReceivableService.recordRepayment(existingReceivable, {
+          receivableId,
+          businessId,
+          amount: numericAmount,
+          paymentMethod: paymentMethod || method || "BANK",
+          recordedBy: verifiedRecorder,
+          notes
+        });
+
+        transaction.set(recRef, reconciled.updatedReceivable, { merge: true });
+        if (reconciled.journalEntry) {
+          transaction.set(
+            firestore.collection("journal_entries").doc(reconciled.journalEntry.id),
+            reconciled.journalEntry,
+            { merge: true }
+          );
+        }
+        if (reconciled.ledgerTransaction) {
+          transaction.set(
+            firestore.collection("ledger_transactions").doc(reconciled.ledgerTransaction.id),
+            reconciled.ledgerTransaction,
+            { merge: true }
+          );
+        }
+        return reconciled;
+      });
+
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("[Receivables API] Repayment error:", error);
+      const code = error?.code || "";
+      if (code === "TENANT_ISOLATION_VIOLATION" || code === "FORBIDDEN_ROLE") {
+        return res.status(403).json({ error: code, message: "Repayment forbidden by security policy." });
+      }
+      if (code === "RECEIVABLE_NOT_FOUND") {
+        return res.status(404).json({ error: code, message: "Receivable not found." });
+      }
+      if (
+        code === "RECEIVABLE_NOT_ACTIVE" ||
+        code === "INVALID_REPAYMENT_AMOUNT" ||
+        code === "OVERPAYMENT_REJECTED"
+      ) {
+        return res.status(400).json({ error: code, message: "Invalid repayment parameters or state." });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to record repayment." });
+    }
+  });
+
+  // API endpoint: AI CFO Insights utilizing Gemini 3.5 Flash & Role-Based Governance (D1.1-R-03 Hardened)
+  app.post("/api/cfo/analyze", authenticateToken, async (req: AuthenticatedRequest, res) => {
     let resolvedUserContext: IdentityUserContext | undefined;
     let userQuestion: string = "";
     let evaluation: any = undefined;
@@ -582,12 +1746,42 @@ export async function createApp() {
       const { business, branch, employees, ledger, attendance, payroll, userQuestion: rawQuestion, snapshot, userContext } = req.body || {};
       userQuestion = rawQuestion || "";
 
+      if (userContext?.userId && userContext.userId !== req.user!.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "userContext.userId must match the authenticated user."
+        });
+      }
+
+      const candidateBizId =
+        req.body?.businessId ??
+        req.body?.business_id ??
+        userContext?.businessId ??
+        business?.id;
+      const businessId = resolveServerRouteTenant(req, res, candidateBizId);
+      if (!businessId) return;
+
+      if (
+        !req.user!.isSuperAdmin &&
+        ((userContext?.businessId && userContext.businessId !== businessId) ||
+          (business?.id && business.id !== businessId))
+      ) {
+        return res.status(403).json({
+          error: "FORBIDDEN_TENANT_ACCESS",
+          message: "Client is not authorized to analyze another tenant."
+        });
+      }
+
+      const effectiveRole = req.user!.isSuperAdmin
+        ? "SUPER_ADMIN"
+        : (req.user!.role || "EMPLOYEE").toUpperCase();
+
       resolvedUserContext = {
-        userId: userContext?.userId || "usr_current",
-        userName: userContext?.userName || "Opérateur FinOps",
-        userEmail: userContext?.userEmail || "",
-        role: userContext?.role || "OWNER",
-        businessId: userContext?.businessId || business?.id || "biz_demo",
+        userId: req.user!.uid,
+        userName: req.user!.email || req.user!.uid,
+        userEmail: req.user!.email || "",
+        role: effectiveRole as any,
+        businessId,
         branchId: userContext?.branchId || branch?.id || null,
         departmentId: userContext?.departmentId || null
       };
@@ -955,22 +2149,55 @@ Respond ONLY with a structured JSON object in French/Kreyol matching this exact 
         return res.json(fallbackPayload);
       } catch (fatalError: any) {
         console.error("Fatal unhandled error in /api/cfo/analyze:", fatalError);
-        return res.status(500).json({ error: fatalError?.message || "Internal Server Error" });
+        return res.status(500).json({
+          error: "INTERNAL_SERVER_ERROR",
+          message: "Failed to generate AI CFO analysis."
+        });
       }
     }
   });
 
-  // Dedicated endpoint to generate 3-paragraph executive narratives with semantic formatting and NO technical IDs
-  app.post(["/api/cfo/narrative", "/cfo/narrative"], async (req, res) => {
+  // Dedicated endpoint to generate 3-paragraph executive narratives with semantic formatting and NO technical IDs (D1.1-R-03 Hardened)
+  app.post("/api/cfo/narrative", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       const { snapshot, business, branch, userContext } = req.body || {};
 
+      if (userContext?.userId && userContext.userId !== req.user!.uid) {
+        return res.status(403).json({
+          error: "IDENTITY_SPOOFING_DETECTED",
+          message: "userContext.userId must match the authenticated user."
+        });
+      }
+
+      const candidateBizId =
+        req.body?.businessId ??
+        req.body?.business_id ??
+        userContext?.businessId ??
+        business?.id;
+      const businessId = resolveServerRouteTenant(req, res, candidateBizId);
+      if (!businessId) return;
+
+      if (
+        !req.user!.isSuperAdmin &&
+        ((userContext?.businessId && userContext.businessId !== businessId) ||
+          (business?.id && business.id !== businessId))
+      ) {
+        return res.status(403).json({
+          error: "FORBIDDEN_TENANT_ACCESS",
+          message: "Client is not authorized to generate narrative for another tenant."
+        });
+      }
+
+      const effectiveRole = req.user!.isSuperAdmin
+        ? "SUPER_ADMIN"
+        : (req.user!.role || "EMPLOYEE").toUpperCase();
+
       const resolvedUserContext: IdentityUserContext = {
-        userId: userContext?.userId || "usr_current",
-        userName: userContext?.userName || "Opérateur FinOps",
-        userEmail: userContext?.userEmail || "",
-        role: userContext?.role || "OWNER",
-        businessId: userContext?.businessId || business?.id || "biz_demo",
+        userId: req.user!.uid,
+        userName: req.user!.email || req.user!.uid,
+        userEmail: req.user!.email || "",
+        role: effectiveRole as any,
+        businessId,
         branchId: userContext?.branchId || branch?.id || null,
         departmentId: userContext?.departmentId || null
       };
@@ -1096,22 +2323,27 @@ Schema:
     res.status(404).json({ error: `Endpoint ${req.method} ${req.originalUrl} not found`, success: false });
   });
 
-  // Global Express JSON Error Handler to guarantee JSON responses for all /api requests
+  // Global Express JSON Error Handler to guarantee sanitized JSON responses for all /api requests (D1.1-R-06)
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error(`[API Error Handler] ${req.method} ${req.originalUrl}:`, err);
     if (res.headersSent) {
       return next(err);
     }
-    const statusCode = err.status || err.statusCode || 500;
-    const cleanMsg = getCleanErrorMessage(err);
+    const statusCode =
+      typeof err?.status === "number"
+        ? err.status
+        : typeof err?.statusCode === "number"
+          ? err.statusCode
+          : 500;
     res.status(statusCode).json({
-      error: cleanMsg || "Internal Server Error",
+      error: statusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_ERROR",
+      message: statusCode >= 500 ? "An unexpected server error occurred." : "Invalid request.",
       success: false
     });
   });
 
-  // Serve static files and integrate Vite middlewares (when not running inside Vercel serverless functions)
-  if (!process.env.VERCEL) {
+  // Serve static files and integrate Vite middlewares (when not running inside Vercel serverless functions or Vitest)
+  if (!process.env.VERCEL && !process.env.VITEST && process.env.NODE_ENV !== "test") {
     if (process.env.NODE_ENV !== "production") {
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
@@ -1136,36 +2368,47 @@ Schema:
 }
 
 export async function startServer() {
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const app = await createApp();
 
-  return new Promise<void>((resolve, reject) => {
-    const server = app.listen(PORT, "0.0.0.0", () => {
-      console.log(`🚀 FinOps Server running on http://0.0.0.0:${PORT}`);
-      resolve();
-    });
+  const listenWithRetry = (retriesLeft = 5, delayMs = 1000): Promise<void> => {
+    return new Promise<void>((resolve, reject) => {
+      const server = app.listen(PORT, "0.0.0.0", () => {
+        console.log(`🚀 FinOps Server running on http://0.0.0.0:${PORT}`);
+        resolve();
+      });
 
-    server.on("error", (err: any) => {
-      if (err.code === "EADDRINUSE") {
-        console.error(`❌ Critical server startup error: Port ${PORT} is already in use.`);
-        reject(err);
-      } else {
-        console.error("❌ Critical server startup error:", err);
-        reject(err);
-      }
-    });
+      server.on("error", (err: any) => {
+        if (err.code === "EADDRINUSE" && retriesLeft > 0) {
+          console.warn(`⚠️ Port ${PORT} is currently in use, retrying in ${delayMs}ms... (${retriesLeft} retries left)`);
+          setTimeout(() => {
+            listenWithRetry(retriesLeft - 1, delayMs)
+              .then(resolve)
+              .catch(reject);
+          }, delayMs);
+        } else if (err.code === "EADDRINUSE") {
+          console.error(`❌ Critical server startup error: Port ${PORT} is already in use.`);
+          reject(err);
+        } else {
+          console.error("❌ Critical server startup error:", err);
+          reject(err);
+        }
+      });
 
-    process.on("SIGTERM", () => {
-      server.close(() => process.exit(0));
+      process.on("SIGTERM", () => {
+        server.close(() => process.exit(0));
+      });
+      process.on("SIGINT", () => {
+        server.close(() => process.exit(0));
+      });
     });
-    process.on("SIGINT", () => {
-      server.close(() => process.exit(0));
-    });
-  });
+  };
+
+  return listenWithRetry();
 }
 
-// Auto-boot standalone server if not in Vercel serverless runtime
-if (!process.env.VERCEL) {
+// Auto-boot standalone server if not in Vercel serverless runtime or Vitest test runner
+if (!process.env.VERCEL && !process.env.VITEST && process.env.NODE_ENV !== "test") {
   startServer().catch(err => {
     console.error("CRITICAL SERVER STARTUP ERROR:", err);
     process.exit(1);

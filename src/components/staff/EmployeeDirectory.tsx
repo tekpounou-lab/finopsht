@@ -43,6 +43,8 @@ interface EmployeeDirectoryProps {
   currentUserEmail?: string;
   externalSearchQuery?: string;
   onSearchQueryChange?: (q: string) => void;
+  ledgerTransactions?: any[];
+  payrollRecords?: any[];
 }
 
 const dirDict = {
@@ -175,7 +177,9 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   currentUserId,
   currentUserEmail,
   externalSearchQuery,
-  onSearchQueryChange
+  onSearchQueryChange,
+  ledgerTransactions = [],
+  payrollRecords = []
 }) => {
   const { language } = useI18n();
   const d = dirDict[(language === "ht" || language === "en") ? language : "fr"];
@@ -1516,7 +1520,8 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         <EmployeeTechnicalSheet
           employee={focusedEmployeeForProfile}
           attendanceRecords={attendanceRecords || []}
-          ledgerTransactions={[]}
+          ledgerTransactions={ledgerTransactions || []}
+          payrollRecords={payrollRecords || []}
           branches={branches}
           departments={departments}
           language={(language === "ht" || language === "en") ? language : "fr"}

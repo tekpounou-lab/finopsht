@@ -32,6 +32,8 @@ interface FilterToolbarProps {
   departments: Array<{ id: string; name?: string; label?: string }>;
   isExpertMode: boolean;
   onToggleMode: (expert: boolean) => void;
+  accountingBasis?: "CASH" | "ACCRUAL";
+  onAccountingBasisChange?: (basis: "CASH" | "ACCRUAL") => void;
   language?: "fr" | "en" | "ht";
 }
 
@@ -50,6 +52,8 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
   departments,
   isExpertMode,
   onToggleMode,
+  accountingBasis = "CASH",
+  onAccountingBasisChange,
   language = "fr",
 }) => {
   const periods: Array<{ id: PICPeriod; label: string }> = [
@@ -71,36 +75,66 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
 
   return (
     <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800/80 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4" id="pic-filter-toolbar">
-      {/* Top Row: Mode switch, Period Presets, Refresh & Reset */}
+      {/* Top Row: Accounting Basis, Mode Switch, Period Presets, Refresh & Reset */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/60 pb-3">
-        {/* Mode Switcher Toggle */}
-        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800" id="pic-mode-switcher">
-          <button
-            type="button"
-            onClick={() => onToggleMode(false)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              !isExpertMode
-                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-            id="pic-btn-mode-simplified"
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Mode Simplifié</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleMode(true)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              isExpertMode
-                ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-            id="pic-btn-mode-expert"
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            <span>Mode Expert</span>
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Accounting Basis Toggle */}
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800" id="pic-accounting-basis-switcher">
+            <button
+              type="button"
+              onClick={() => onAccountingBasisChange?.("CASH")}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                accountingBasis === "CASH"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Trésorerie (CASH)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onAccountingBasisChange?.("ACCRUAL")}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                accountingBasis === "ACCRUAL"
+                  ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Engagement (ACCRUAL)</span>
+            </button>
+          </div>
+
+          {/* Mode Switcher Toggle */}
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800" id="pic-mode-switcher">
+            <button
+              type="button"
+              onClick={() => onToggleMode(false)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                !isExpertMode
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+              id="pic-btn-mode-simplified"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Mode Simplifié</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleMode(true)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                isExpertMode
+                  ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+              id="pic-btn-mode-expert"
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Mode Expert</span>
+            </button>
+          </div>
         </div>
 
         {/* Period Preset Pills */}

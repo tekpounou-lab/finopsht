@@ -8,6 +8,7 @@ import {
   BankReconciliation,
   JournalEntry
 } from "../types/accounting";
+export type { JournalEntry };
 import { CHART_OF_ACCOUNTS, AmountCentsSchema } from "../constants/finance";
 import { BankReconciliationEngine } from "./accounting/BankReconciliationEngine";
 import { LedgerAuditEngine } from "./accounting/LedgerAuditEngine";
@@ -115,14 +116,161 @@ export const runReconciliation = (transactions: LedgerTransaction[], business_id
 };
 
 /**
- * Predicate to determine if a transaction is an orphan
+ * Predicate to determine if a transaction is an orphan in terms of structural attribution
+ * (missing branchId/branch_id, departmentId/department_id, or debit/credit accounts).
  */
 export const isOrphanTransaction = (tx: Partial<LedgerTransaction>): boolean => {
-  if (!tx.business_id) return true;
-  const costCenter = (tx as any).cost_center_id || (tx as any).costCenterId || (tx as any).branchId || (tx as any).branch_id;
+  if (!tx.business_id && !(tx as any).businessId) return true;
+
+  const branch = (tx.branchId && tx.branchId.trim()) || ((tx as any).branch_id && (tx as any).branch_id.trim());
+  const hasNoBranch = !branch || branch === "none" || branch === "ORPHAN" || branch === "UNASSIGNED" || branch === "SANS_SUCCURSALE";
+
+  const dept = (tx.departmentId && tx.departmentId.trim()) || ((tx as any).department_id && (tx as any).department_id.trim());
+  const hasNoDept = !dept || dept === "none" || dept === "ORPHAN" || dept === "UNASSIGNED";
+
+  const costCenter = (tx as any).cost_center_id || (tx as any).costCenterId || branch;
   const hasNoCostCenter = !costCenter || costCenter === "none" || costCenter === "ORPHAN" || costCenter === "UNASSIGNED";
-  const hasNoAccounts = !tx.debit_account || !tx.credit_account;
-  return hasNoCostCenter || hasNoAccounts;
+
+  const hasNoAccounts = !tx.debit_account || !tx.credit_account || tx.debit_account.trim() === "" || tx.credit_account.trim() === "" || tx.debit_account === tx.credit_account;
+
+  return hasNoBranch || hasNoDept || hasNoCostCenter || hasNoAccounts;
+};
+
+/**
+ * Contextual references for relational validation and auto-enrichment.
+ */
+export interface TransactionSanitizationContext {
+  defaultBranchId?: string;
+  defaultDepartmentId?: string;
+  defaultCostCenter?: string;
+  branches?: Array<{ id: string; code?: string; name?: string; business_id?: string }>;
+  departments?: Array<{ id: string; code?: string; name?: string; business_id?: string }>;
+  employees?: Array<{ id: string; branchId?: string; branch_id?: string; departmentId?: string; department_id?: string; name?: string; email?: string }>;
+}
+
+/**
+ * Canonical sanitizer and enricher to completely prevent orphan transactions at persistence time.
+ * Enforces dual key consistency (camelCase + snake_case), resolves foreign keys to branches/departments,
+ * reconciles employee attribution, and validates double-entry accounts equilibrium.
+ */
+export const sanitizeAndEnrichLedgerTransaction = <T extends Partial<LedgerTransaction>>(
+  tx: T,
+  businessId: string,
+  context?: TransactionSanitizationContext
+): LedgerTransaction => {
+  const resolvedBusinessId = businessId || tx.business_id || (tx as any).businessId || "BIZ_MAIN";
+
+  // 1. Resolve & normalize double entry accounts
+  const enrichedAccounts = applyDoubleEntryRules(tx);
+  let debitAccount = (enrichedAccounts.debit_account || "").trim();
+  let creditAccount = (enrichedAccounts.credit_account || "").trim();
+
+  if (!debitAccount || debitAccount === "none" || debitAccount === "ORPHAN") {
+    debitAccount = DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK;
+  }
+  if (!creditAccount || creditAccount === "none" || creditAccount === "ORPHAN") {
+    creditAccount = DEFAULT_CHART_OF_ACCOUNTS.REVENUE.OPERATING;
+  }
+  if (debitAccount === creditAccount) {
+    if (debitAccount === DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK) {
+      creditAccount = DEFAULT_CHART_OF_ACCOUNTS.REVENUE.OPERATING;
+    } else {
+      debitAccount = DEFAULT_CHART_OF_ACCOUNTS.ASSETS.BANK;
+    }
+  }
+
+  // 2. Resolve amounts
+  const amountCents = enrichedAccounts.amount_cents ?? (
+    enrichedAccounts.amount !== undefined ? Math.round(Number(enrichedAccounts.amount) * 100) : 0
+  );
+  const amount = enrichedAccounts.amount ?? (amountCents / 100);
+
+  // 3. Reconcile Employee relation if available
+  const empId = enrichedAccounts.employeeId || (enrichedAccounts as any).employee_id;
+  let empBranch: string | undefined;
+  let empDept: string | undefined;
+  let matchedEmpName: string | undefined;
+
+  if (empId && context?.employees && context.employees.length > 0) {
+    const foundEmp = context.employees.find(
+      e => e.id === empId || (e.email && e.email.toLowerCase() === empId.toLowerCase())
+    );
+    if (foundEmp) {
+      empBranch = foundEmp.branchId || (foundEmp as any).branch_id;
+      empDept = foundEmp.departmentId || (foundEmp as any).department_id;
+      matchedEmpName = foundEmp.name;
+    }
+  }
+
+  // 4. Resolve Branch attribution
+  let rawBranch = (enrichedAccounts.branchId || (enrichedAccounts as any).branch_id || empBranch || "").trim();
+  if (!rawBranch || rawBranch === "none" || rawBranch === "ORPHAN" || rawBranch === "UNASSIGNED" || rawBranch === "SANS_SUCCURSALE") {
+    rawBranch = context?.defaultBranchId || (context?.branches && context.branches[0]?.id) || "main";
+  } else if (context?.branches && context.branches.length > 0) {
+    const match = context.branches.find(
+      b => b.id === rawBranch ||
+           b.code?.trim().toUpperCase() === rawBranch.toUpperCase() ||
+           b.name?.trim().toUpperCase() === rawBranch.toUpperCase()
+    );
+    if (match) rawBranch = match.id;
+  }
+
+  // 5. Resolve Department attribution
+  let rawDept = (enrichedAccounts.departmentId || (enrichedAccounts as any).department_id || empDept || "").trim();
+  if (!rawDept || rawDept === "none" || rawDept === "ORPHAN" || rawDept === "UNASSIGNED") {
+    rawDept = context?.defaultDepartmentId || (context?.departments && context.departments[0]?.id) || "operations";
+  } else if (context?.departments && context.departments.length > 0) {
+    const match = context.departments.find(
+      d => d.id === rawDept ||
+           d.code?.trim().toUpperCase() === rawDept.toUpperCase() ||
+           d.name?.trim().toUpperCase() === rawDept.toUpperCase()
+    );
+    if (match) rawDept = match.id;
+  }
+
+  // 6. Resolve Cost Center
+  let rawCostCenter = ((enrichedAccounts as any).cost_center_id || (enrichedAccounts as any).costCenterId || rawBranch || "").trim();
+  if (!rawCostCenter || rawCostCenter === "none" || rawCostCenter === "ORPHAN" || rawCostCenter === "UNASSIGNED") {
+    rawCostCenter = rawBranch || context?.defaultCostCenter || "main";
+  }
+
+  const finalTx: LedgerTransaction = {
+    ...enrichedAccounts,
+    id: enrichedAccounts.id || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    business_id: resolvedBusinessId,
+    businessId: resolvedBusinessId,
+    cost_center_id: rawCostCenter,
+    costCenterId: rawCostCenter,
+    branchId: rawBranch,
+    branch_id: rawBranch,
+    departmentId: rawDept,
+    department_id: rawDept,
+    employeeId: empId || undefined,
+    employee_id: empId || undefined,
+    employeeName: enrichedAccounts.employeeName || (enrichedAccounts as any).employee_name || matchedEmpName,
+    employee_name: enrichedAccounts.employeeName || (enrichedAccounts as any).employee_name || matchedEmpName,
+    debit_account: debitAccount,
+    credit_account: creditAccount,
+    debit: enrichedAccounts.debit ?? amount,
+    credit: enrichedAccounts.credit ?? amount,
+    debit_cents: enrichedAccounts.debit_cents ?? amountCents,
+    credit_cents: enrichedAccounts.credit_cents ?? amountCents,
+    amount,
+    amount_cents: amountCents,
+    type: (enrichedAccounts.type as any) || "INCOME",
+    description: enrichedAccounts.description || "Écriture générale",
+    date: enrichedAccounts.date || new Date().toISOString(),
+    category: enrichedAccounts.category || "General",
+    signerId: enrichedAccounts.signerId || "SYSTEM",
+    currency: (enrichedAccounts.currency as any) || "HTG",
+    status: (enrichedAccounts.status as any) || "POSTED",
+    source: (enrichedAccounts.source as any) || "MANUAL",
+    isLocked: true,
+    isImmutable: true,
+    updated_at: enrichedAccounts.updated_at || new Date().toISOString()
+  };
+
+  return finalTx;
 };
 
 /**
@@ -133,7 +281,7 @@ export const detectOrphanTransactions = (
   businessId: string
 ): LedgerTransaction[] => {
   if (!businessId || !transactions) return [];
-  return transactions.filter((tx) => tx.business_id === businessId && isOrphanTransaction(tx));
+  return transactions.filter((tx) => (tx.business_id === businessId || (tx as any).businessId === businessId) && isOrphanTransaction(tx));
 };
 
 /**
@@ -161,7 +309,13 @@ export const createInvoiceJournal = (
     transactions.push({
       id: `${txId}_rev`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "main",
+      branch_id: "main",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "main",
+      costCenterId: "main",
       type: "INCOME",
       amount: subtotal,
       amount_cents: subtotalCents,
@@ -188,7 +342,13 @@ export const createInvoiceJournal = (
     transactions.push({
       id: `${txId}_tax`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "main",
+      branch_id: "main",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "main",
+      costCenterId: "main",
       type: "INCOME",
       amount: taxAmount,
       amount_cents: taxCents,
@@ -215,7 +375,13 @@ export const createInvoiceJournal = (
     transactions.push({
       id: txId,
       business_id: businessId,
+      businessId: businessId,
       branchId: "main",
+      branch_id: "main",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "main",
+      costCenterId: "main",
       type: "INCOME",
       amount: totalAmount,
       amount_cents: totalCents,
@@ -297,16 +463,31 @@ export const createInvoiceJournal = (
  *   - Crédit: 1300 - Employee Advances (1300_EMPLOYEE_ADVANCES) [if advances recovered]
  *   - Crédit: 1010 - Bank (1010_BANK) [Net Paid to Employees]
  */
+export interface CreatePayrollJournalOptions {
+  settlementAccount?: string;
+  isAccrualOnly?: boolean;
+}
+
 export const createPayrollJournalEntry = (
   cycle: PayrollCycle,
   records: PayrollRecord[],
   businessId: string,
-  actor?: { uid?: string; id?: string; email?: string; name?: string }
+  actor?: { uid?: string; id?: string; email?: string; name?: string },
+  options?: CreatePayrollJournalOptions
 ): { transactions: LedgerTransaction[]; journalEntry: JournalEntry } => {
   const now = new Date().toISOString();
   const txDate = cycle.effectiveAccountingDate || cycle.endDate || now.split("T")[0];
   const cycleLabel = cycle.cycleName || cycle.label || cycle.id;
+  const cycleCurrency: "HTG" | "USD" = (cycle.currency as any) === "USD" ? "USD" : "HTG";
   const txIdBase = `tx_pay_${cycle.id}`;
+
+  const netCreditAccount = options?.isAccrualOnly
+    ? (options.settlementAccount || "2100_PAYROLL_CLEARING")
+    : (options?.settlementAccount || "1010_BANK");
+  const netDescription = options?.isAccrualOnly
+    ? `Paie ${cycleLabel} - Salaires Nets Dûs aux Collaborateurs (Dette Salariale Constatée)`
+    : `Paie ${cycleLabel} - Virement Salaires Nets (Banque)`;
+  const netComponent = options?.isAccrualOnly ? "ACCRUED_NET_SALARIES" : "NET_PAYOUT";
 
   let totalGrossCents = 0;
   let totalOnaCents = 0;
@@ -344,26 +525,32 @@ export const createPayrollJournalEntry = (
   const transactions: LedgerTransaction[] = [];
   const actorId = actor?.uid || actor?.id || "SYSTEM";
 
-  // Leg 1: Net Salaries Payout (Debit 5100_PAYROLL_EXPENSE, Credit 1010_BANK)
+  // Leg 1: Net Salaries (Debit 5100_PAYROLL_EXPENSE, Credit 1010_BANK or 2100_PAYROLL_CLEARING)
   if (totalNetCents > 0) {
     const netHtg = totalNetCents / 100;
     transactions.push({
       id: `${txIdBase}_net`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
       type: "PAYROLL",
       amount: netHtg,
       amount_cents: totalNetCents,
       date: txDate,
-      description: `Paie ${cycleLabel} - Virement Salaires Nets (Banque)`,
+      description: netDescription,
       category: "PAYROLL",
       signerId: actorId,
-      currency: "HTG",
+      currency: cycleCurrency,
       source: "PAYROLL_ENGINE",
       status: "POSTED",
       isImmutable: true,
       debit_account: "5100_PAYROLL_EXPENSE",
-      credit_account: "1010_BANK",
+      credit_account: netCreditAccount,
       debit: netHtg,
       credit: netHtg,
       debit_cents: totalNetCents,
@@ -372,9 +559,9 @@ export const createPayrollJournalEntry = (
         cycleId: cycle.id,
         cycleName: cycleLabel,
         recordsCount: records.length,
-        component: "NET_PAYOUT",
+        component: netComponent,
         accountDebit: "5100 - Payroll Expense",
-        accountCredit: "1010 - Bank"
+        accountCredit: netCreditAccount
       },
       created_at: now,
       updated_at: now
@@ -387,7 +574,13 @@ export const createPayrollJournalEntry = (
     transactions.push({
       id: `${txIdBase}_ona`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
       type: "PAYROLL",
       amount: onaHtg,
       amount_cents: totalOnaCents,
@@ -395,7 +588,7 @@ export const createPayrollJournalEntry = (
       description: `Paie ${cycleLabel} - Retenues Sociales ONA Salariés à Décaisser`,
       category: "TAX",
       signerId: actorId,
-      currency: "HTG",
+      currency: cycleCurrency,
       source: "PAYROLL_ENGINE",
       status: "POSTED",
       isImmutable: true,
@@ -418,13 +611,20 @@ export const createPayrollJournalEntry = (
     });
   }
 
+
   // Leg 3: OFATMA Employee Deductions (Debit 5100_PAYROLL_EXPENSE, Credit 2110_OFATMA_TAXES_PAYABLE)
   if (totalOfatmaCents > 0) {
     const ofatmaHtg = totalOfatmaCents / 100;
     transactions.push({
       id: `${txIdBase}_ofatma`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
       type: "PAYROLL",
       amount: ofatmaHtg,
       amount_cents: totalOfatmaCents,
@@ -432,7 +632,7 @@ export const createPayrollJournalEntry = (
       description: `Paie ${cycleLabel} - Retenues Risques OFATMA Salariés à Décaisser`,
       category: "TAX",
       signerId: actorId,
-      currency: "HTG",
+      currency: cycleCurrency,
       source: "PAYROLL_ENGINE",
       status: "POSTED",
       isImmutable: true,
@@ -461,7 +661,13 @@ export const createPayrollJournalEntry = (
     transactions.push({
       id: `${txIdBase}_adv`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
       type: "PAYROLL",
       amount: advHtg,
       amount_cents: totalAdvancesCents,
@@ -469,7 +675,7 @@ export const createPayrollJournalEntry = (
       description: `Paie ${cycleLabel} - Recouvrement Avances sur Salaires`,
       category: "ADVANCE",
       signerId: actorId,
-      currency: "HTG",
+      currency: cycleCurrency,
       source: "PAYROLL_ENGINE",
       status: "POSTED",
       isImmutable: true,
@@ -498,7 +704,13 @@ export const createPayrollJournalEntry = (
     transactions.push({
       id: `${txIdBase}_ona_employer`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
       type: "PAYROLL",
       amount: onaEmprHtg,
       amount_cents: totalOnaEmployerCents,
@@ -506,7 +718,7 @@ export const createPayrollJournalEntry = (
       description: `Paie ${cycleLabel} - Charges Sociales Patronales ONA à Décaisser`,
       category: "TAX",
       signerId: actorId,
-      currency: "HTG",
+      currency: cycleCurrency,
       source: "PAYROLL_ENGINE",
       status: "POSTED",
       isImmutable: true,
@@ -535,7 +747,13 @@ export const createPayrollJournalEntry = (
     transactions.push({
       id: `${txIdBase}_ofatma_employer`,
       business_id: businessId,
+      businessId: businessId,
       branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
       type: "PAYROLL",
       amount: ofatmaEmprHtg,
       amount_cents: totalOfatmaEmployerCents,
@@ -543,7 +761,7 @@ export const createPayrollJournalEntry = (
       description: `Paie ${cycleLabel} - Charges Risques Patronales OFATMA à Décaisser`,
       category: "TAX",
       signerId: actorId,
-      currency: "HTG",
+      currency: cycleCurrency,
       source: "PAYROLL_ENGINE",
       status: "POSTED",
       isImmutable: true,
@@ -566,15 +784,61 @@ export const createPayrollJournalEntry = (
     });
   }
 
-  const totalDebitSumCents = totalGrossCents + totalEmployerContribCents;
-  const totalCreditSumCents = totalNetCents + totalOnaCents + totalOfatmaCents + totalAdvancesCents + totalOnaEmployerCents + totalOfatmaEmployerCents;
+  const rawDebits = totalGrossCents + totalEmployerContribCents;
+  const rawCredits = totalNetCents + totalOnaCents + totalOfatmaCents + totalAdvancesCents + totalOnaEmployerCents + totalOfatmaEmployerCents;
+  const floorSubsidyCents = Math.max(0, rawCredits - rawDebits);
+
+  if (floorSubsidyCents > 0) {
+    const subsidyHtg = floorSubsidyCents / 100;
+    transactions.push({
+      id: `${txIdBase}_floor_subsidy`,
+      business_id: businessId,
+      businessId: businessId,
+      branchId: "MAIN",
+      branch_id: "MAIN",
+      departmentId: "operations",
+      department_id: "operations",
+      cost_center_id: "MAIN",
+      costCenterId: "MAIN",
+      type: "PAYROLL",
+      amount: subsidyHtg,
+      amount_cents: floorSubsidyCents,
+      date: txDate,
+      description: `Paie ${cycleLabel} - Complément Plancher de Survie Employeur`,
+      category: "PAYROLL",
+      signerId: actorId,
+      currency: cycleCurrency,
+      source: "PAYROLL_ENGINE",
+      status: "POSTED",
+      isImmutable: true,
+      debit_account: "5100_PAYROLL_EXPENSE",
+      credit_account: netCreditAccount,
+      debit: subsidyHtg,
+      credit: 0,
+      debit_cents: floorSubsidyCents,
+      credit_cents: 0,
+      metadata: {
+        cycleId: cycle.id,
+        cycleName: cycleLabel,
+        recordsCount: records.length,
+        component: "SURVIVAL_FLOOR_SUBSIDY",
+        accountDebit: "5100 - Payroll Expense",
+        accountCredit: netCreditAccount
+      },
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  const totalDebitSumCents = rawDebits + floorSubsidyCents;
+  const totalCreditSumCents = rawCredits;
 
   const journalLines: any[] = [
     {
       accountId: "5100_PAYROLL_EXPENSE",
       accountCode: "5100",
       accountName: "5100 - Payroll Expense",
-      debitCents: totalGrossCents,
+      debitCents: totalGrossCents + floorSubsidyCents,
       creditCents: 0,
       description: `Masse Salariale Brute - ${cycleLabel}`
     },
@@ -629,12 +893,12 @@ export const createPayrollJournalEntry = (
     ...(totalNetCents > 0
       ? [
           {
-            accountId: "1010_BANK",
-            accountCode: "1010",
-            accountName: "1010 - Bank",
+            accountId: netCreditAccount,
+            accountCode: netCreditAccount.split("_")[0],
+            accountName: netCreditAccount === "2100_PAYROLL_CLEARING" ? "2100 - Payroll Clearing / Net Salaries Payable" : "1010 - Bank",
             debitCents: 0,
             creditCents: totalNetCents,
-            description: `Règlement Net Salaires aux Collaborateurs - ${cycleLabel}`
+            description: netDescription
           }
         ]
       : [])
@@ -648,7 +912,7 @@ export const createPayrollJournalEntry = (
     source: "PAYROLL",
     sourceId: cycle.id,
     description: `Écriture Comptable de Clôture Paie (SEALED) - ${cycleLabel}`,
-    currency: "HTG",
+    currency: cycleCurrency,
     lines: journalLines,
     totalDebitCents: totalDebitSumCents,
     totalCreditCents: totalCreditSumCents,
@@ -661,53 +925,249 @@ export const createPayrollJournalEntry = (
   return { transactions, journalEntry };
 };
 
+/**
+ * Creates a settlement journal entry for an accrued payroll cycle when funds are disbursed.
+ * Debits the clearing liability (2100_PAYROLL_CLEARING) and Credits the treasury account (1010_BANK or 1000_CASH).
+ */
+export const createPayrollSettlementEntry = (
+  cycle: PayrollCycle,
+  netPaidAmount: number,
+  businessId: string,
+  bankAccount: string = "1010_BANK",
+  clearingAccount: string = "2100_PAYROLL_CLEARING",
+  actor?: { uid?: string; id?: string; email?: string; name?: string }
+): { transactions: LedgerTransaction[]; journalEntry: JournalEntry } => {
+  const now = new Date().toISOString();
+  const txDate = cycle.effectiveAccountingDate || cycle.endDate || now.split("T")[0];
+  const cycleLabel = cycle.cycleName || cycle.label || cycle.id;
+  const cycleCurrency: "HTG" | "USD" = (cycle.currency as any) === "USD" ? "USD" : "HTG";
+  const actorId = actor?.uid || actor?.id || "SYSTEM";
+  const netCents = Math.round(netPaidAmount * 100);
+
+  const tx: LedgerTransaction = {
+    id: `tx_settle_${cycle.id}`,
+    business_id: businessId,
+    businessId,
+    branchId: "MAIN",
+    branch_id: "MAIN",
+    departmentId: "operations",
+    department_id: "operations",
+    cost_center_id: "MAIN",
+    costCenterId: "MAIN",
+    type: "PAYROLL",
+    amount: netPaidAmount,
+    amount_cents: netCents,
+    date: txDate,
+    description: `Règlement Trésorerie Paie ${cycleLabel} - Virement Effectué`,
+    category: "PAYROLL",
+    signerId: actorId,
+    currency: cycleCurrency,
+    source: "PAYROLL_ENGINE",
+    status: "POSTED",
+    isImmutable: true,
+    debit_account: clearingAccount,
+    credit_account: bankAccount,
+    debit: netPaidAmount,
+    credit: netPaidAmount,
+    debit_cents: netCents,
+    credit_cents: netCents,
+    metadata: {
+      cycleId: cycle.id,
+      cycleName: cycleLabel,
+      component: "SALARY_SETTLEMENT",
+      accountDebit: `${clearingAccount} - Payroll Clearing / Liability`,
+      accountCredit: `${bankAccount} - Bank / Treasury`
+    },
+    created_at: now,
+    updated_at: now
+  };
+
+  const journalEntry: JournalEntry = {
+    id: `je_settle_${cycle.id}`,
+    businessId,
+    date: txDate,
+    reference: `SETTLE-${cycleLabel}`,
+    source: "PAYROLL",
+    sourceId: cycle.id,
+    description: `Règlement Salaires Nets en Banque - ${cycleLabel}`,
+    currency: cycleCurrency,
+    lines: [
+      {
+        accountId: clearingAccount,
+        accountCode: clearingAccount.split("_")[0],
+        accountName: clearingAccount,
+        debitCents: netCents,
+        creditCents: 0,
+        description: `Apurement Dette Salariale - ${cycleLabel}`
+      },
+      {
+        accountId: bankAccount,
+        accountCode: bankAccount.split("_")[0],
+        accountName: bankAccount,
+        debitCents: 0,
+        creditCents: netCents,
+        description: `Décaissement Bancaire Salaires - ${cycleLabel}`
+      }
+    ],
+    totalDebitCents: netCents,
+    totalCreditCents: netCents,
+    isBalanced: true,
+    isLocked: true,
+    createdBy: actorId,
+    createdAt: now
+  };
+
+  return { transactions: [tx], journalEntry };
+};
+
 // Alias for generic calls
 export const createJournalEntry = createPayrollJournalEntry;
 
 /**
  * Creates an inverse (reversal / contre-passation) balanced journal entry for a SEALED payroll cycle.
- * Inverts debits and credits across all transaction legs (5100, 1010, 2100, 2110, 1300).
+ * Inverts debits and credits across all eligible accrual transaction legs (5100, 2100, 2110, 1300, 5110, 2200).
+ *
+ * CRITICAL (ENG-05):
+ * - Case A (Accrued but not paid): Reverses payroll accrual & liability postings.
+ * - Case B (Already paid in bank/cash): Reverses payroll accrual & liabilities BUT PRESERVES
+ *   the historical bank disbursement transaction without falsely increasing bank balances.
  */
 export const createPayrollReversalJournalEntry = (
   cycle: PayrollCycle,
   records: PayrollRecord[],
   businessId: string,
   actor?: { uid?: string; id?: string; email?: string; name?: string },
-  reason?: string
-): { transactions: LedgerTransaction[]; journalEntry: JournalEntry } => {
-  const original = createPayrollJournalEntry(cycle, records, businessId, actor);
+  reason?: string,
+  existingLedgerTransactions?: LedgerTransaction[]
+): { transactions: LedgerTransaction[]; journalEntry: JournalEntry; settlementStatus?: string } => {
   const now = new Date().toISOString();
   const txDate = now.split("T")[0];
   const cycleLabel = cycle.cycleName || cycle.label || cycle.id;
   const actorId = actor?.uid || actor?.id || "SYSTEM";
 
-  // Reverse every ledger transaction by swapping debit and credit accounts
-  const reversalTransactions: LedgerTransaction[] = original.transactions.map((tx) => ({
-    ...tx,
-    id: `tx_rev_${tx.id}`,
-    date: txDate,
-    description: `[CONTRE-PASSATION] ${tx.description}`,
-    debit_account: tx.credit_account,
-    credit_account: tx.debit_account,
-    metadata: {
-      ...tx.metadata,
-      reversalOfTxId: tx.id,
-      reversalOfCycleId: cycle.id,
-      isReversal: true,
-      reversalReason: reason || "Annulation et contre-passation du cycle de paie scellé",
-      reversedBy: actorId
-    },
-    created_at: now,
-    updated_at: now
-  }));
+  // 1. Identify original posted transactions
+  let originalTxs: LedgerTransaction[] = [];
+  if (Array.isArray(existingLedgerTransactions) && existingLedgerTransactions.length > 0) {
+    originalTxs = existingLedgerTransactions.filter(
+      (tx) =>
+        (tx.business_id === businessId || tx.businessId === businessId) &&
+        (tx.payroll_cycle_id === cycle.id || tx.payrollCycleId === cycle.id || tx.metadata?.cycleId === cycle.id || tx.id.includes(cycle.id)) &&
+        tx.status === "POSTED" &&
+        !tx.isReversal &&
+        !(tx as any).is_reversal &&
+        tx.type !== "REVERSAL"
+    );
+  }
 
-  // Reversal journal lines: swap debitCents and creditCents
-  const reversalLines = original.journalEntry.lines.map((line) => ({
-    ...line,
-    debitCents: line.creditCents,
-    creditCents: line.debitCents,
-    description: `[CONTRE-PASSATION] ${line.description}`
-  }));
+  // Fallback if no posted transactions provided: generate standard accrual posting baseline
+  if (originalTxs.length === 0) {
+    const generated = createPayrollJournalEntry(cycle, records, businessId, actor, { isAccrualOnly: true });
+    originalTxs = generated.transactions;
+  }
+
+  // 2. Detect whether a real bank/cash disbursement occurred for this cycle
+  const settlementTx = originalTxs.find(
+    (tx) =>
+      tx.metadata?.component === "SALARY_SETTLEMENT" ||
+      tx.category === "SETTLEMENT" ||
+      tx.credit_account === "1010_BANK" ||
+      tx.credit_account === "1000_CASH" ||
+      tx.debit_account === "1010_BANK" ||
+      tx.debit_account === "1000_CASH" ||
+      (tx as any).debitAccount === "1010_BANK" ||
+      (tx as any).creditAccount === "1010_BANK"
+  );
+
+  const isAlreadyPaid = Boolean(
+    settlementTx ||
+    cycle.status === "PAID" ||
+    (cycle as any).paymentStatus === "PAID" ||
+    (cycle as any).settlementStatus === "SETTLEMENT_PRESERVED_PENDING_RECOVERY" ||
+    (cycle as any).disbursementStatus === "DISBURSED"
+  );
+  let settlementStatus = isAlreadyPaid ? "SETTLEMENT_PRESERVED_PENDING_RECOVERY" : "ACCRUAL_ONLY_REVERSED";
+
+  // 3. Filter eligible accrual transactions to reverse (excluding bank payment in Case B)
+  const eligibleOriginals = originalTxs.filter((tx) => {
+    const isDisbursementLeg =
+      tx.metadata?.component === "SALARY_SETTLEMENT" ||
+      tx.category === "SETTLEMENT" ||
+      tx.credit_account === "1010_BANK" ||
+      tx.credit_account === "1000_CASH" ||
+      (tx as any).creditAccount === "1010_BANK" ||
+      (tx as any).creditAccount === "1000_CASH";
+
+    if (isDisbursementLeg) {
+      settlementStatus = "SETTLEMENT_PRESERVED_PENDING_RECOVERY";
+      // Case B: Do NOT reverse bank disbursement automatically
+      return false;
+    }
+    return true;
+  });
+
+  // 4. Construct reversal transactions by swapping debit and credit accounts & amounts
+  const reversalTransactions: LedgerTransaction[] = eligibleOriginals.map((tx) => {
+    const origDebitAcc = tx.debit_account || (tx as any).debitAccount || "5100_PAYROLL_EXPENSE";
+    const origCreditAcc = tx.credit_account || (tx as any).creditAccount || "2100_PAYROLL_CLEARING";
+    const amtCents = tx.amount_cents ?? Math.round((tx.amount || 0) * 100);
+    const amtHtg = amtCents / 100;
+
+    return {
+      ...tx,
+      id: `tx_rev_${tx.id}_${Date.now().toString(36)}`,
+      business_id: businessId,
+      businessId,
+      date: txDate,
+      type: "REVERSAL",
+      description: `[CONTRE-PASSATION] ${tx.description}`,
+      debit_account: origCreditAcc,
+      credit_account: origDebitAcc,
+      debitAccount: origCreditAcc,
+      creditAccount: origDebitAcc,
+      debit: amtHtg,
+      credit: amtHtg,
+      debit_cents: amtCents,
+      credit_cents: amtCents,
+      amount: amtHtg,
+      amount_cents: amtCents,
+      status: "POSTED",
+      isReversal: true,
+      metadata: {
+        ...tx.metadata,
+        reversalOfTxId: tx.id,
+        reversalOfCycleId: cycle.id,
+        isReversal: true,
+        reversalReason: reason || "Annulation et contre-passation du cycle de paie scellé",
+        reversedBy: actorId,
+        bankDisbursementPreserved: isAlreadyPaid,
+        settlementTreatment: isAlreadyPaid ? "BLOCKED_PENDING_OWNER_REFUND_WORKFLOW" : "ACCRUAL_CANCELLED",
+      },
+      created_at: now,
+      updated_at: now,
+    };
+  });
+
+  // 5. Construct balanced reversal JournalEntry lines
+  let totalDebitCents = 0;
+  let totalCreditCents = 0;
+
+  const reversalLines = reversalTransactions.map((tx) => {
+    const dAcc = tx.debit_account || "2100_PAYROLL_CLEARING";
+    const cAcc = tx.credit_account || "5100_PAYROLL_EXPENSE";
+    const cents = tx.amount_cents || 0;
+
+    totalDebitCents += cents;
+    totalCreditCents += cents;
+
+    return {
+      accountId: dAcc,
+      accountCode: dAcc.split("_")[0],
+      accountName: dAcc,
+      debitCents: cents,
+      creditCents: 0,
+      description: `[CONTRE-PASSATION] ${tx.description}`,
+    };
+  });
 
   const reversalJournalEntry: JournalEntry = {
     id: `je_rev_pay_${cycle.id}_${Date.now()}`,
@@ -716,18 +1176,18 @@ export const createPayrollReversalJournalEntry = (
     reference: `REV-${cycleLabel}`,
     source: "PAYROLL",
     sourceId: cycle.id,
-    description: `Contre-Passation de Clôture Paie - ${cycleLabel}`,
-    currency: "HTG",
+    description: `Contre-Passation de Clôture Paie - ${cycleLabel}${isAlreadyPaid ? " (Règlement Bancaire Preservé)" : ""}`,
+    currency: (cycle.currency as any) === "USD" ? "USD" : "HTG",
     lines: reversalLines,
-    totalDebitCents: original.journalEntry.totalCreditCents,
-    totalCreditCents: original.journalEntry.totalDebitCents,
-    isBalanced: true,
+    totalDebitCents,
+    totalCreditCents,
+    isBalanced: totalDebitCents === totalCreditCents,
     isLocked: true,
     createdBy: actorId,
-    createdAt: now
+    createdAt: now,
   };
 
-  return { transactions: reversalTransactions, journalEntry: reversalJournalEntry };
+  return { transactions: reversalTransactions, journalEntry: reversalJournalEntry, settlementStatus };
 };
 
 /**
@@ -954,6 +1414,7 @@ export const AccountingEngine = {
   applyDoubleEntryRules,
   createInvoiceJournal,
   createPayrollJournalEntry,
+  createPayrollSettlementEntry,
   createPayrollReversalJournalEntry,
   createJournalEntry,
   importTransactions,

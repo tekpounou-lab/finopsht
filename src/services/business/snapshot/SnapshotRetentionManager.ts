@@ -80,12 +80,23 @@ export class SnapshotRetentionManager {
 
   /**
    * Sweeps and prunes expired snapshots across all metric and performance snapshot collections.
+   * On the server (or when adminDb is provided), uses Firebase Admin SDK exclusively
+   * and propagates errors instead of silently swallowing PERMISSION_DENIED into purgedCount: 0.
    */
   public async purgeExpiredSnapshots(
-    businessId: string = "biz_default", 
-    policy: SnapshotPrunePolicy = DEFAULT_RETENTION_POLICY
+    businessId: string,
+    policy: SnapshotPrunePolicy = DEFAULT_RETENTION_POLICY,
+    adminDb?: any
   ): Promise<{ purgedCount: number; scannedCount: number; collectionsProcessed: string[] }> {
-    console.log(`[SnapshotRetention] Starting 30-day snapshot retention sweep for tenant ${businessId}...`);
+    const trimmedBiz = typeof businessId === "string" ? businessId.trim() : "";
+    if (
+      !trimmedBiz ||
+      ["none", "default", "biz_default", "demo", "biz_demo"].includes(trimmedBiz.toLowerCase())
+    ) {
+      throw new Error("MISSING_TENANT_CONTEXT");
+    }
+
+    console.log(`[SnapshotRetention] Starting snapshot retention sweep for tenant ${trimmedBiz}...`);
     let purgedCount = 0;
     let scannedCount = 0;
 
@@ -99,12 +110,86 @@ export class SnapshotRetentionManager {
       "workforce_snapshots"
     ];
 
+    const isServerRuntime = Boolean(adminDb) || typeof window === "undefined";
+    if (isServerRuntime) {
+      let resolvedAdminDb = adminDb;
+      if (!resolvedAdminDb) {
+        const adminModulePath = "../../../lib/firebaseAdmin";
+        const { getAdminFirestore } = await import(/* @vite-ignore */ adminModulePath);
+        resolvedAdminDb = getAdminFirestore();
+      }
+
+      for (const colName of collectionsToPrune) {
+        const colRef = resolvedAdminDb.collection(colName);
+        const subColRef = resolvedAdminDb.collection(`businesses/${trimmedBiz}/${colName}`);
+        const [snap1, snap2, subSnap] = await Promise.all([
+          colRef.where("businessId", "==", trimmedBiz).get(),
+          colRef.where("business_id", "==", trimmedBiz).get(),
+          typeof subColRef?.get === "function" ? subColRef.get() : Promise.resolve({ docs: [] })
+        ]);
+
+        const allDocs = new Map<string, { snap: any; path: string }>();
+        snap1?.docs?.forEach((d: any) => allDocs.set(`${colName}/${d.id}`, { snap: d, path: `${colName}/${d.id}` }));
+        snap2?.docs?.forEach((d: any) => allDocs.set(`${colName}/${d.id}`, { snap: d, path: `${colName}/${d.id}` }));
+        subSnap?.docs?.forEach((d: any) =>
+          allDocs.set(`businesses/${trimmedBiz}/${colName}/${d.id}`, {
+            snap: d,
+            path: `businesses/${trimmedBiz}/${colName}/${d.id}`
+          })
+        );
+
+        for (const [docPath, entry] of allDocs.entries()) {
+          const docSnap = entry.snap;
+          const data = typeof docSnap.data === "function" ? docSnap.data() : docSnap;
+          const b1 = typeof data?.businessId === "string" ? data.businessId.trim() : "";
+          const b2 = typeof data?.business_id === "string" ? data.business_id.trim() : "";
+          if (b1 && b2 && b1 !== b2) {
+            const err: any = new Error("TENANT_ISOLATION_VIOLATION");
+            err.code = "TENANT_ISOLATION_VIOLATION";
+            throw err;
+          }
+          const docBiz = b1 || b2 || (docPath.startsWith(`businesses/${trimmedBiz}/`) ? trimmedBiz : "");
+          if (docBiz !== trimmedBiz) {
+            continue;
+          }
+
+          scannedCount++;
+          const generatedAt =
+            data.generatedAt || data.createdAt || data.timestamp || data._server_timestamp;
+          const period = data.period || data.granularity || data.frequency || "DAILY";
+
+          if (generatedAt && this.isSnapshotExpired(generatedAt, period, policy)) {
+            if (typeof docSnap.ref?.delete === "function") {
+              await docSnap.ref.delete();
+            } else {
+              const targetRef = resolvedAdminDb.doc(docPath);
+              if (typeof targetRef.delete === "function") {
+                await targetRef.delete();
+              }
+            }
+            purgedCount++;
+          }
+        }
+      }
+
+      try {
+        MetricRegistry.recordMetric({
+          category: "firestore",
+          name: "snapshots_pruned_total",
+          value: purgedCount,
+          unit: "count"
+        });
+      } catch {}
+
+      return { purgedCount, scannedCount, collectionsProcessed: collectionsToPrune };
+    }
+
     for (const colName of collectionsToPrune) {
       try {
         const colRef = collection(db, colName);
 
-        const q1 = query(colRef, where("businessId", "==", businessId));
-        const q2 = query(colRef, where("business_id", "==", businessId));
+        const q1 = query(colRef, where("businessId", "==", trimmedBiz));
+        const q2 = query(colRef, where("business_id", "==", trimmedBiz));
 
         const [snap1, snap2] = await Promise.all([
           getDocs(q1).catch(() => null),
@@ -147,7 +232,7 @@ export class SnapshotRetentionManager {
       }
     }
 
-    console.log(`[SnapshotRetention] 30-day Retention sweep complete for ${businessId}. Scanned: ${scannedCount}, Purged: ${purgedCount}.`);
+    console.log(`[SnapshotRetention] Retention sweep complete for ${trimmedBiz}. Scanned: ${scannedCount}, Purged: ${purgedCount}.`);
 
     try {
       MetricRegistry.recordMetric({

@@ -406,8 +406,8 @@ export const PredictiveIntelligenceCenter: React.FC = () => {
 
   // Generate dynamic generative recommendations based on context
   const dynamicAIRecommendations = useMemo(() => {
-    const totalRevenues = convertAmount(snapshot?.revenue.currentValue || 1);
-    const totalExpenses = convertAmount(snapshot?.expenses.currentValue || 110000);
+    const totalRevenues = convertAmount(snapshot?.revenue.currentValue ?? 0);
+    const totalExpenses = convertAmount(snapshot?.expenses.currentValue ?? 0);
     const surplus = totalRevenues - totalExpenses;
 
     const insights = [];
@@ -489,13 +489,16 @@ export const PredictiveIntelligenceCenter: React.FC = () => {
       const q = aiCustomQuery.toLowerCase();
       let response = "";
 
-      const currentRevenueVal = convertAmount(snapshot?.revenue.currentValue || 1).toLocaleString();
-      const currentExpensesVal = convertAmount(snapshot?.expenses.currentValue || 110000).toLocaleString();
+      const revVal = snapshot?.revenue.currentValue ?? 0;
+      const expVal = snapshot?.expenses.currentValue ?? 0;
+      const currentRevenueVal = convertAmount(revVal).toLocaleString();
+      const currentExpensesVal = convertAmount(expVal).toLocaleString();
 
       if (q.includes("revenu") || q.includes("prévision") || q.includes("prezidan") || q.includes("forecast") || q.includes("gagn")) {
+        const profitRatio = revVal > 0 ? (((snapshot?.profit.currentValue || 0) / revVal) * 100).toFixed(1) : "0.0";
         response = isFr 
-          ? `Moteur IA CFO : Basé sur les tendances du Grand Livre et un coefficient de saisonnalité de ${seasonMultiplier}x, nous prévoyons des revenus de ${convertAmount((snapshot?.revenue.currentValue || 1) * 1.12 * seasonMultiplier).toLocaleString()} ${currencySymbol} d'ici la fin du mois de Juillet. La rentabilité opérationnelle globale est de ${(((snapshot?.profit.currentValue || 0) / (snapshot?.revenue.currentValue || 1)) * 100).toFixed(1)}%. Nous préconisons un plan de tarification dynamique si vous appliquez le mode '${selectedSeasonPreset}'.`
-          : `Mèt CFO IA : Nou prevwa lajan k ap antre a ap rive nan anviwon ${convertAmount((snapshot?.revenue.currentValue || 1) * 1.12 * seasonMultiplier).toLocaleString()} ${currencySymbol} mwa pwochen an.`;
+          ? `Moteur IA CFO : Basé sur les tendances du Grand Livre et un coefficient de saisonnalité de ${seasonMultiplier}x, nous prévoyons des revenus de ${convertAmount(revVal * 1.12 * seasonMultiplier).toLocaleString()} ${currencySymbol} d'ici la fin du mois de Juillet. La rentabilité opérationnelle globale est de ${profitRatio}%. Nous préconisons un plan de tarification dynamique si vous appliquez le mode '${selectedSeasonPreset}'.`
+          : `Mèt CFO IA : Nou prevwa lajan k ap antre a ap rive nan anviwon ${convertAmount(revVal * 1.12 * seasonMultiplier).toLocaleString()} ${currencySymbol} mwa pwochen an.`;
       } else if (q.includes("budget") || q.includes("limite") || q.includes("dépens")) {
         const over = budgetComparisonReport.filter(b => b.isOver);
         response = isFr
@@ -523,7 +526,7 @@ export const PredictiveIntelligenceCenter: React.FC = () => {
   };
 
   return (
-    <div className="border border-slate-800 bg-slate-900/30 rounded-xl p-5" id="sprint-predictive-engine-v3">
+    <div className="border border-slate-800/80 bg-slate-950/40 rounded-2xl p-6 shadow-2xl backdrop-blur-sm space-y-6" id="sprint-predictive-engine-v3">
       {/* Banner Title */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-5">
         <div className="flex items-center gap-3">
@@ -617,19 +620,19 @@ export const PredictiveIntelligenceCenter: React.FC = () => {
                   <div className="p-3 bg-slate-900/60 border border-slate-800/80 rounded-xl">
                     <span className="text-[9px] uppercase tracking-wider text-slate-400 font-mono block">Projection F+7 Jours</span>
                     <span className="text-lg font-black text-indigo-400 font-mono">
-                      +{Math.round(convertAmount((snapshot?.revenue.currentValue || 1) * 1.05 * seasonMultiplier)).toLocaleString()} {currencySymbol}
+                      +{Math.round(convertAmount((snapshot?.revenue.currentValue ?? 0) * 1.05 * seasonMultiplier)).toLocaleString()} {currencySymbol}
                     </span>
                   </div>
                   <div className="p-3 bg-slate-900/60 border border-slate-800/80 rounded-xl">
                     <span className="text-[9px] uppercase tracking-wider text-slate-400 font-mono block">Projection F+15 Jours</span>
                     <span className="text-lg font-black text-indigo-400 font-mono">
-                      +{Math.round(convertAmount((snapshot?.revenue.currentValue || 1) * 1.12 * seasonMultiplier)).toLocaleString()} {currencySymbol}
+                      +{Math.round(convertAmount((snapshot?.revenue.currentValue ?? 0) * 1.12 * seasonMultiplier)).toLocaleString()} {currencySymbol}
                     </span>
                   </div>
                   <div className="p-3 bg-slate-900/60 border border-slate-800/80 rounded-xl">
                     <span className="text-[9px] uppercase tracking-wider text-slate-400 font-mono block">Projection F+30 Jours</span>
                     <span className="text-lg font-black text-indigo-400 font-mono animate-pulse">
-                      +{Math.round(convertAmount((snapshot?.revenue.currentValue || 1) * 1.20 * seasonMultiplier)).toLocaleString()} {currencySymbol}
+                      +{Math.round(convertAmount((snapshot?.revenue.currentValue ?? 0) * 1.20 * seasonMultiplier)).toLocaleString()} {currencySymbol}
                     </span>
                   </div>
                 </div>

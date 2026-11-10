@@ -72,36 +72,66 @@ export function resolveTaxRatesForDate(
   }
 
   // If taxes are disabled at the business config level, zero out all tax rates
+  const resolvedFloor = typeof config.survivalFloorHTG === "number"
+    ? config.survivalFloorHTG
+    : typeof (config as any).survivalFloor === "number"
+    ? (config as any).survivalFloor
+    : typeof (config as any).survivalFloor?.minimumNetHTG === "number"
+    ? (config as any).survivalFloor.minimumNetHTG
+    : defaults.survivalFloorHTG;
+
   if (!TaxPolicyEngine.isSocialTaxEnabled(config)) {
     return {
       cnssRateEmployee: 0,
       cnssRateEmployer: 0,
       cnsRateEmployee: 0,
       cnsRateEmployer: 0,
-      survivalFloorHTG: typeof config.survivalFloorHTG === "number" ? config.survivalFloorHTG : defaults.survivalFloorHTG,
+      survivalFloorHTG: resolvedFloor,
     };
   }
 
+  const getActiveRates = () => {
+    const cnssEmp = typeof config.cnssRateEmployee === "number"
+      ? config.cnssRateEmployee
+      : typeof (config as any).onaEmployeeRate === "number"
+      ? (config as any).onaEmployeeRate
+      : (config as any).socialContributions?.cnssOna?.employeeRate ?? defaults.cnssRateEmployee;
+
+    const cnssEmpr = typeof config.cnssRateEmployer === "number"
+      ? config.cnssRateEmployer
+      : typeof (config as any).onaEmployerRate === "number"
+      ? (config as any).onaEmployerRate
+      : (config as any).socialContributions?.cnssOna?.employerRate ?? defaults.cnssRateEmployer;
+
+    const cnsEmp = typeof config.cnsRateEmployee === "number"
+      ? config.cnsRateEmployee
+      : typeof (config as any).ofatmaEmployeeRate === "number"
+      ? (config as any).ofatmaEmployeeRate
+      : (config as any).socialContributions?.ofatmaCns?.employeeRate ?? defaults.cnsRateEmployee;
+
+    const cnsEmpr = typeof config.cnsRateEmployer === "number"
+      ? config.cnsRateEmployer
+      : typeof (config as any).ofatmaEmployerRate === "number"
+      ? (config as any).ofatmaEmployerRate
+      : (config as any).socialContributions?.ofatmaCns?.employerRate ?? defaults.cnsRateEmployer;
+
+    return {
+      cnssRateEmployee: cnssEmp,
+      cnssRateEmployer: cnssEmpr,
+      cnsRateEmployee: cnsEmp,
+      cnsRateEmployer: cnsEmpr,
+      survivalFloorHTG: resolvedFloor,
+    };
+  };
+
   // Fallback if no history is defined or history is empty
   if (!config.history || !Array.isArray(config.history) || config.history.length === 0) {
-    return {
-      cnssRateEmployee: typeof config.cnssRateEmployee === "number" ? config.cnssRateEmployee : defaults.cnssRateEmployee,
-      cnssRateEmployer: typeof config.cnssRateEmployer === "number" ? config.cnssRateEmployer : defaults.cnssRateEmployer,
-      cnsRateEmployee: typeof config.cnsRateEmployee === "number" ? config.cnsRateEmployee : defaults.cnsRateEmployee,
-      cnsRateEmployer: typeof config.cnsRateEmployer === "number" ? config.cnsRateEmployer : defaults.cnsRateEmployer,
-      survivalFloorHTG: typeof config.survivalFloorHTG === "number" ? config.survivalFloorHTG : defaults.survivalFloorHTG,
-    };
+    return getActiveRates();
   }
 
   if (!dateStr) {
     // If no target date is supplied, return the standard active rates
-    return {
-      cnssRateEmployee: typeof config.cnssRateEmployee === "number" ? config.cnssRateEmployee : defaults.cnssRateEmployee,
-      cnssRateEmployer: typeof config.cnssRateEmployer === "number" ? config.cnssRateEmployer : defaults.cnssRateEmployer,
-      cnsRateEmployee: typeof config.cnsRateEmployee === "number" ? config.cnsRateEmployee : defaults.cnsRateEmployee,
-      cnsRateEmployer: typeof config.cnsRateEmployer === "number" ? config.cnsRateEmployer : defaults.cnsRateEmployer,
-      survivalFloorHTG: typeof config.survivalFloorHTG === "number" ? config.survivalFloorHTG : defaults.survivalFloorHTG,
-    };
+    return getActiveRates();
   }
 
   // Parse target date
@@ -203,10 +233,15 @@ export function calculateTaxDeductions(
 export function calculateOvertimePay(
   hourlyRateHTG: number,
   overtimeHours150: number,
-  overtimeHours200: number
+  overtimeHours200: number,
+  rate150: number = OVERTIME_MULTIPLIERS.STANDARD_150,
+  rate200: number = OVERTIME_MULTIPLIERS.PREMIUM_200
 ): number {
-  const pay150 = Math.round(hourlyRateHTG * OVERTIME_MULTIPLIERS.STANDARD_150 * overtimeHours150);
-  const pay200 = Math.round(hourlyRateHTG * OVERTIME_MULTIPLIERS.PREMIUM_200 * overtimeHours200);
+  const safeRate = Math.max(0, Number(hourlyRateHTG) || 0);
+  const safeOT150 = Math.max(0, Number(overtimeHours150) || 0);
+  const safeOT200 = Math.max(0, Number(overtimeHours200) || 0);
+  const pay150 = Math.round(safeRate * rate150 * safeOT150);
+  const pay200 = Math.round(safeRate * rate200 * safeOT200);
   return pay150 + pay200;
 }
 
@@ -222,24 +257,36 @@ export function calculateEmployeePayrollItem(
 ): PayrollCalculationResult {
   const rates = resolveTaxRatesForDate(taxConfig || null, periodKey);
 
+  const otRate150 = (taxConfig as any)?.overtimeRate150 ?? (taxConfig as any)?.overtime?.normalRate ?? OVERTIME_MULTIPLIERS.STANDARD_150;
+  const otRate200 = (taxConfig as any)?.overtimeRate200 ?? (taxConfig as any)?.overtime?.holidayRate ?? OVERTIME_MULTIPLIERS.PREMIUM_200;
+
+  const safeBaseSalary = Math.max(0, Number(item.baseSalaryHTG) || 0);
+  const safeBonuses = Math.max(0, Number(item.bonusesHTG) || 0);
+  const safeCommissions = Math.max(0, Number(item.commissionsHTG) || 0);
+  const safeAdvances = Math.max(0, Number(item.advancesHTG) || 0);
+
   const overtimePayout = calculateOvertimePay(
     item.hourlyRateHTG,
     item.overtimeHours150,
-    item.overtimeHours200
+    item.overtimeHours200,
+    otRate150,
+    otRate200
   );
 
-  const grossPay = item.baseSalaryHTG + overtimePayout + item.bonusesHTG + item.commissionsHTG;
-  const taxDeductions = calculateTaxDeductions(grossPay, { ...(taxConfig || {}), ...rates }, item.baseSalaryHTG);
+  const grossPay = safeBaseSalary + overtimePayout + safeBonuses + safeCommissions;
+  const taxDeductions = calculateTaxDeductions(grossPay, { ...(taxConfig || {}), ...rates }, safeBaseSalary);
 
-  let netPay = grossPay - taxDeductions.totalDeductions - item.advancesHTG;
+  let netPay = grossPay - taxDeductions.totalDeductions - safeAdvances;
   let survivalFloorApplied = false;
 
   const resolvedFloor = rates.survivalFloorHTG;
 
-  // Survival Floor Protection
-  if (netPay < resolvedFloor && grossPay >= resolvedFloor) {
-    netPay = resolvedFloor;
-    survivalFloorApplied = true;
+  // Survival Floor Protection: Enforce minimum net threshold if configured and gross pay allows
+  if (resolvedFloor > 0 && (netPay < resolvedFloor || grossPay < resolvedFloor)) {
+    if ((taxConfig as any)?.enableSurvivalFloor !== false) {
+      netPay = resolvedFloor;
+      survivalFloorApplied = true;
+    }
   }
 
   const finalPayout = Math.max(0, netPay);

@@ -21,6 +21,9 @@ import { RevenueAttributionService } from "../../../services/RevenueAttributionS
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
 import { ReferenceResolver } from "../../../services/ReferenceResolver";
 import { CommissionEngine } from "../../../services/CommissionEngine";
+import { AnalyticsEngine, resolveEmployeeContractualHours } from "./AnalyticsEngine";
+import { NormalizationContext, NormalizedAmountResolver } from "../utils/NormalizedAmountResolver";
+import { toDateOnly } from "../../../utils/dateNormalization";
 
 export class WorkforceProfitabilityEngine {
   /**
@@ -39,7 +42,8 @@ export class WorkforceProfitabilityEngine {
     activities?: EmployeeDepartmentActivity[],
     startDate?: string,
     endDate?: string,
-    businessSettings?: any
+    businessSettings?: any,
+    normalizationContext?: any
   ): WorkforceProfitabilitySnapshot {
     const safeEmployees = employees || [];
     const safeTransactions = transactions || [];
@@ -57,27 +61,7 @@ export class WorkforceProfitabilityEngine {
       return !bId || bId === businessId;
     };
 
-    let calculatedExpectedDays = 22;
-    if (startDate && endDate) {
-      try {
-        const s = new Date(startDate);
-        const e = new Date(endDate);
-        if (!isNaN(s.getTime()) && !isNaN(e.getTime())) {
-          let workingDays = 0;
-          const cur = new Date(s);
-          let guard = 0;
-          while (cur <= e && guard < 1000) {
-            guard++;
-            const dayOfWeek = cur.getDay();
-            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-              workingDays++;
-            }
-            cur.setDate(cur.getDate() + 1);
-          }
-          if (workingDays > 0) calculatedExpectedDays = workingDays;
-        }
-      } catch (err) {}
-    }
+    const holidaysList = businessSettings?.holidays || businessSettings?.business_settings?.holidays;
 
     const matchedEmps = filterOperationalEmployees(safeEmployees.filter((e) => matchesBusiness(e)));
     const businessEmployees = matchedEmps.length > 0 ? matchedEmps : filterOperationalEmployees(safeEmployees);
@@ -140,15 +124,52 @@ export class WorkforceProfitabilityEngine {
 
       if (empPayrolls.length > 0) {
         empPayrolls.forEach((p: any) => {
-          const grossVal = (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : (p.gross || 0)));
-          monthlySalary += grossVal;
-          if (isSocialTaxEnabled) {
-            employerContributions += ((p.cnss_employer_cents || 0) + (p.ofatma_employer_cents || 0)) / 100;
-          }
-          commissions += (p.commissions || (p.commission_cents ? p.commission_cents / 100 : 0));
-          allowances += (p.allowances_cents ? p.allowances_cents / 100 : (p.primes || p.overtimePayout || 0));
+          const isAlreadyHtg = p.grossSalaryHtg !== undefined && p.grossSalaryHtg !== null;
+          const rawGross = p.grossSalaryHtg ?? (p.grossSalary || (p.gross_salary_cents ? p.gross_salary_cents / 100 : (p.gross || 0)));
+          const currency = isAlreadyHtg ? "HTG" : (p.currency || p.currency_code || p.currencyCode || "HTG");
+          const paymentDate = p.paymentDate || p.effectiveAccountingDate || p.created_at || p.createdAt;
+          const normDate = toDateOnly(paymentDate);
 
-          salesFromPayroll += (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || 0));
+          const normalizedGross = normalizationContext && rawGross !== 0
+            ? NormalizedAmountResolver.resolveToHTG(rawGross, currency, normDate, normalizationContext)
+            : rawGross;
+
+          monthlySalary += normalizedGross;
+
+          let employerTaxes = 0;
+          if (isSocialTaxEnabled) {
+            employerTaxes = ((p.cnss_employer_cents || 0) + (p.ofatma_employer_cents || 0)) / 100;
+          }
+
+          const normalizedEmployerTaxes = normalizationContext && employerTaxes !== 0
+            ? NormalizedAmountResolver.resolveToHTG(employerTaxes, "HTG", normDate, normalizationContext)
+            : employerTaxes;
+
+          employerContributions += normalizedEmployerTaxes;
+
+          const isCommHtg = p.commissionHtg !== undefined && p.commissionHtg !== null;
+          const rawCommissions = p.commissionHtg ?? (p.commissions || (p.commission_cents ? p.commission_cents / 100 : 0));
+          const commCurrency = isCommHtg ? "HTG" : currency;
+          const normalizedCommissions = normalizationContext && rawCommissions !== 0
+            ? NormalizedAmountResolver.resolveToHTG(rawCommissions, commCurrency, normDate, normalizationContext)
+            : rawCommissions;
+          commissions += normalizedCommissions;
+
+          const isAllowHtg = p.allowancesHtg !== undefined && p.allowancesHtg !== null;
+          const rawAllowances = p.allowancesHtg ?? (p.allowances_cents ? p.allowances_cents / 100 : (p.primes || p.overtimePayout || 0));
+          const allowCurrency = isAllowHtg ? "HTG" : currency;
+          const normalizedAllowances = normalizationContext && rawAllowances !== 0
+            ? NormalizedAmountResolver.resolveToHTG(rawAllowances, allowCurrency, normDate, normalizationContext)
+            : rawAllowances;
+          allowances += normalizedAllowances;
+
+          const isSalesHtg = p.salesHtg !== undefined && p.salesHtg !== null;
+          const rawSales = p.salesHtg ?? (p.sales_cents ? p.sales_cents / 100 : (p.salesVolume || p.sales_gl || 0));
+          const salesCurrency = isSalesHtg ? "HTG" : currency;
+          const normalizedSales = normalizationContext && rawSales !== 0
+            ? NormalizedAmountResolver.resolveToHTG(rawSales, salesCurrency, normDate, normalizationContext)
+            : rawSales;
+          salesFromPayroll += normalizedSales;
           
           const pHours = p.workedHours ?? (p.worked_minutes ? p.worked_minutes / 60 : (p.hours || 0));
           payrollHours += Number(pHours) || 0;
@@ -158,46 +179,88 @@ export class WorkforceProfitabilityEngine {
       }
 
       if (commissions === 0) {
-        commissions = empTxs.filter((t) => t.type === "COMPENSATION" || t.type === "BONUS").reduce((s, t) => s + t.amount, 0);
+        commissions = empTxs.filter((t) => t.type === "COMPENSATION" || t.type === "BONUS").reduce((s, t: any) => {
+          const isAlreadyHtg = t.amount_htg !== undefined || t.amountHtg !== undefined;
+          const amt = t.amount_htg ?? t.amountHtg ?? t.amount ?? 0;
+          const currency = isAlreadyHtg ? "HTG" : (t.currency || t.currency_code || t.currencyCode || "HTG");
+          const date = toDateOnly(t.date || t.created_at);
+          const normalized = normalizationContext && amt !== 0
+            ? NormalizedAmountResolver.resolveToHTG(amt, currency, date, normalizationContext)
+            : amt;
+          return s + normalized;
+        }, 0);
       }
       const benefitsCost = Math.round(commissions + allowances);
-      // grossVal already includes base + commissions + primes - penalties. Do not double-add commissions/allowances into total employment cost.
       const totalEmploymentCost = Math.round(monthlySalary + employerContributions);
 
-      const avgCostPerDay = calculatedExpectedDays > 0 ? Math.round(totalEmploymentCost / calculatedExpectedDays) : 0;
-      const avgCostPerHour = (calculatedExpectedDays * 8) > 0 ? Math.round(totalEmploymentCost / (calculatedExpectedDays * 8)) : 0;
+      // Attendance & Contractual Hours Resolution (Zero 8-Hour Fallback)
+      const empHoursRes = resolveEmployeeContractualHours(emp, undefined, businessSettings);
+      const specificDays =
+        (emp as any)?.workingDays ||
+        ((emp as any)?.workingDaysPerWeek
+          ? undefined
+          : businessSettings?.workingDays);
+      const totalExpectedDays =
+        startDate && endDate && !empHoursRes.isIncompleteConfig && empHoursRes.dailyHours
+          ? AnalyticsEngine.getEmployeeExpectedWorkingDays(
+              startDate,
+              endDate,
+              empHoursRes.workingDaysPerWeek,
+              holidaysList,
+              specificDays
+            )
+          : 0;
+      const expectedHours =
+        empHoursRes.isIncompleteConfig || !empHoursRes.dailyHours
+          ? 0
+          : totalExpectedDays * empHoursRes.dailyHours;
 
-      // Attendance Calculation
-      const totalExpectedDays = calculatedExpectedDays;
-      const expectedHours = calculatedExpectedDays * 8;
+      const avgCostPerDay = totalExpectedDays > 0 ? Math.round(totalEmploymentCost / totalExpectedDays) : 0;
+      const avgCostPerHour = expectedHours > 0 ? Math.round(totalEmploymentCost / expectedHours) : 0;
+
       const workedDays = empAttendance.filter((a) => a.status === "NORMAL" || a.status === "LATE" || a.status === "OVERTIME").length;
       const lateArrivals = empAttendance.filter((a) => a.status === "LATE").length;
       const unauthorizedAbsences = empAttendance.filter((a) => a.status === "ABSENT").length;
       const leaveDays = empAttendance.filter((a) => (a.status as string) === "LEAVE" || (a.status as string) === "VACATION").length;
       const getAttHours = (a: AttendanceRecord | any): number => {
         if (!a) return 0;
+        const st = String(a.status || "").toUpperCase();
+        if (st === "ABSENT" || st === "CANCELLED" || st === "VOID" || st === "REJECTED") {
+          return 0;
+        }
         if (typeof a.realHours === "number" && !isNaN(a.realHours) && a.realHours > 0) return a.realHours;
         if (typeof a.hoursWorked === "number" && !isNaN(a.hoursWorked) && a.hoursWorked > 0) return a.hoursWorked;
         if (typeof a.hours_worked === "number" && !isNaN(a.hours_worked) && a.hours_worked > 0) return a.hours_worked;
         if (typeof a.totalHours === "number" && !isNaN(a.totalHours) && a.totalHours > 0) return a.totalHours;
         if (typeof a.workedHours === "number" && !isNaN(a.workedHours) && a.workedHours > 0) return a.workedHours;
         if (typeof a.totalMinutes === "number" && !isNaN(a.totalMinutes) && a.totalMinutes > 0) return Number((a.totalMinutes / 60).toFixed(2));
-        
-        if (a.checkIn && a.checkOut && typeof a.checkIn === "string" && typeof a.checkOut === "string") {
-          const [h1, m1] = a.checkIn.split(":").map(Number);
-          const [h2, m2] = a.checkOut.split(":").map(Number);
-          if (!isNaN(h1) && !isNaN(h2)) {
-            const mins1 = h1 * 60 + (m1 || 0);
-            const mins2 = h2 * 60 + (m2 || 0);
-            if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+
+        const rawIn = a.checkIn || a.check_in || a.checkInTime || a.check_in_time;
+        const rawOut = a.checkOut || a.check_out || a.checkOutTime || a.check_out_time;
+
+        if (rawIn && rawOut) {
+          const dIn = new Date(rawIn);
+          const dOut = new Date(rawOut);
+          if (!isNaN(dIn.getTime()) && !isNaN(dOut.getTime()) && dOut > dIn) {
+            const diffMs = dOut.getTime() - dIn.getTime();
+            const hrs = diffMs / 3600000;
+            if (hrs > 0 && hrs <= 24) return Number(hrs.toFixed(2));
+          }
+
+          const strIn = typeof rawIn === "string" ? rawIn.split("T").pop() || "" : "";
+          const strOut = typeof rawOut === "string" ? rawOut.split("T").pop() || "" : "";
+          if (strIn.includes(":") && strOut.includes(":")) {
+            const [h1, m1] = strIn.split(":").map(Number);
+            const [h2, m2] = strOut.split(":").map(Number);
+            if (!isNaN(h1) && !isNaN(h2)) {
+              const mins1 = h1 * 60 + (m1 || 0);
+              const mins2 = h2 * 60 + (m2 || 0);
+              if (mins2 > mins1) return Number(((mins2 - mins1) / 60).toFixed(2));
+            }
           }
         }
 
-        const st = String(a.status || "").toUpperCase();
-        if (st !== "ABSENT" && st !== "CANCELLED" && st !== "VOID") {
-          if (typeof a.plannedHours === "number" && a.plannedHours > 0) return a.plannedHours;
-          return 8;
-        }
+        if (typeof a.plannedHours === "number" && a.plannedHours > 0) return a.plannedHours;
 
         return 0;
       };
@@ -212,7 +275,10 @@ export class WorkforceProfitabilityEngine {
         workedHours = payrollHours;
       }
 
-      const overtimeHours = empAttendance.reduce((sum, a) => sum + Math.max(0, getAttHours(a) - (a.plannedHours || 8)), 0);
+      const overtimeHours = empAttendance.reduce((sum, a) => {
+        const baselineHours = typeof a.plannedHours === "number" && a.plannedHours > 0 ? a.plannedHours : (empHoursRes.dailyHours || 0);
+        return sum + Math.max(0, getAttHours(a) - baselineHours);
+      }, 0);
 
       const attendanceRate = expectedHours > 0 ? Math.min(100, Math.round((workedHours / expectedHours) * 100)) : 0;
       const absenceRate = totalExpectedDays > 0 ? Math.min(100, Math.round((unauthorizedAbsences / totalExpectedDays) * 100)) : 0;
@@ -233,7 +299,16 @@ export class WorkforceProfitabilityEngine {
             catUpper === "INCOME"
           );
         })
-        .reduce((sum, t) => sum + t.amount, 0);
+        .reduce((sum, t: any) => {
+          const isAlreadyHtg = t.amount_htg !== undefined || t.amountHtg !== undefined;
+          const amt = t.amount_htg ?? t.amountHtg ?? t.amount ?? 0;
+          const currency = isAlreadyHtg ? "HTG" : (t.currency || t.currency_code || t.currencyCode || "HTG");
+          const date = toDateOnly(t.date || t.created_at);
+          const normalized = normalizationContext && amt !== 0
+            ? NormalizedAmountResolver.resolveToHTG(amt, currency, date, normalizationContext)
+            : amt;
+          return sum + normalized;
+        }, 0);
 
       const transactionsProcessed = empTxs.length;
       const invoicesProcessed = empTxs.filter((t) => t.type === "INCOME" || t.type === "EXPENSE").length;
@@ -250,7 +325,7 @@ export class WorkforceProfitabilityEngine {
 
       // Efficiency Metrics
       const revenuePerHour = workedHours > 0 ? Math.round(revenueGenerated / workedHours) : 0;
-      const revenuePerDay = Math.round(revenueGenerated / 22);
+      const revenuePerDay = totalExpectedDays > 0 ? Math.round(revenueGenerated / totalExpectedDays) : 0;
       const revenuePerPayrollDollar = Number((revenueGenerated / (totalEmploymentCost || 1)).toFixed(2));
       const costPerOutput = Math.round(totalEmploymentCost / (transactionsProcessed || 1));
       const outputPerHour = Number(((transactionsProcessed || 1) / (workedHours || 1)).toFixed(2));
@@ -405,7 +480,7 @@ export class WorkforceProfitabilityEngine {
           complianceScore: Math.max(0, 100 - lateArrivals * 5 - unauthorizedAbsences * 15),
           qualityScore: 92,
         },
-        crossDepartmentAttribution: RevenueAttributionService.calculateEmployeeAttribution(emp, safeTransactions, businessDepts, safeActivities).operationalDistribution,
+        crossDepartmentAttribution: RevenueAttributionService.calculateEmployeeAttribution(emp, safeTransactions, businessDepts, safeActivities, normalizationContext).operationalDistribution,
         productivityTrend,
         attendanceTrend,
         payrollVsRevenueTrend,
@@ -419,7 +494,8 @@ export class WorkforceProfitabilityEngine {
         businessEmployees,
         safeTransactions,
         safePayroll,
-        safeActivities
+        safeActivities,
+        normalizationContext
       );
 
       // Find employees who had operational sales in this department OR whose home HR department is this department

@@ -16,7 +16,9 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { setDoc } from "firebase/firestore";
 import { getDbDoc } from "../lib/firebase";
-import { getLocalIP, generateSignature } from "../data";
+import { getLocalIP } from "../data";
+import { useOptionalAuth } from "../hooks/useAuth";
+import { ForensicLogRepository } from "../repositories/ForensicLogRepository";
 
 import { AnalyticsHealth, ExecutiveIntelligenceCenter } from "../domains/analytics";
 import { PredictiveIntelligenceCenter } from "../domains/analytics/components/PredictiveIntelligenceCenter";
@@ -81,6 +83,11 @@ export default function BusinessIntelligence({
   const { language } = useI18n();
   const { business: ctxBusiness, shifts: ctxShifts = [] } = useBusinessContext();
   const currentBusiness = propBusiness || ctxBusiness;
+  const authState = useOptionalAuth();
+  const authUser = authState?.user || null;
+  const authIdentity = authState?.identity || null;
+  const authDbUser = authState?.dbUser || null;
+  const authDbEmployee = authState?.dbEmployee || null;
 
   const tbi = biTranslations[language as keyof typeof biTranslations] || biTranslations.fr;
   const isAuthorized = currentRole === "OWNER" || currentRole === "MANAGER" || (currentRole as string) === "SUPER_ADMIN" || (currentRole as string) === "ADMIN";
@@ -96,14 +103,12 @@ export default function BusinessIntelligence({
   // Synchronize local BI UI filters to ExecutiveFilterContext to align all sub-components (SSOT)
   useEffect(() => {
     setExecutiveFilters((prev) => {
-      const nextMode = uiState.isSimplifiedMode ? "CASH" : "ACCRUAL";
       if (
         prev.startDate === uiState.startDate &&
         prev.endDate === uiState.endDate &&
         prev.branchId === uiState.selectedBranchId &&
         prev.departmentId === uiState.selectedDeptId &&
-        prev.transactionType === uiState.selectedTxType &&
-        prev.accountingMode === nextMode
+        prev.transactionType === uiState.selectedTxType
       ) {
         return prev;
       }
@@ -114,7 +119,6 @@ export default function BusinessIntelligence({
         branchId: uiState.selectedBranchId,
         departmentId: uiState.selectedDeptId,
         transactionType: uiState.selectedTxType,
-        accountingMode: nextMode,
       };
     });
   }, [
@@ -123,7 +127,6 @@ export default function BusinessIntelligence({
     uiState.selectedBranchId,
     uiState.selectedDeptId,
     uiState.selectedTxType,
-    uiState.isSimplifiedMode,
     setExecutiveFilters,
   ]);
 
@@ -187,6 +190,7 @@ export default function BusinessIntelligence({
     filteredAttendance: dataAgg.filteredAttendance,
     branchMetrics: dataAgg.branchMetrics,
     employeeScorecards: dataAgg.employeeScorecards,
+    filteredPayrolls: dataAgg.filteredPayrolls,
     forensicLogs,
     totalRevenue: dataAgg.totalRevenue,
     totalExpenses: dataAgg.totalExpenses,
@@ -202,6 +206,13 @@ export default function BusinessIntelligence({
 
   const handleSaveSnapshot = async () => {
     if (!currentBusiness) return;
+
+    // Strict Authentication Guard: Snapshot actions must be attributed to a verified authenticated actor
+    if (!authUser || !authUser.uid) {
+      console.error("[BI] [handleSaveSnapshot] Rejected: Authenticated user required to save analytics snapshot.");
+      throw new Error("AUTHENTICATION_REQUIRED: Un utilisateur authentifié est requis pour enregistrer un instantané.");
+    }
+
     try {
       const snapId = "snap_" + Math.random().toString(36).substring(2, 9);
       const payload = {
@@ -218,23 +229,38 @@ export default function BusinessIntelligence({
       };
       await setDoc(getDbDoc("analytics_snapshots", snapId), payload);
 
-      const forecastLog: ForensicLog = {
-        id: "log_" + Math.random().toString(36).substring(2, 9),
+      // Resolve factual authenticated user name (never fabricate dummy personas)
+      const resolvedUserName =
+        authIdentity?.displayName ||
+        authIdentity?.userProfile?.name ||
+        authIdentity?.employee?.name ||
+        authDbEmployee?.name ||
+        authDbUser?.name ||
+        authUser.displayName ||
+        authUser.email ||
+        authUser.uid;
+
+      const forecastLog = await ForensicLogRepository.createAndSignLog({
         timestamp: new Date().toISOString(),
-        userId: currentRole === "OWNER" ? "e1" : "e2",
-        userName: currentRole === "OWNER" ? "Manoel Lhérisson" : "Fabienne Jean-Gilles",
+        actorId: authUser.uid,
+        userId: authUser.uid,
+        userName: resolvedUserName,
         userRole: currentRole,
+        userEmail: authUser.email || undefined,
         business_id: currentBusiness.id,
         action: "SAVE_ANALYTICS_SNAPSHOT",
         beforeState: "{}",
         afterState: JSON.stringify(payload),
+        details: `Saved analytics snapshot ${snapId} for date ${payload.snapshotDate}`,
         ipAddress: getLocalIP(),
-        userAgent: navigator.userAgent,
-        signature: generateSignature({ action: "SAVE_ANALYTICS_SNAPSHOT", timestamp: new Date().toISOString() }),
-      };
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "UNKNOWN",
+        severity: "AUDIT_GRADE",
+      });
+
       onAddForensicLog(forecastLog);
     } catch (e: any) {
-      console.error(e);
+      console.error("[BI] [handleSaveSnapshot] Error saving analytics snapshot:", e);
+      throw e;
     }
   };
 
@@ -271,6 +297,10 @@ export default function BusinessIntelligence({
         language={language}
         isSimplifiedMode={uiState.isSimplifiedMode}
         setIsSimplifiedMode={uiState.setIsSimplifiedMode}
+        accountingBasis={uiState.accountingBasis}
+        setAccountingBasis={uiState.setAccountingBasis}
+        presentationMode={uiState.presentationMode}
+        setPresentationMode={uiState.setPresentationMode}
         currentRole={currentRole}
         currentBusiness={currentBusiness}
         branches={branches}
@@ -418,6 +448,7 @@ export default function BusinessIntelligence({
             cashflowTimeline={dataAgg.cashflowTimeline}
             expenseCategoryChartData={dataAgg.expenseCategoryChartData}
             totalExpenses={dataAgg.totalExpenses}
+            selectedCurrency={dataAgg.selectedCurrency}
           />
         </React.Fragment>
       )}

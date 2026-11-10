@@ -14,7 +14,8 @@ vi.mock("firebase/firestore", async () => {
     where: vi.fn(),
     orderBy: vi.fn(),
     limit: vi.fn(),
-    doc: vi.fn(),
+    doc: vi.fn(() => ({ id: "mock_doc" })),
+    getDoc: vi.fn(() => Promise.resolve({ exists: () => false, data: () => null })),
     setDoc: vi.fn(() => Promise.resolve()),
     collection: vi.fn()
   };
@@ -34,7 +35,7 @@ describe("CurrencyRateRepository Test Suite", () => {
     expect(res).toBe(500);
   });
 
-  it("should fall back to standard DEFAULT_RATE (135) if no records are returned by Firestore", async () => {
+  it("should fall back to standard DEFAULT_RATE (134.25) if no records are returned by Firestore", async () => {
     // Mock empty snapshot from firestore
     vi.mocked(getDocs).mockResolvedValue({
       empty: true,
@@ -42,17 +43,17 @@ describe("CurrencyRateRepository Test Suite", () => {
     } as any);
 
     const rate = await CurrencyRateRepository.getRateAtDate("biz_123", "USD", "HTG", "2026-08-10");
-    expect(rate).toBe(135.0);
+    expect(rate).toBe(134.25);
   });
 
   it("should resolve rate from query snapshot when present", async () => {
-    // Mock rate of 142
+    // Mock rate of 142.5
     vi.mocked(getDocs).mockResolvedValue({
       empty: false,
       docs: [
         {
           data: () => ({
-            rate: 142.5,
+            rates: { BRH: 142.5 },
             effectiveDate: "2026-08-10"
           })
         }
@@ -69,7 +70,7 @@ describe("CurrencyRateRepository Test Suite", () => {
       docs: [
         {
           data: () => ({
-            rate: 138.0,
+            rates: { BRH: 138.0 },
             effectiveDate: "2026-08-10"
           })
         }
@@ -93,7 +94,7 @@ describe("CurrencyRateRepository Test Suite", () => {
       docs: [
         {
           data: () => ({
-            rate: 140.0,
+            rates: { BRH: 140.0 },
             effectiveDate: "2026-08-10"
           })
         }

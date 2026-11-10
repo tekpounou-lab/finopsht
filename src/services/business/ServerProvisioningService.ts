@@ -1,6 +1,7 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore, getAdminAuth } from "../../lib/firebaseAdmin";
+import { isInvalidTenantId } from "../../modules/workflow/approval/serverAuthMiddleware";
 import firebaseConfig from "../../../firebase-applet-config.json";
 
 export interface ProvisioningResult {
@@ -21,18 +22,54 @@ export class ServerProvisioningService {
    * Bypasses security rules and updates custom claims.
    */
   static async provision(
-    founder: { uid: string; email: string; name: string },
+    founder: {
+      uid: string;
+      email: string;
+      name: string;
+      existingBusinessId?: string;
+      isSuperAdmin?: boolean;
+    },
     businessName: string,
     options: any = {}
   ): Promise<ProvisioningResult> {
+    if (!founder?.uid || !founder?.email || !businessName?.trim()) {
+      throw new Error("INVALID_PROVISIONING_PARAMS");
+    }
+
     const db = this.getDb();
     const auth = getAdminAuth();
     
-    const businessId = options.businessId || `biz_${founder.uid}`;
-    const employeeId = options.employeeId || `emp_${founder.uid}`;
+    const requestedBizId = typeof options.businessId === "string" ? options.businessId.trim() : "";
+    if (
+      requestedBizId &&
+      (isInvalidTenantId(requestedBizId) || requestedBizId.includes("/"))
+    ) {
+      throw new Error("INVALID_BUSINESS_ID");
+    }
+
+    const requestedEmpId = typeof options.employeeId === "string" ? options.employeeId.trim() : "";
+    if (
+      requestedEmpId &&
+      (isInvalidTenantId(requestedEmpId) || requestedEmpId.includes("/"))
+    ) {
+      throw new Error("INVALID_PROVISIONING_PARAMS");
+    }
+
+    const businessId = requestedBizId || `biz_${founder.uid}`;
+    const employeeId = requestedEmpId || `emp_${founder.uid}`;
+
+    const callerClaimBiz =
+      typeof founder.existingBusinessId === "string" ? founder.existingBusinessId.trim() : "";
+    if (
+      !founder.isSuperAdmin &&
+      callerClaimBiz &&
+      !isInvalidTenantId(callerClaimBiz) &&
+      callerClaimBiz !== businessId
+    ) {
+      throw new Error("USER_ALREADY_BOUND_TO_TENANT");
+    }
     
     const now = FieldValue.serverTimestamp();
-    const isoNow = new Date().toISOString();
     
     console.log(`[ServerProvisioning] Starting orchestration for ${businessName} (Business ID: ${businessId}, Founder: ${founder.uid})`);
 
@@ -68,7 +105,79 @@ export class ServerProvisioningService {
       }
 
       await db.runTransaction(async (transaction) => {
-        // 2. Prepare documents (Phase 1: Minimum Viable Identity, strictly camelCase)
+        // READ PHASE: Verify target businessId, founder user profile, and target employeeId inside transaction
+        const targetBizRef = db.doc(`businesses/${businessId}`);
+        const founderUserRef = db.doc(`users/${founder.uid}`);
+        const targetEmpRef = db.doc(`employees/${employeeId}`);
+        const [existingBizSnap, existingUserSnap, existingEmpSnap] = await Promise.all([
+          transaction.get(targetBizRef),
+          transaction.get(founderUserRef),
+          transaction.get(targetEmpRef)
+        ]);
+
+        if (existingBizSnap.exists) {
+          const existingBizData = existingBizSnap.data() || {};
+          const existingOwner = existingBizData.ownerId || existingBizData.owner_id || "";
+          if (!existingOwner || existingOwner !== founder.uid) {
+            throw new Error("TENANT_OVERWRITE_FORBIDDEN");
+          }
+          if (existingBizData.status && String(existingBizData.status).toUpperCase() !== "CANCELLED") {
+            throw new Error("BUSINESS_ALREADY_EXISTS");
+          }
+        }
+
+        if (existingUserSnap.exists) {
+          const existingUserData = existingUserSnap.data() || {};
+          const uBiz1 =
+            typeof existingUserData.businessId === "string" ? existingUserData.businessId.trim() : "";
+          const uBiz2 =
+            typeof existingUserData.business_id === "string" ? existingUserData.business_id.trim() : "";
+          if (
+            uBiz1 &&
+            uBiz2 &&
+            !isInvalidTenantId(uBiz1) &&
+            !isInvalidTenantId(uBiz2) &&
+            uBiz1 !== uBiz2
+          ) {
+            throw new Error("USER_ALREADY_BOUND_TO_TENANT");
+          }
+
+          const existingUserBiz = uBiz1 || uBiz2;
+          const existingUserBizStatus = String(
+            existingUserData.businessStatus || existingUserData.business_status || ""
+          ).toUpperCase();
+          if (
+            existingUserBiz &&
+            !isInvalidTenantId(existingUserBiz) &&
+            existingUserBiz !== businessId &&
+            existingUserBizStatus !== "CANCELLED"
+          ) {
+            throw new Error("USER_ALREADY_BOUND_TO_TENANT");
+          }
+        }
+
+        if (existingEmpSnap.exists) {
+          const existingEmpData = existingEmpSnap.data() || {};
+          const empBiz1 =
+            typeof existingEmpData.businessId === "string" ? existingEmpData.businessId.trim() : "";
+          const empBiz2 =
+            typeof existingEmpData.business_id === "string" ? existingEmpData.business_id.trim() : "";
+          if (empBiz1 && empBiz2 && empBiz1 !== empBiz2) {
+            throw new Error("TENANT_OVERWRITE_FORBIDDEN");
+          }
+          const empBiz = empBiz1 || empBiz2;
+          const empUid = String(existingEmpData.uid || existingEmpData.firebase_uid || "").trim();
+
+          if (
+            (empBiz && empBiz !== businessId) ||
+            (empUid && empUid !== founder.uid) ||
+            (!empBiz && !empUid)
+          ) {
+            throw new Error("TENANT_OVERWRITE_FORBIDDEN");
+          }
+        }
+
+        // 2. Prepare documents (Phase 1: Minimum Viable Identity)
         const businessData = {
           id: businessId,
           name: businessName,
@@ -147,6 +256,7 @@ export class ServerProvisioningService {
         const employeeData = {
           id: employeeId,
           businessId: businessId,
+          business_id: businessId,
           uid: founder.uid,
           email: founder.email.toLowerCase().trim(),
           normalizedEmail: founder.email.toLowerCase().trim(),
@@ -173,6 +283,7 @@ export class ServerProvisioningService {
           id: membershipId,
           uid: founder.uid,
           businessId: businessId,
+          business_id: businessId,
           role: "OWNER",
           permissions: ["*"],
           status: "ACTIVE",
@@ -184,7 +295,7 @@ export class ServerProvisioningService {
         };
 
         // WRITES (Phase 1 Atomic Provisioning)
-        transaction.set(db.doc(`businesses/${businessId}`), businessData);
+        transaction.set(targetBizRef, businessData);
         transaction.set(db.doc(`business_settings/${businessId}`), settings);
         transaction.set(db.doc(`subscriptions/${businessId}`), subscription);
         transaction.set(db.doc(`features/${businessId}`), featureFlags);
@@ -193,7 +304,7 @@ export class ServerProvisioningService {
         transaction.set(db.doc(`employees/${employeeId}`), employeeData);
         transaction.set(db.doc(`memberships/${membershipId}`), membershipData);
         
-        transaction.set(db.doc(`users/${founder.uid}`), {
+        transaction.set(founderUserRef, {
           id: founder.uid,
           uid: founder.uid,
           name: founder.name,
@@ -201,6 +312,7 @@ export class ServerProvisioningService {
           email: founder.email.toLowerCase().trim(),
           normalizedEmail: founder.email.toLowerCase().trim(),
           businessId: businessId,
+          business_id: businessId,
           branchId: branchId,
           departmentId: deptId,
           employeeId: employeeId,
@@ -214,6 +326,7 @@ export class ServerProvisioningService {
         // Audit Log
         transaction.set(db.collection("forensic_logs").doc(), {
           businessId: businessId,
+          business_id: businessId,
           userId: founder.uid,
           userName: founder.name,
           userRole: "OWNER",
@@ -239,7 +352,12 @@ export class ServerProvisioningService {
       return { businessId, employeeId };
 
     } catch (error: any) {
-      if (error?.message === "BUSINESS_ALREADY_EXISTS") {
+      if (
+        error?.message === "BUSINESS_ALREADY_EXISTS" ||
+        error?.message === "TENANT_OVERWRITE_FORBIDDEN" ||
+        error?.message === "USER_ALREADY_BOUND_TO_TENANT" ||
+        error?.message === "INVALID_BUSINESS_ID"
+      ) {
         throw error;
       }
       console.error("[ServerProvisioning] Critical provisioning transaction failure:", error);

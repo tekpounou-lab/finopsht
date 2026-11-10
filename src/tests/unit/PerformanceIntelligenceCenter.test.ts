@@ -99,7 +99,8 @@ describe("Performance Intelligence Center (PIC) Module", () => {
   });
 
   it("5. Computes simplified metrics accurately for Mode Simplifié", () => {
-    const metrics = selectSimplifiedMetrics(mockDataSet, defaultFilters);
+    const accrualFilters: PICFilters = { ...defaultFilters, accountingBasis: "ACCRUAL" };
+    const metrics = selectSimplifiedMetrics(mockDataSet, accrualFilters);
     expect(metrics.isDataAvailable).toBe(true);
     expect(metrics.totalPayroll).toBe(90000); // 50000 + 40000
     expect(metrics.totalCommissions).toBe(7000); // 5000 + 2000

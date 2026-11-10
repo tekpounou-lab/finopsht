@@ -27,11 +27,13 @@ interface BISimplifiedViewProps {
   netProfit: number;
   profitMarginPercentage: number;
   attendanceAggregates: {
-    attendanceRate: number;
-    latenessRate: number;
-    absenceRate: number;
-    avgHours: number;
+    attendanceRate: number | null;
+    attendanceFrequency?: number | null;
+    latenessRate: number | null;
+    absenceRate: number | null;
+    avgHours: number | null;
     overrides: number;
+    state?: string;
   };
   aiQuery: string;
   setAiQuery: (val: string) => void;
@@ -349,7 +351,9 @@ export const BISimplifiedView: React.FC<BISimplifiedViewProps> = ({
         <div
           id="simple-kpi-attendance-card"
           className={`glass p-5 rounded-2xl border-l-4 flex flex-col justify-between min-h-[140px] md:h-[150px] ${
-            attendanceAggregates.attendanceRate >= 90
+            attendanceAggregates.attendanceRate === null
+              ? "border-slate-600"
+              : attendanceAggregates.attendanceRate >= 90
               ? "border-emerald-500"
               : attendanceAggregates.attendanceRate >= 70
               ? "border-indigo-500"
@@ -363,7 +367,9 @@ export const BISimplifiedView: React.FC<BISimplifiedViewProps> = ({
               </span>
               <span
                 className={`p-1.5 rounded-lg text-[10px] font-bold ${
-                  attendanceAggregates.attendanceRate >= 90
+                  attendanceAggregates.attendanceRate === null
+                    ? "bg-slate-800 text-slate-400"
+                    : attendanceAggregates.attendanceRate >= 90
                     ? "bg-emerald-500/10 text-emerald-400"
                     : attendanceAggregates.attendanceRate >= 70
                     ? "bg-indigo-500/10 text-indigo-400"
@@ -375,14 +381,16 @@ export const BISimplifiedView: React.FC<BISimplifiedViewProps> = ({
             </div>
             <h4
               className={`font-mono text-xl font-black mt-3 truncate ${
-                attendanceAggregates.attendanceRate >= 90
+                attendanceAggregates.attendanceRate === null
+                  ? "text-slate-400"
+                  : attendanceAggregates.attendanceRate >= 90
                   ? "text-emerald-400"
                   : attendanceAggregates.attendanceRate >= 70
                   ? "text-indigo-400"
                   : "text-amber-400"
               }`}
             >
-              {attendanceAggregates.attendanceRate.toFixed(1)}%
+              {attendanceAggregates.attendanceRate !== null ? `${attendanceAggregates.attendanceRate.toFixed(1)}%` : "N/D"}
             </h4>
           </div>
           <p className="text-[10.5px] text-slate-400 leading-relaxed mt-2 border-t border-slate-850/60 pt-2">
@@ -477,7 +485,11 @@ export const BISimplifiedView: React.FC<BISimplifiedViewProps> = ({
                 <div>
                   <h5 className="text-xs font-bold text-slate-200">{language === "ht" ? "Prezans Ekip la" : "Assiduité de l'Équipe"}</h5>
                   <p className="text-[11px] text-slate-400 leading-relaxed mt-0.5">
-                    {attendanceAggregates.attendanceRate >= 90
+                    {attendanceAggregates.attendanceRate === null
+                      ? language === "ht"
+                        ? "Done prezans yo poko disponib (N/D) — verifye paramèt orè kontra anplwaye yo."
+                        : "Données d'assiduité non disponibles (N/D) — vérifiez la configuration contractuelle des horaires."
+                      : attendanceAggregates.attendanceRate >= 90
                       ? language === "ht"
                         ? `Bèl nivo prezans anplwaye yo (${attendanceAggregates.attendanceRate.toFixed(1)}%). Ekip ou a trè serye ak ponktyèl.`
                         : `Excellent taux de présence (${attendanceAggregates.attendanceRate.toFixed(1)}%). Votre équipe est ponctuelle et montre une très belle dynamique de travail.`

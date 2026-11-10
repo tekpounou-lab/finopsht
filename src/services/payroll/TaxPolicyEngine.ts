@@ -86,7 +86,10 @@ export class TaxPolicyEngine {
       return true; // Default statutory compliance if unconfigured
     }
 
-    // 1. Direct flags on root object
+    // 1. Direct flags on root object or nested canonical policy
+    if (source.socialContributions?.enabled !== undefined) {
+      return Boolean(source.socialContributions.enabled);
+    }
     if (source.enable_social_taxes !== undefined) {
       return Boolean(source.enable_social_taxes);
     }
@@ -103,6 +106,9 @@ export class TaxPolicyEngine {
     // 2. Settings.payroll or source.payroll
     const payroll = source.payroll || source.settings?.payroll;
     if (payroll) {
+      if (payroll.socialContributions?.enabled !== undefined) {
+        return Boolean(payroll.socialContributions.enabled);
+      }
       if (payroll.enable_social_taxes !== undefined) {
         return Boolean(payroll.enable_social_taxes);
       }
@@ -123,6 +129,9 @@ export class TaxPolicyEngine {
     // 3. Settings.payroll_policies or source.payroll_policies / payrollPolicies
     const policies = source.payroll_policies || source.payrollPolicies || source.settings?.payroll_policies;
     if (policies) {
+      if (policies.socialContributions?.enabled !== undefined) {
+        return Boolean(policies.socialContributions.enabled);
+      }
       if (policies.enable_social_taxes !== undefined) {
         return Boolean(policies.enable_social_taxes);
       }
@@ -178,9 +187,15 @@ export class TaxPolicyEngine {
     if (source.enableSurvivalFloor !== undefined) {
       return Boolean(source.enableSurvivalFloor);
     }
+    if (source.survivalFloor?.enabled !== undefined) {
+      return Boolean(source.survivalFloor.enabled);
+    }
 
     const payroll = source.payroll || source.settings?.payroll;
     if (payroll) {
+      if (payroll.survivalFloor?.enabled !== undefined) {
+        return Boolean(payroll.survivalFloor.enabled);
+      }
       if (payroll.enable_survival_floor !== undefined) {
         return Boolean(payroll.enable_survival_floor);
       }
@@ -191,6 +206,9 @@ export class TaxPolicyEngine {
 
     const policies = source.payroll_policies || source.payrollPolicies || source.settings?.payroll_policies;
     if (policies) {
+      if (policies.survivalFloor?.enabled !== undefined) {
+        return Boolean(policies.survivalFloor.enabled);
+      }
       if (policies.enable_survival_floor !== undefined) {
         return Boolean(policies.enable_survival_floor);
       }
@@ -207,16 +225,17 @@ export class TaxPolicyEngine {
    */
   static getSurvivalFloorAmount(source?: any): number {
     const rawVal =
-      source?.survival_floor_htg ??
-      source?.survivalFloor ??
       source?.survivalFloorHTG ??
+      source?.survival_floor_htg ??
+      (typeof source?.survivalFloor === "number" ? source.survivalFloor : source?.survivalFloor?.minimumNetHTG) ??
+      source?.payroll?.survivalFloorHTG ??
       source?.payroll?.survival_floor_htg ??
-      source?.payroll?.survivalFloor ??
-      source?.payroll_policies?.survivalFloor ??
+      source?.payroll_policies?.survivalFloorHTG ??
+      source?.payroll_policies?.survivalFloor?.minimumNetHTG ??
       source?.settings?.payroll?.survival_floor_htg;
 
     const num = Number(rawVal);
-    return !isNaN(num) && num > 0 ? num : SURVIVAL_FLOOR_HTG;
+    return !isNaN(num) && num >= 0 && rawVal !== null && rawVal !== undefined && rawVal !== "" ? num : SURVIVAL_FLOOR_HTG;
   }
 
   /**
@@ -230,6 +249,9 @@ export class TaxPolicyEngine {
       return true;
     }
 
+    if (source.attendance?.excludeWithoutRecords !== undefined) {
+      return Boolean(source.attendance.excludeWithoutRecords);
+    }
     if (source.require_attendance_for_payroll !== undefined) {
       return Boolean(source.require_attendance_for_payroll);
     }
@@ -239,6 +261,9 @@ export class TaxPolicyEngine {
 
     const payroll = source.payroll || source.settings?.payroll;
     if (payroll) {
+      if (payroll.attendance?.excludeWithoutRecords !== undefined) {
+        return Boolean(payroll.attendance.excludeWithoutRecords);
+      }
       if (payroll.require_attendance_for_payroll !== undefined) {
         return Boolean(payroll.require_attendance_for_payroll);
       }
@@ -249,6 +274,9 @@ export class TaxPolicyEngine {
 
     const policies = source.payroll_policies || source.payrollPolicies || source.settings?.payroll_policies;
     if (policies) {
+      if (policies.attendance?.excludeWithoutRecords !== undefined) {
+        return Boolean(policies.attendance.excludeWithoutRecords);
+      }
       if (policies.require_attendance_for_payroll !== undefined) {
         return Boolean(policies.require_attendance_for_payroll);
       }
@@ -257,7 +285,7 @@ export class TaxPolicyEngine {
       }
     }
 
-    return true;
+    return false;
   }
 
   /**
@@ -283,19 +311,19 @@ export class TaxPolicyEngine {
     const policies = source?.payroll_policies || source?.payrollPolicies || source?.settings?.payroll_policies || source?.payroll || source;
 
     const onaEmp = parseRate(
-      policies?.onaEmployeeRate ?? policies?.tax_cnss_employee ?? policies?.cnssRateEmployee,
+      policies?.socialContributions?.cnssOna?.employeeRate ?? policies?.onaEmployeeRate ?? policies?.tax_cnss_employee ?? policies?.cnssRateEmployee,
       STATUTORY_TAX_RATES.ONA.EMPLOYEE_RATE
     );
     const onaEmpr = parseRate(
-      policies?.onaEmployerRate ?? policies?.tax_cnss_employer ?? policies?.cnssRateEmployer,
+      policies?.socialContributions?.cnssOna?.employerRate ?? policies?.onaEmployerRate ?? policies?.tax_cnss_employer ?? policies?.cnssRateEmployer,
       STATUTORY_TAX_RATES.ONA.EMPLOYER_RATE
     );
     const ofatmaEmp = parseRate(
-      policies?.ofatmaEmployeeRate ?? policies?.tax_cns_employee ?? policies?.cnsRateEmployee,
+      policies?.socialContributions?.ofatmaCns?.employeeRate ?? policies?.ofatmaEmployeeRate ?? policies?.tax_cns_employee ?? policies?.cnsRateEmployee,
       STATUTORY_TAX_RATES.OFATMA.EMPLOYEE_RATE
     );
     const ofatmaEmpr = parseRate(
-      policies?.ofatmaEmployerRate ?? policies?.tax_cns_employer ?? policies?.cnsRateEmployer,
+      policies?.socialContributions?.ofatmaCns?.employerRate ?? policies?.ofatmaEmployerRate ?? policies?.tax_cns_employer ?? policies?.cnsRateEmployer,
       STATUTORY_TAX_RATES.OFATMA.EMPLOYER_RATE_DEFAULT
     );
 

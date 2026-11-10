@@ -192,7 +192,9 @@ export default function ModulesAndFeaturesSection() {
   const [expandedRolePanel, setExpandedRolePanel] = useState<Record<string, boolean>>({});
 
   const userRole = PermissionService.getRole();
-  const canManage = userRole === "OWNER" || userRole === "SUPER_ADMIN" || userRole === "MANAGER";
+  const isSuperAdmin = userRole === "SUPER_ADMIN";
+  const isOwner = userRole === "OWNER";
+  const canManageRoles = isSuperAdmin || isOwner || userRole === "MANAGER";
 
   // Active Plan determination
   const activePlanCode = (
@@ -250,10 +252,10 @@ export default function ModulesAndFeaturesSection() {
     return false;
   };
 
-  // Toggle Global Feature Flag
+  // Toggle Global Feature Flag (RESERVED FOR SUPER_ADMIN)
   const handleToggleModule = async (moduleId: string, currentStatus: boolean) => {
-    if (!canManage) {
-      toast.error("Seul le propriétaire ou un administrateur peut activer/désactiver les modules.");
+    if (!isSuperAdmin) {
+      toast.error("Action réservée au Super Admin : L'activation des modules est réservée à l'administrateur de la plateforme ou déterminée automatiquement par votre forfait d'abonnement.");
       return;
     }
 
@@ -268,13 +270,13 @@ export default function ModulesAndFeaturesSection() {
       
       const moduleObj = MODULES_CATALOG.find(m => m.id === moduleId);
       if (!currentStatus) {
-        toast.success(`Module "${moduleObj?.title || moduleId}" activé à l'échelle de l'entreprise !`);
+        toast.success(`[Super Admin] Module "${moduleObj?.title || moduleId}" activé pour l'entreprise !`);
       } else {
-        toast.info(`Module "${moduleObj?.title || moduleId}" désactivé.`);
+        toast.info(`[Super Admin] Module "${moduleObj?.title || moduleId}" désactivé.`);
       }
     } catch (err: any) {
       console.error("Failed to update feature flag:", err);
-      toast.error("Impossible de mettre à jour le module. Veuillez réessayer.");
+      toast.error(err.message || "Impossible de mettre à jour le module. Veuillez réessayer.");
     } finally {
       setPendingModuleId(null);
     }
@@ -282,8 +284,14 @@ export default function ModulesAndFeaturesSection() {
 
   // Toggle Role Access for a Specific Module
   const handleToggleRoleAccess = async (roleId: string, moduleId: string, currentAllowed: boolean) => {
-    if (!canManage) {
+    if (!canManageRoles) {
       toast.error("Autorisation insuffisante pour modifier les rôles.");
+      return;
+    }
+
+    const isModuleActiveGlobally = enabledFeatures[moduleId] !== false;
+    if (!isModuleActiveGlobally && !isSuperAdmin) {
+      toast.error("Ce module n'est pas activé pour l'entreprise. Un forfait supérieur ou l'activation par le Super Admin est requis pour attribuer des rôles.");
       return;
     }
 
@@ -324,12 +332,19 @@ export default function ModulesAndFeaturesSection() {
 
   // Bulk set for Matrix view
   const handleBulkSetRoleModules = async (roleKey: string, moduleIds: string[], enable: boolean) => {
-    if (!canManage) return;
+    if (!canManageRoles) {
+      toast.error("Autorisation insuffisante pour modifier les rôles.");
+      return;
+    }
 
     const roleUpper = roleKey.toUpperCase();
     const currentRoleConfig = { ...(localRoleMatrix[roleUpper] || {}) };
 
-    moduleIds.forEach(id => {
+    const targetModuleIds = (!enable || isSuperAdmin)
+      ? moduleIds
+      : moduleIds.filter(id => enabledFeatures[id.toLowerCase()] !== false);
+
+    targetModuleIds.forEach(id => {
       currentRoleConfig[id.toLowerCase()] = enable;
     });
 
@@ -376,9 +391,16 @@ export default function ModulesAndFeaturesSection() {
             <h3 className="text-lg font-black text-slate-100 uppercase tracking-tight">
               Modules & Habilitations Rôles (RBAC)
             </h3>
+            {isSuperAdmin && (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase tracking-wider">
+                Mode Super Admin
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
-            Activez les briques fonctionnelles ERP pour votre entreprise et définissez précisément quels rôles (Managers, Caissiers, Auditeurs) peuvent y accéder.
+            {isSuperAdmin
+              ? "Console Super Admin : Vous disposez du contrôle souverain pour activer ou désactiver les modules de cette entreprise."
+              : `Gouvernance des Modules : Les modules sont régis par votre formule d'abonnement (Forfait actuel : ${activePlanCode}) ou configurés par le Super Admin de la plateforme. En tant qu'administrateur, vous définissez l'accès des rôles internes (Managers, Caissiers, Auditeurs) pour les modules actifs.`}
           </p>
         </div>
 
@@ -596,12 +618,13 @@ export default function ModulesAndFeaturesSection() {
                                     ) : (
                                       <button
                                         onClick={() => handleToggleRoleAccess(role.id, mod.id, allowed)}
-                                        disabled={!canManage || adminLoading}
+                                        disabled={!canManageRoles || adminLoading || !isEnabledGlobally}
                                         className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition-all flex items-center gap-1.5 cursor-pointer ${
                                           allowed
                                             ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30"
                                             : "bg-slate-800 text-slate-500 border border-slate-700 hover:text-slate-300"
-                                        }`}
+                                        } ${(!canManageRoles || adminLoading || !isEnabledGlobally) ? "opacity-50 cursor-not-allowed" : ""}`}
+                                        title={!isEnabledGlobally ? "Module inactif à l'échelle de l'entreprise" : undefined}
                                       >
                                         {allowed ? (
                                           <>
@@ -639,29 +662,48 @@ export default function ModulesAndFeaturesSection() {
                       </span>
                     </div>
 
-                    {/* Interactive Global Switch */}
-                    <button
-                      onClick={() => handleToggleModule(mod.id, isEnabledGlobally)}
-                      disabled={adminLoading || isPending || !canManage}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/30 ${
-                        isEnabledGlobally ? "bg-indigo-600" : "bg-slate-800"
-                      } ${(!canManage || adminLoading) ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-                      title={
-                        !canManage
-                          ? "Autorisation requise pour modifier"
-                          : isEnabledGlobally
-                          ? "Cliquer pour désactiver ce module pour l'entreprise"
-                          : "Cliquer pour activer ce module pour l'entreprise"
-                      }
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform flex items-center justify-center ${
-                          isEnabledGlobally ? "translate-x-6" : "translate-x-1"
-                        }`}
-                      >
-                        {isPending && <RefreshCw className="w-2.5 h-2.5 text-indigo-600 animate-spin" />}
-                      </span>
-                    </button>
+                    {/* Interactive Global Switch for Super Admin / Governance indicator for Tenant */}
+                    {isSuperAdmin ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono text-amber-400 font-bold uppercase bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          Super Admin
+                        </span>
+                        <button
+                          onClick={() => handleToggleModule(mod.id, isEnabledGlobally)}
+                          disabled={adminLoading || isPending}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/30 ${
+                            isEnabledGlobally ? "bg-indigo-600" : "bg-slate-800"
+                          } ${adminLoading ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                          title={
+                            isEnabledGlobally
+                              ? "Super Admin : Cliquer pour désactiver ce module pour cette entreprise"
+                              : "Super Admin : Cliquer pour activer ce module pour cette entreprise"
+                          }
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform flex items-center justify-center ${
+                              isEnabledGlobally ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          >
+                            {isPending && <RefreshCw className="w-2.5 h-2.5 text-indigo-600 animate-spin" />}
+                          </span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        {isEnabledGlobally ? (
+                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-xl flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Inclus ({mod.tier})</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-950 border border-slate-800 px-2.5 py-1 rounded-xl flex items-center gap-1">
+                            <Lock className="w-3 h-3 text-slate-600" />
+                            <span>Réservé Super Admin / Forfait</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

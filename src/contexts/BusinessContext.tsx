@@ -377,6 +377,14 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
       setState('READY');
       traceEvent("BusinessContextReadyFromIdentity", { businessId: bizSnap.id });
       initialResolveNeeded = false;
+
+      BusinessResolver.resolve(bizSnap.id)
+        .then((snapshotData) => {
+          if (snapshotData?.settings) {
+            setSettings(prev => ({ ...(prev || {}), ...snapshotData.settings }));
+          }
+        })
+        .catch(err => console.warn("[BusinessContext] Background settings resolve notice:", err));
     }
 
     const business_id = identity?.business?.id;
@@ -464,7 +472,9 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
         case "BUSINESS_Synced":
           setState('REFRESHING');
           setBusiness(event.payload);
-          setSettings(event.payload.settings || null);
+          if (event.payload.settings !== undefined && event.payload.settings !== null) {
+            setSettings(prev => ({ ...(prev || {}), ...event.payload.settings }));
+          }
           setFeatureFlags(event.payload.featureFlags || []);
           break;
         case "FEATURE_CACHE_INVALIDATED":
@@ -490,8 +500,9 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
         case "DEPARTMENTS_Synced":
           setDepartments(event.payload);
           break;
+        case "SettingsChanged":
         case "SETTINGS_Synced":
-          setSettings(event.payload);
+          setSettings(prev => ({ ...(prev || {}), ...(event.payload?.updates || event.payload) }));
           break;
       }
     });

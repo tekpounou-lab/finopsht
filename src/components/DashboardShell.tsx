@@ -23,6 +23,7 @@ import { PayrollRepository } from "../repositories/PayrollRepository";
 import EmployeeProfileDialog from "./staff/EmployeeProfileDialog";
 import { db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { sanitizeAndEnrichLedgerTransaction } from "../services/AccountingEngine";
 
 // Subcomponents - Lazy loaded for performance & code splitting
 const AttendanceLedger = lazyWithRetry(() => import("../pages/AttendanceLedger"));
@@ -361,10 +362,10 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                       return;
                     }
                     console.debug(`[Payroll] Ledger transaction posted: ${tx.id}`);
-                    const ref = doc(db, "ledger_transactions", tx.id);
+                    const finalTx = sanitizeAndEnrichLedgerTransaction(tx, resolvedBusinessId);
+                    const ref = doc(db, "ledger_transactions", finalTx.id);
                     await setDoc(ref, {
-                      ...tx,
-                      business_id: resolvedBusinessId,
+                      ...finalTx,
                       updatedAt: serverTimestamp()
                     }, { merge: true });
                   }}
@@ -372,8 +373,16 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               </>
             )}
 
-            {normalizedActiveTab === "ledger" && (
-              <ConnectedFinanceLedger />
+            {(normalizedActiveTab === "ledger" || normalizedActiveTab === "reports" || normalizedActiveTab === "cash") && (
+              <ConnectedFinanceLedger
+                initialView={
+                  normalizedActiveTab === "reports"
+                    ? "REPORT_CENTER"
+                    : normalizedActiveTab === "cash"
+                    ? "CASH_MANAGEMENT"
+                    : undefined
+                }
+              />
             )}
 
             {normalizedActiveTab === "attendance" && (
