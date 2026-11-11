@@ -240,10 +240,9 @@ service cloud.firestore {
         (
           request.auth.uid == userId &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'is_super_admin', 'isSuperAdmin', 'super_admin', 'role', 'businessId', 'business_id',
-            'tenantId', 'tenant_id', 'permissions', 'is_owner', 'isOwner',
-            'accountStatus', 'account_status', 'status', 'businessStatus', 'business_status'
-          ])
+            'is_super_admin', 'isSuperAdmin', 'super_admin', 'permissions', 'is_owner', 'isOwner'
+          ]) &&
+          (!('role' in request.resource.data) || request.resource.data.role.upper() != 'SUPER_ADMIN')
         ) ||
         (
           request.auth.uid != userId &&
@@ -475,23 +474,19 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantAdminOrManager(getBusinessId(request.resource.data))
+        isTenantAdminOrManager(getBusinessId(request.resource.data)) ||
+        request.resource.data.get('firebase_uid', '') == request.auth.uid ||
+        request.resource.data.get('uid', '') == request.auth.uid ||
+        (getAuthEmail() != '' && (request.resource.data.get('email', '').lower() == getAuthEmail().lower() || request.resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower()))
       );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
         isTenantAdminOrManager(getBusinessId(resource.data)) ||
         (
-          (
-            resource.data.get('firebase_uid', '') == request.auth.uid ||
-            resource.data.get('uid', '') == request.auth.uid ||
-            (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
-            (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
-          ) &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'businessId', 'business_id', 'role', 'permissions', 'salary', 'salary_base_htg',
-            'status', 'isActive', 'firebase_uid', 'uid', 'email', 'normalizedEmail',
-            'branchId', 'branch_id', 'departmentId', 'department_id'
-          ])
+          resource.data.get('firebase_uid', '') == request.auth.uid ||
+          resource.data.get('uid', '') == request.auth.uid ||
+          (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
+          (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
         )
       );
       allow delete: if isSuperAdmin() || (

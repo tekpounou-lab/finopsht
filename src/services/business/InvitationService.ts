@@ -209,178 +209,274 @@ export class InvitationService {
     let acceptedRole = "";
     let acceptedMembershipId = "";
 
-    await db.runTransaction(async (transaction) => {
-      const inviteRef = db.doc(`invitations/${inviteId}`);
-      const userRef = db.doc(`users/${user.uid}`);
+    try {
+      await db.runTransaction(async (transaction) => {
+        const inviteRef = db.doc(`invitations/${inviteId}`);
+        const userRef = db.doc(`users/${user.uid}`);
 
-      const [inviteDoc, userDoc] = await Promise.all([
-        transaction.get(inviteRef),
-        transaction.get(userRef)
-      ]);
+        const [inviteDoc, userDoc] = await Promise.all([
+          transaction.get(inviteRef),
+          transaction.get(userRef)
+        ]);
 
-      if (!inviteDoc.exists) throw new Error("INVITATION_NOT_FOUND");
+        if (!inviteDoc.exists) throw new Error("INVITATION_NOT_FOUND");
 
-      const inviteData = inviteDoc.data()!;
-      if (inviteData.status !== "PENDING") throw new Error("INVITATION_NOT_PENDING");
+        const inviteData = inviteDoc.data()!;
+        if (inviteData.status !== "PENDING") throw new Error("INVITATION_NOT_PENDING");
 
-      const rawExpiry = inviteData.expiresAt || inviteData.expires_at;
-      if (rawExpiry) {
-        const expiryMs =
-          typeof rawExpiry?.toMillis === "function"
-            ? rawExpiry.toMillis()
-            : Date.parse(String(rawExpiry));
-        if (!Number.isNaN(expiryMs) && expiryMs < Date.now()) {
-          throw new Error("INVITATION_EXPIRED");
+        const rawExpiry = inviteData.expiresAt || inviteData.expires_at;
+        if (rawExpiry) {
+          const expiryMs =
+            typeof rawExpiry?.toMillis === "function"
+              ? rawExpiry.toMillis()
+              : Date.parse(String(rawExpiry));
+          if (!Number.isNaN(expiryMs) && expiryMs < Date.now()) {
+            throw new Error("INVITATION_EXPIRED");
+          }
         }
-      }
 
-      const invitedEmail = String(
-        inviteData.email || inviteData.normalizedEmail || ""
-      )
-        .toLowerCase()
-        .trim();
-      if (!invitedEmail || invitedEmail !== normalizedUserEmail) {
-        throw new Error("INVITATION_RECIPIENT_MISMATCH");
-      }
+        const invitedEmail = String(
+          inviteData.email || inviteData.normalizedEmail || ""
+        )
+          .toLowerCase()
+          .trim();
+        if (!invitedEmail || invitedEmail !== normalizedUserEmail) {
+          throw new Error("INVITATION_RECIPIENT_MISMATCH");
+        }
 
-      const targetRole = String(inviteData.role || "EMPLOYEE")
-        .trim()
-        .toUpperCase();
-      if (targetRole === "SUPER_ADMIN" || !ASSIGNABLE_INVITE_ROLES.has(targetRole)) {
-        throw new Error("FORBIDDEN_ROLE_ASSIGNMENT");
-      }
+        const targetRole = String(inviteData.role || "EMPLOYEE")
+          .trim()
+          .toUpperCase();
+        if (targetRole === "SUPER_ADMIN" || !ASSIGNABLE_INVITE_ROLES.has(targetRole)) {
+          throw new Error("FORBIDDEN_ROLE_ASSIGNMENT");
+        }
 
-      const invBizSnake =
-        typeof inviteData.business_id === "string" ? inviteData.business_id.trim() : "";
-      const invBizCamel =
-        typeof inviteData.businessId === "string" ? inviteData.businessId.trim() : "";
-      if (invBizSnake && invBizCamel && invBizSnake !== invBizCamel) {
-        throw new Error("INVALID_INVITATION_TENANT");
-      }
+        const invBizSnake =
+          typeof inviteData.business_id === "string" ? inviteData.business_id.trim() : "";
+        const invBizCamel =
+          typeof inviteData.businessId === "string" ? inviteData.businessId.trim() : "";
+        if (invBizSnake && invBizCamel && invBizSnake !== invBizCamel) {
+          throw new Error("INVALID_INVITATION_TENANT");
+        }
 
-      const businessId = invBizSnake || invBizCamel || "";
-      if (!businessId || isInvalidTenantId(businessId)) {
-        throw new Error("INVALID_INVITATION_TENANT");
-      }
+        const businessId = invBizSnake || invBizCamel || "";
+        if (!businessId || isInvalidTenantId(businessId)) {
+          throw new Error("INVALID_INVITATION_TENANT");
+        }
 
-      const callerClaimBiz =
-        typeof user.existingBusinessId === "string" ? user.existingBusinessId.trim() : "";
-      if (
-        callerClaimBiz &&
-        !isInvalidTenantId(callerClaimBiz) &&
-        callerClaimBiz !== businessId
-      ) {
-        throw new Error("TENANT_CONFLICT_EXISTING_MEMBERSHIP");
-      }
-
-      if (userDoc.exists) {
-        const existingUserData = userDoc.data() || {};
-        const uBiz1 =
-          typeof existingUserData.business_id === "string" ? existingUserData.business_id.trim() : "";
-        const uBiz2 =
-          typeof existingUserData.businessId === "string" ? existingUserData.businessId.trim() : "";
+        const callerClaimBiz =
+          typeof user.existingBusinessId === "string" ? user.existingBusinessId.trim() : "";
         if (
-          uBiz1 &&
-          uBiz2 &&
-          !isInvalidTenantId(uBiz1) &&
-          !isInvalidTenantId(uBiz2) &&
-          uBiz1 !== uBiz2
+          callerClaimBiz &&
+          !isInvalidTenantId(callerClaimBiz) &&
+          callerClaimBiz !== businessId
         ) {
           throw new Error("TENANT_CONFLICT_EXISTING_MEMBERSHIP");
         }
-        const existingBizId = uBiz1 || uBiz2;
-        const existingBizStatus = String(
-          existingUserData.businessStatus || existingUserData.business_status || ""
-        ).toUpperCase();
-        if (
-          existingBizId &&
-          !isInvalidTenantId(existingBizId) &&
-          existingBizId !== businessId &&
-          existingBizStatus !== "CANCELLED"
-        ) {
-          throw new Error("TENANT_CONFLICT_EXISTING_MEMBERSHIP");
+
+        if (userDoc.exists) {
+          const existingUserData = userDoc.data() || {};
+          const uBiz1 =
+            typeof existingUserData.business_id === "string" ? existingUserData.business_id.trim() : "";
+          const uBiz2 =
+            typeof existingUserData.businessId === "string" ? existingUserData.businessId.trim() : "";
+          if (
+            uBiz1 &&
+            uBiz2 &&
+            !isInvalidTenantId(uBiz1) &&
+            !isInvalidTenantId(uBiz2) &&
+            uBiz1 !== uBiz2
+          ) {
+            throw new Error("TENANT_CONFLICT_EXISTING_MEMBERSHIP");
+          }
+          const existingBizId = uBiz1 || uBiz2;
+          const existingBizStatus = String(
+            existingUserData.businessStatus || existingUserData.business_status || ""
+          ).toUpperCase();
+          if (
+            existingBizId &&
+            !isInvalidTenantId(existingBizId) &&
+            existingBizId !== businessId &&
+            existingBizStatus !== "CANCELLED"
+          ) {
+            throw new Error("TENANT_CONFLICT_EXISTING_MEMBERSHIP");
+          }
         }
-      }
 
-      acceptedBusinessId = businessId;
-      acceptedRole = targetRole;
+        acceptedBusinessId = businessId;
+        acceptedRole = targetRole;
 
-      const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
-      const membershipId = `${businessId}_${user.uid}`;
-      acceptedMembershipId = membershipId;
+        const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
+        const membershipId = `${businessId}_${user.uid}`;
+        acceptedMembershipId = membershipId;
 
-      // 1. Update Invitation
-      transaction.update(inviteRef, {
-        status: "ACCEPTED",
-        acceptedAt: now,
-        acceptedByUid: user.uid,
-        updatedAt: now
-      });
+        // 1. Update Invitation
+        transaction.update(inviteRef, {
+          status: "ACCEPTED",
+          acceptedAt: now,
+          acceptedByUid: user.uid,
+          updatedAt: now
+        });
 
-      // 2. Create Employee
-      const employeeData = {
-        id: employeeId,
-        business_id: businessId,
-        businessId: businessId,
-        uid: user.uid,
-        firebase_uid: user.uid,
-        email: normalizedUserEmail,
-        normalizedEmail: normalizedUserEmail,
-        name: user.name,
-        role: targetRole,
-        status: "ACTIVE",
-        isActive: true,
-        createdAt: now,
-        updatedAt: now
-      };
-      transaction.set(db.doc(`employees/${employeeId}`), employeeData);
-
-      // 3. Create Membership
-      const membershipData = {
-        id: membershipId,
-        uid: user.uid,
-        business_id: businessId,
-        businessId: businessId,
-        role: targetRole,
-        status: "ACTIVE",
-        joinedAt: now,
-        updatedAt: now,
-        employee_id: employeeId,
-        customClaimsSynced: false
-      };
-      transaction.set(db.doc(`memberships/${membershipId}`), membershipData);
-
-      // 4. Update User Profile
-      transaction.set(
-        userRef,
-        {
+        // 2. Create Employee
+        const employeeData = {
+          id: employeeId,
           business_id: businessId,
           businessId: businessId,
-          employee_id: employeeId,
-          employeeId: employeeId,
+          uid: user.uid,
+          firebase_uid: user.uid,
+          email: normalizedUserEmail,
+          normalizedEmail: normalizedUserEmail,
+          name: user.name,
           role: targetRole,
-          account_status: "ACTIVE",
-          accountStatus: "ACTIVE",
-          onboarding_completed: true,
-          onboardingComplete: true,
-          customClaimsSynced: false,
+          status: "ACTIVE",
+          isActive: true,
+          createdAt: now,
           updatedAt: now
-        },
-        { merge: true }
-      );
+        };
+        transaction.set(db.doc(`employees/${employeeId}`), employeeData);
 
-      // 5. Audit Log
-      transaction.set(db.collection("forensic_logs").doc(), {
-        business_id: businessId,
-        businessId: businessId,
-        userId: user.uid,
-        userName: user.name,
-        action: "INVITATION_ACCEPTED",
-        payload: { inviteId, employeeId, role: targetRole },
-        timestamp: now,
-        severity: "success"
+        // 3. Create Membership
+        const membershipData = {
+          id: membershipId,
+          uid: user.uid,
+          business_id: businessId,
+          businessId: businessId,
+          role: targetRole,
+          status: "ACTIVE",
+          joinedAt: now,
+          updatedAt: now,
+          employee_id: employeeId,
+          customClaimsSynced: false
+        };
+        transaction.set(db.doc(`memberships/${membershipId}`), membershipData);
+
+        // 4. Update User Profile
+        transaction.set(
+          userRef,
+          {
+            business_id: businessId,
+            businessId: businessId,
+            employee_id: employeeId,
+            employeeId: employeeId,
+            role: targetRole,
+            account_status: "ACTIVE",
+            accountStatus: "ACTIVE",
+            onboarding_completed: true,
+            onboardingComplete: true,
+            customClaimsSynced: false,
+            updatedAt: now
+          },
+          { merge: true }
+        );
+
+        // 5. Audit Log
+        transaction.set(db.collection("forensic_logs").doc(), {
+          business_id: businessId,
+          businessId: businessId,
+          userId: user.uid,
+          userName: user.name,
+          action: "INVITATION_ACCEPTED",
+          payload: { inviteId, employeeId, role: targetRole },
+          timestamp: now,
+          severity: "success"
+        });
       });
-    });
+    } catch (adminErr: any) {
+      const errMsg = String(adminErr?.message || adminErr);
+      if (errMsg.includes("PERMISSION_DENIED") || adminErr?.code === 7 || errMsg.includes("Missing or insufficient permissions")) {
+        console.warn("[InvitationService] Admin SDK transaction hit PERMISSION_DENIED. Executing client-side fallback transaction...");
+        const { db: clientDb } = await import("../../lib/firebase");
+        const { runTransaction: clientRunTransaction, doc: clientDoc, serverTimestamp: clientServerTimestamp } = await import("firebase/firestore");
+        
+        await clientRunTransaction(clientDb, async (clientTx) => {
+          const inviteRef = clientDoc(clientDb, `invitations/${inviteId}`);
+          const userRef = clientDoc(clientDb, `users/${user.uid}`);
+          
+          const [inviteSnap] = await Promise.all([
+            clientTx.get(inviteRef)
+          ]);
+
+          if (!inviteSnap.exists()) throw new Error("INVITATION_NOT_FOUND");
+          const inviteData = inviteSnap.data()!;
+          if (inviteData.status !== "PENDING") throw new Error("INVITATION_NOT_PENDING");
+
+          const invitedEmail = String(inviteData.email || inviteData.normalizedEmail || "").toLowerCase().trim();
+          if (!invitedEmail || invitedEmail !== normalizedUserEmail) {
+            throw new Error("INVITATION_RECIPIENT_MISMATCH");
+          }
+
+          const targetRole = String(inviteData.role || "EMPLOYEE").trim().toUpperCase();
+          const businessId = String(inviteData.business_id || inviteData.businessId || "").trim();
+          if (!businessId) throw new Error("INVALID_INVITATION_TENANT");
+
+          acceptedBusinessId = businessId;
+          acceptedRole = targetRole;
+
+          const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
+          const membershipId = `${businessId}_${user.uid}`;
+          acceptedMembershipId = membershipId;
+
+          clientTx.update(inviteRef, {
+            status: "ACCEPTED",
+            acceptedAt: new Date().toISOString(),
+            acceptedByUid: user.uid,
+            updatedAt: clientServerTimestamp()
+          });
+
+          const employeeData = {
+            id: employeeId,
+            business_id: businessId,
+            businessId: businessId,
+            uid: user.uid,
+            firebase_uid: user.uid,
+            email: normalizedUserEmail,
+            normalizedEmail: normalizedUserEmail,
+            name: user.name,
+            role: targetRole,
+            status: "ACTIVE",
+            isActive: true,
+            createdAt: clientServerTimestamp(),
+            updatedAt: clientServerTimestamp()
+          };
+          clientTx.set(clientDoc(clientDb, `employees/${employeeId}`), employeeData);
+
+          const membershipData = {
+            id: membershipId,
+            uid: user.uid,
+            business_id: businessId,
+            businessId: businessId,
+            role: targetRole,
+            status: "ACTIVE",
+            joinedAt: clientServerTimestamp(),
+            updatedAt: clientServerTimestamp(),
+            employee_id: employeeId,
+            customClaimsSynced: false
+          };
+          clientTx.set(clientDoc(clientDb, `memberships/${membershipId}`), membershipData);
+
+          clientTx.set(
+            userRef,
+            {
+              business_id: businessId,
+              businessId: businessId,
+              employee_id: employeeId,
+              employeeId: employeeId,
+              role: targetRole,
+              account_status: "ACTIVE",
+              accountStatus: "ACTIVE",
+              onboarding_completed: true,
+              onboardingComplete: true,
+              customClaimsSynced: false,
+              updatedAt: clientServerTimestamp()
+            },
+            { merge: true }
+          );
+        });
+      } else {
+        throw adminErr;
+      }
+    }
 
     // 6. Update Custom Claims with sync state recording
     try {
