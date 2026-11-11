@@ -174,13 +174,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
     const correlationId = `prof_upd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     try {
-      // 1. Update Firestore Employee record if employee ID exists
-      if (targetEmpId) {
-        const empRef = doc(db, "employees", targetEmpId);
-        await updateDoc(empRef, updates);
-      }
-
-      // 2. Update Firestore User record if user UID exists
+      // 1. Primary Operation: Always update User Profile record (personal preferences)
       if (user?.uid) {
         const userRef = doc(db, "users", user.uid);
         await setDoc(userRef, {
@@ -192,6 +186,29 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
           notificationPreferences: updates.notificationPreferences,
           updatedAt: new Date().toISOString()
         }, { merge: true });
+      }
+
+      // 2. Secondary Operation: Attempt update of Employee record if targetEmpId exists
+      let empUpdateSuccess = false;
+      if (targetEmpId) {
+        try {
+          const empRef = doc(db, "employees", targetEmpId);
+          await updateDoc(empRef, {
+            phone: cleanPhone,
+            address: cleanAddress,
+            emergencyContactName: cleanEmergName,
+            emergencyContactPhone: cleanEmergPhone,
+            emergencyContactRelation: cleanEmergRel,
+            preferredLanguage: preferredLang,
+            timezone: timezone,
+            avatarUrl: selectedAvatar,
+            notificationPreferences: updates.notificationPreferences,
+            updatedAt: new Date().toISOString()
+          });
+          empUpdateSuccess = true;
+        } catch (empErr: any) {
+          console.warn(`[EditProfileModal] Secondary employee record update skipped or unauthorized:`, empErr?.message || empErr);
+        }
       }
 
       // 3. Sync i18n language preference across app
@@ -226,7 +243,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
         module: "IDENTITY",
         aggregate: "USER_PROFILE",
         type: "ProfileUpdated",
-        payload: { userId: actorUid, employeeId: targetEmpId, changes: updates }
+        payload: { userId: actorUid, employeeId: targetEmpId, changes: updates, empUpdateSuccess }
       }));
 
       // 6. Refresh Identity Context
@@ -234,10 +251,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
         await identityContext.refresh();
       }
 
-      toast.success("Profil mis à jour avec succès dans le SSOT !");
+      toast.success("Profil utilisateur mis à jour avec succès !");
       onClose();
     } catch (err: any) {
-      console.error("[EditProfileModal] Failed to update profile:", err);
+      console.error("[EditProfileModal] Failed to update user profile:", err);
       setErrorMsg("Erreur lors de l'enregistrement : " + (err.message || "Permissions insuffisantes"));
       toast.error("Échec de la mise à jour du profil");
     } finally {

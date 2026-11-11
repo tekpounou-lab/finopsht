@@ -110,6 +110,76 @@ export class InvitationService {
   }
 
   /**
+   * Retrieves public metadata for an invitation by ID or token.
+   * Returns only sanitized public display fields (no secrets, UIDs, or internal PII).
+   */
+  static async getInvitationPublicMetadata(tokenOrId: string): Promise<{
+    id: string;
+    businessId: string;
+    businessName: string;
+    role: string;
+    senderName: string;
+    status: string;
+    expiresAt?: string;
+    isExpired: boolean;
+  } | null> {
+    if (!tokenOrId) return null;
+    const db = this.getDb();
+    const cleanToken = String(tokenOrId).trim();
+
+    let inviteDoc = await db.doc(`invitations/${cleanToken}`).get();
+    if (!inviteDoc.exists) {
+      const snap = await db.collection("invitations").where("token", "==", cleanToken).limit(1).get();
+      if (!snap.empty) {
+        inviteDoc = snap.docs[0];
+      }
+    }
+
+    if (!inviteDoc.exists) {
+      return null;
+    }
+
+    const data = inviteDoc.data() || {};
+    const businessId = String(data.businessId || data.business_id || "");
+    const rawExpiry = data.expiresAt || data.expires_at;
+    let isExpired = false;
+    let expiresAtIso: string | undefined = undefined;
+
+    if (rawExpiry) {
+      const expiryMs = typeof rawExpiry?.toMillis === "function" ? rawExpiry.toMillis() : Date.parse(String(rawExpiry));
+      if (!Number.isNaN(expiryMs)) {
+        expiresAtIso = new Date(expiryMs).toISOString();
+        if (expiryMs < Date.now()) {
+          isExpired = true;
+        }
+      }
+    }
+
+    let businessName = "FINOPS Enterprise";
+    if (businessId) {
+      try {
+        const bizDoc = await db.doc(`businesses/${businessId}`).get();
+        if (bizDoc.exists) {
+          businessName = bizDoc.data()?.name || bizDoc.data()?.companyName || businessName;
+        }
+      } catch (e) {
+        // Fallback to default name safely
+      }
+    }
+
+    return {
+      id: inviteDoc.id,
+      businessId,
+      businessName,
+      role: String(data.role || "EMPLOYEE").toUpperCase(),
+      senderName: String(data.senderName || "Un administrateur"),
+      status: String(data.status || "PENDING").toUpperCase(),
+      expiresAt: expiresAtIso,
+      isExpired
+    };
+  }
+
+  /**
    * Accepts a pending invitation and creates employee/membership records.
    */
   static async acceptInvitation(
@@ -137,6 +207,7 @@ export class InvitationService {
 
     let acceptedBusinessId = "";
     let acceptedRole = "";
+    let acceptedMembershipId = "";
 
     await db.runTransaction(async (transaction) => {
       const inviteRef = db.doc(`invitations/${inviteId}`);
@@ -236,6 +307,7 @@ export class InvitationService {
 
       const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
       const membershipId = `${businessId}_${user.uid}`;
+      acceptedMembershipId = membershipId;
 
       // 1. Update Invitation
       transaction.update(inviteRef, {
@@ -273,7 +345,8 @@ export class InvitationService {
         status: "ACTIVE",
         joinedAt: now,
         updatedAt: now,
-        employee_id: employeeId
+        employee_id: employeeId,
+        customClaimsSynced: false
       };
       transaction.set(db.doc(`memberships/${membershipId}`), membershipData);
 
@@ -290,6 +363,7 @@ export class InvitationService {
           accountStatus: "ACTIVE",
           onboarding_completed: true,
           onboardingComplete: true,
+          customClaimsSynced: false,
           updatedAt: now
         },
         { merge: true }
@@ -308,13 +382,115 @@ export class InvitationService {
       });
     });
 
-    // 6. Update Custom Claims
+    // 6. Update Custom Claims with sync state recording
+    try {
+      const auth = getAdminAuth();
+      await auth.setCustomUserClaims(user.uid, {
+        business_id: acceptedBusinessId,
+        businessId: acceptedBusinessId,
+        role: acceptedRole
+      });
+
+      // Record successful claims sync in Firestore
+      const syncNow = FieldValue.serverTimestamp();
+      await Promise.all([
+        db.doc(`users/${user.uid}`).update({
+          customClaimsSynced: true,
+          customClaimsSyncedAt: syncNow,
+          customClaimsError: null
+        }),
+        db.doc(`memberships/${acceptedMembershipId}`).update({
+          customClaimsSynced: true,
+          customClaimsSyncedAt: syncNow,
+          customClaimsError: null
+        })
+      ]);
+    } catch (err: any) {
+      console.error("[InvitationService] Custom Claims sync failed after Firestore write:", err);
+      const errMessage = err?.message || String(err);
+      const syncNow = FieldValue.serverTimestamp();
+      await Promise.all([
+        db.doc(`users/${user.uid}`).update({
+          customClaimsSynced: false,
+          customClaimsError: errMessage,
+          customClaimsFailedAt: syncNow
+        }).catch(() => {}),
+        db.doc(`memberships/${acceptedMembershipId}`).update({
+          customClaimsSynced: false,
+          customClaimsError: errMessage,
+          customClaimsFailedAt: syncNow
+        }).catch(() => {})
+      ]);
+      throw new Error("CUSTOM_CLAIMS_SYNC_FAILED");
+    }
+  }
+
+  /**
+   * Idempotent reconciliation of Firebase Auth Custom Claims with Firestore User Profile / Membership.
+   */
+  static async reconcileCustomClaims(
+    targetUid: string,
+    actor: { uid: string; isSuperAdmin?: boolean }
+  ): Promise<{ success: boolean; businessId: string; role: string }> {
+    if (!targetUid || !actor?.uid) {
+      throw new Error("MISSING_RECONCILIATION_DETAILS");
+    }
+
+    if (!actor.isSuperAdmin && actor.uid !== targetUid) {
+      throw new Error("UNAUTHORIZED_RECONCILIATION_ATTEMPT");
+    }
+
+    const db = this.getDb();
+    const userDoc = await db.doc(`users/${targetUid}`).get();
+    if (!userDoc.exists) {
+      throw new Error("USER_PROFILE_NOT_FOUND");
+    }
+
+    const userData = userDoc.data() || {};
+    const businessId = String(userData.business_id || userData.businessId || "").trim();
+    const role = String(userData.role || "").trim().toUpperCase();
+
+    if (!businessId || isInvalidTenantId(businessId) || !role) {
+      throw new Error("NO_VALID_TENANT_MEMBERSHIP");
+    }
+
+    const membershipId = `${businessId}_${targetUid}`;
+    const memDoc = await db.doc(`memberships/${membershipId}`).get();
+    if (!memDoc.exists) {
+      throw new Error("MEMBERSHIP_RECORD_NOT_FOUND");
+    }
+
+    const memData = memDoc.data() || {};
+    if (memData.uid !== targetUid || (memData.business_id !== businessId && memData.businessId !== businessId)) {
+      throw new Error("TENANT_MEMBERSHIP_MISMATCH");
+    }
+
     const auth = getAdminAuth();
-    await auth.setCustomUserClaims(user.uid, {
-      business_id: acceptedBusinessId,
-      businessId: acceptedBusinessId,
-      role: acceptedRole
+    await auth.setCustomUserClaims(targetUid, {
+      business_id: businessId,
+      businessId: businessId,
+      role: role
     });
+
+    const now = FieldValue.serverTimestamp();
+    await Promise.all([
+      db.doc(`users/${targetUid}`).update({
+        customClaimsSynced: true,
+        customClaimsSyncedAt: now,
+        customClaimsError: null
+      }),
+      db.doc(`memberships/${membershipId}`).update({
+        customClaimsSynced: true,
+        customClaimsSyncedAt: now,
+        customClaimsError: null
+      })
+    ]);
+
+    return {
+      success: true,
+      businessId,
+      role
+    };
   }
 
   /**

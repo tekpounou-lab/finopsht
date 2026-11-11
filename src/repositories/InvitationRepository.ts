@@ -427,32 +427,37 @@ export const InvitationRepository = {
   },
 
   /**
-   * Finds an invitation by document ID or token
+   * Finds public metadata for an invitation by document ID or token via backend lookup API
    */
   async getByTokenOrCode(code: string): Promise<Invitation | null> {
     if (!code) return null;
     try {
       const trimmed = code.trim();
-      const directRef = doc(db, "invitations", trimmed);
-      const directSnap = await getDoc(directRef);
-      if (directSnap.exists()) {
-        const data = { id: directSnap.id, ...directSnap.data() } as Invitation;
-        if (data.status === "SENT" || data.status === "PENDING") {
-          return data;
-        }
-      }
-
-      const qToken = query(collection(db, "invitations"), where("token", "==", trimmed));
-      const snapToken = await getDocs(qToken);
-      if (!snapToken.empty) {
-        const data = { id: snapToken.docs[0].id, ...snapToken.docs[0].data() } as Invitation;
-        if (data.status === "SENT" || data.status === "PENDING") {
-          return data;
+      const response = await fetch(`/api/invitations/lookup?token=${encodeURIComponent(trimmed)}`);
+      if (response.ok) {
+        const body = await response.json();
+        if (body?.success && body?.invitation) {
+          const inv = body.invitation;
+          return {
+            id: inv.id,
+            business_id: inv.businessId,
+            businessId: inv.businessId,
+            companyName: inv.businessName,
+            role: inv.role,
+            senderName: inv.senderName,
+            status: inv.status,
+            expiresAt: inv.expiresAt,
+            email: "",
+            branchId: "",
+            departmentId: "",
+            invitedAt: inv.expiresAt || new Date().toISOString()
+          } as unknown as Invitation;
         }
       }
       return null;
     } catch (error) {
-      throw handleFirestoreError(error, OperationType.GET, "invitations");
+      console.warn("[InvitationRepository] Public lookup API warning:", error);
+      return null;
     }
   }
 };

@@ -528,119 +528,62 @@ export class EnterpriseIdentityOrchestrator {
   }
 
   /**
-   * Action: Accept an Invitation
+   * Action: Accept an Invitation via Backend API
    */
   static async acceptInvitation(invitationId: string, user: FirebaseUser): Promise<void> {
     const correlationId = `accept_inv_${Date.now()}`;
-    console.log(`[Orchestrator][${correlationId}] Accepting invitation ${invitationId}`);
+    console.log(`[Orchestrator][${correlationId}] Accepting invitation ${invitationId} via backend API`);
     
     try {
-      await runTransaction(db, async (transaction) => {
-        const invRef = doc(db, "invitations", invitationId);
-        // READS FIRST
-        const invSnap = await transaction.get(invRef);
-        if (!invSnap.exists()) throw new Error("Invitation introuvable.");
-        
-        const invitation = invSnap.data();
-        if (invitation.status === "ACCEPTED") {
-          console.info(`[Orchestrator][${correlationId}] Invitation ${invitationId} is already ACCEPTED. Proceeding idempotently.`);
-          return;
-        }
-        if (invitation.status !== "SENT" && invitation.status !== "PENDING") {
-          throw new Error("Cette invitation a déjà été expirée ou révoquée.");
-        }
-
-        const employeeId = invitation.employee_id || invitation.employeeId || `emp_${user.uid}`;
-        const empRef = doc(db, "employees", employeeId);
-        const userRef = doc(db, "users", user.uid);
-        const activeEmail = user.email ? user.email.toLowerCase().trim() : (invitation.email || "").toLowerCase().trim();
-
-        const empSnap = await transaction.get(empRef);
-        const userSnap = await transaction.get(userRef);
-        
-        const existingEmp = empSnap.exists() ? empSnap.data() : {
-          id: employeeId,
-          name: user.displayName || invitation.name || activeEmail.split("@")[0],
-          email: activeEmail,
-          normalizedEmail: activeEmail,
-          role: invitation.role || "EMPLOYEE",
-          business_id: invitation.business_id || invitation.businessId || "",
-          businessId: invitation.business_id || invitation.businessId || "",
-          status: "ACTIVE",
-          createdAt: new Date().toISOString()
-        };
-        const existingUser = userSnap.exists() ? userSnap.data() : {};
-
-        // WRITES AFTER ALL READS ARE COMPLETED
-        // 1. Update Invitation
-        transaction.update(invRef, cleanPayload({
-          status: "ACCEPTED",
-          acceptedAt: new Date().toISOString(),
-          email: activeEmail,
-          normalizedEmail: activeEmail,
-          employeeId: employeeId,
-          uid: user.uid,
-          updatedAt: new Date().toISOString()
-        }));
-
-        // 2. Activate Employee & record email_history
-        const empHistory = Array.from(new Set([
-          ...(Array.isArray(existingEmp.email_history) ? existingEmp.email_history : []),
-          (existingEmp.email || "").toLowerCase().trim(),
-          activeEmail
-        ])).filter(Boolean);
-
-        const targetBizId = invitation.business_id || invitation.businessId || existingEmp.business_id || existingEmp.businessId || "";
-
-        transaction.set(empRef, cleanPayload({
-          ...existingEmp,
-          id: employeeId,
-          status: "ACTIVE",
-          isActive: true,
-          email: activeEmail,
-          normalizedEmail: activeEmail,
-          email_history: empHistory,
-          uid: user.uid,
-          firebase_uid: user.uid,
-          businessId: targetBizId,
-          business_id: targetBizId,
-          role: invitation.role || existingEmp.role || "EMPLOYEE",
-          updatedAt: new Date().toISOString()
-        }), { merge: true });
-
-        // 3. Update User Profile
-        transaction.set(userRef, cleanPayload({
-          ...existingUser,
-          id: user.uid,
-          uid: user.uid,
-          email: activeEmail,
-          normalizedEmail: activeEmail,
-          employeeId: employeeId,
-          businessId: targetBizId,
-          businessStatus: "ACTIVE",
-          branchId: invitation.branchId || existingEmp.branchId || existingUser.branchId || "",
-          departmentId: invitation.departmentId || existingEmp.departmentId || existingUser.departmentId || "",
-          role: invitation.role || existingEmp.role || existingUser.role || "EMPLOYEE",
-          accountStatus: "ACTIVE",
-          onboardingComplete: true,
-          updatedAt: new Date().toISOString()
-        }), { merge: true });
-
-        // 4. Audit Log
-        const auditRef = doc(collection(db, "audit_logs"));
-        transaction.set(auditRef, cleanPayload({
-          businessId: targetBizId,
-          userId: user.uid,
-          action: "INVITATION_ACCEPTED",
-          details: { invitationId, employeeId, email: activeEmail },
-          timestamp: new Date().toISOString()
-        }));
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/invitations/accept", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          inviteId: invitationId,
+          user: {
+            uid: user.uid,
+            email: user.email,
+            name: user.displayName || (user.email ? user.email.split("@")[0] : "Collaborateur")
+          }
+        })
       });
 
-      // Evict caches to trigger immediate re-orchestration
+      if (!response.ok) {
+        let errorData: any = {};
+        try {
+          errorData = await response.json();
+        } catch (e) {}
+
+        const errCode = errorData.error || errorData.message || `HTTP_${response.status}`;
+
+        // Idempotent recovery check: If HTTP 409 (INVITATION_NOT_PENDING/EXPIRED) or HTTP 403 (TENANT_CONFLICT),
+        // verify if user was already bound to a business
+        if (response.status === 409 || response.status === 403) {
+          console.warn(`[Orchestrator][${correlationId}] Backend API returned ${response.status} (${errCode}). Checking idempotent membership state...`);
+          await user.getIdToken(true);
+          const activeSnapshot = await this.executeOrchestration(user);
+          if (activeSnapshot?.business?.id || activeSnapshot?.employee) {
+            console.log(`[Orchestrator][${correlationId}] Idempotent recovery verified: User is member of ${activeSnapshot.business?.id}`);
+            this.invalidateCache(user.uid);
+            return;
+          }
+        }
+
+        throw new Error(errorData.message || errorData.error || "Échec de l'acceptation de l'invitation.");
+      }
+
+      // Force refresh of ID token to pull newly assigned Custom Claims (business_id, role)
+      await user.getIdToken(true);
+
+      // Invalidate all identity caches to force fresh orchestration
       this.inFlightOrchestration.delete(user.uid);
-      sessionStorage.removeItem(`finops_identity_cache_${user.uid}`);
-      localStorage.removeItem(`finops_identity_cache_${user.uid}`);
+      this.invalidateCache(user.uid);
+      clearResilientCache();
+      console.log(`[Orchestrator][${correlationId}] Invitation ${invitationId} accepted successfully via backend API.`);
     } catch (e) {
       console.error(`[Orchestrator][${correlationId}] Accept failed:`, e);
       throw e;

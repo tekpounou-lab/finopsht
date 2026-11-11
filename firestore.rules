@@ -475,19 +475,24 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantScoped(getBusinessId(request.resource.data)) || 
         isTenantAdminOrManager(getBusinessId(request.resource.data))
       );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantScoped(getBusinessId(resource.data)) ||
         isTenantAdminOrManager(getBusinessId(resource.data)) ||
-        resource.data.get('firebase_uid', '') == request.auth.uid ||
-        resource.data.get('uid', '') == request.auth.uid ||
-        request.resource.data.get('uid', '') == request.auth.uid ||
-        resource.data.get('email', '').lower() == getAuthEmail().lower() ||
-        resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower() ||
-        (getAuthEmail() != '' && request.resource.data.get('email', '').lower() == getAuthEmail().lower())
+        (
+          (
+            resource.data.get('firebase_uid', '') == request.auth.uid ||
+            resource.data.get('uid', '') == request.auth.uid ||
+            (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
+            (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
+          ) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'businessId', 'business_id', 'role', 'permissions', 'salary', 'salary_base_htg',
+            'status', 'isActive', 'firebase_uid', 'uid', 'email', 'normalizedEmail',
+            'branchId', 'branch_id', 'departmentId', 'department_id'
+          ])
+        )
       );
       allow delete: if isSuperAdmin() || (
         isAuthenticated() && isTenantAdminOrManager(getBusinessId(resource.data))
@@ -496,20 +501,23 @@ service cloud.firestore {
 
     // === INVITATIONS ===
     match /invitations/{inviteId} {
-      allow read: if true; // Needed to validate token before signup
-      allow create: if isAuthenticated() && (isSuperAdmin() || isTenantScoped(getBusinessId(request.resource.data)) || isTenantAdminOrManager(getBusinessId(request.resource.data)));
+      allow get, list: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (getAuthEmail() != '' && (resource.data.get('email', '').lower() == getAuthEmail().lower() || resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())) ||
+        isTenantAdminOrManager(getBusinessId(resource.data))
+      );
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantAdminOrManager(getBusinessId(request.resource.data))
+      );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantAdminOrManager(getBusinessId(resource.data)) ||
-        (
-          (
-            resource.data.get('email', '').lower() == getAuthEmail().lower() ||
-            resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower()
-          ) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'uid', 'acceptedAt', 'updatedAt', 'user_id', 'userId'])
-        )
+        isTenantAdminOrManager(getBusinessId(resource.data))
       );
-      allow delete: if isAuthenticated() && (isSuperAdmin() || isTenantAdminOrManager(getBusinessId(resource.data)));
+      allow delete: if isAuthenticated() && (
+        isSuperAdmin() || 
+        isTenantAdminOrManager(getBusinessId(resource.data))
+      );
     }
 
     // === EXCHANGE RATES & DAILY RATE GRIDS ===

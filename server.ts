@@ -1387,6 +1387,42 @@ export async function createApp() {
     }
   });
 
+  // Public API endpoint: Pre-authentication Invitation Lookup
+  app.get("/api/invitations/lookup", async (req, res) => {
+    try {
+      const token = String(req.query.token || req.query.inviteId || "").trim();
+      if (!token) {
+        return res.status(400).json({ error: "MISSING_TOKEN", message: "Token or inviteId parameter is required." });
+      }
+
+      const invitation = await InvitationService.getInvitationPublicMetadata(token);
+      if (!invitation) {
+        return res.status(404).json({ error: "INVITATION_NOT_FOUND", message: "L'invitation demandée est introuvable." });
+      }
+
+      if (invitation.isExpired) {
+        return res.status(410).json({
+          error: "INVITATION_EXPIRED",
+          message: "Cette invitation a expiré.",
+          invitation
+        });
+      }
+
+      if (invitation.status !== "PENDING" && invitation.status !== "SENT") {
+        return res.status(409).json({
+          error: "INVITATION_ALREADY_CONSUMED",
+          message: "Cette invitation a déjà été utilisée ou annulée.",
+          invitation
+        });
+      }
+
+      res.json({ success: true, invitation });
+    } catch (error: any) {
+      console.error("[Invitation API] Lookup Error:", error);
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Erreur lors de la vérification de l'invitation." });
+    }
+  });
+
   // API endpoint: Accept Colleague Invitation
   app.post("/api/invitations/accept", authenticateIdentityOnly, async (req: AuthenticatedRequest, res) => {
     try {
@@ -1435,6 +1471,12 @@ export async function createApp() {
     } catch (error: any) {
       console.error("[Invitation API] Accept Error:", error);
       const msg = error?.message || "";
+      if (msg === "CUSTOM_CLAIMS_SYNC_FAILED") {
+        return res.status(502).json({
+          error: "CUSTOM_CLAIMS_SYNC_FAILED",
+          message: "Firestore profile created but Custom Claims sync failed. Reconciliation required."
+        });
+      }
       if (
         msg === "INVITATION_RECIPIENT_MISMATCH" ||
         msg === "FORBIDDEN_ROLE_ASSIGNMENT" ||
@@ -1451,6 +1493,38 @@ export async function createApp() {
         return res.status(409).json({ error: msg });
       }
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to accept invitation." });
+    }
+  });
+
+  // API endpoint: Reconcile Custom Claims for Logged-In User
+  app.post("/api/invitations/reconcile-claims", authenticateIdentityOnly, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
+      }
+
+      const { targetUid } = req.body || {};
+      const uidToReconcile = targetUid || req.user.uid;
+
+      if (!req.user.isSuperAdmin && uidToReconcile !== req.user.uid) {
+        return res.status(403).json({ error: "IDENTITY_SPOOFING_DETECTED", message: "Cannot reconcile claims for another user." });
+      }
+
+      const result = await InvitationService.reconcileCustomClaims(uidToReconcile, req.user);
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("[Invitation API] Claims Reconciliation Error:", error);
+      const msg = error?.message || "";
+      if (msg === "UNAUTHORIZED_RECONCILIATION_ATTEMPT" || msg === "TENANT_MEMBERSHIP_MISMATCH") {
+        return res.status(403).json({ error: msg });
+      }
+      if (msg === "USER_PROFILE_NOT_FOUND" || msg === "MEMBERSHIP_RECORD_NOT_FOUND") {
+        return res.status(404).json({ error: msg });
+      }
+      if (msg === "NO_VALID_TENANT_MEMBERSHIP") {
+        return res.status(400).json({ error: msg });
+      }
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Claims reconciliation failed." });
     }
   });
 
