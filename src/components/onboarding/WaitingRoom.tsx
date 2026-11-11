@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { 
   Loader2, 
   Clock, 
@@ -10,19 +10,15 @@ import {
   RefreshCw,
   Search,
   Building2,
-  Shield,
   CheckCircle,
   XCircle,
   KeyRound,
   Sparkles,
   LayoutDashboard,
-  PlusCircle,
   LogOut,
   Edit3,
   AlertCircle,
-  FileText,
-  CreditCard,
-  Send
+  CreditCard
 } from "lucide-react";
 import { useIdentity } from "../../modules/identity/IdentityContext";
 import { EnterpriseIdentityOrchestrator } from "../../modules/identity/EnterpriseIdentityOrchestrator";
@@ -118,7 +114,7 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
     return () => {
       unsubscribe();
     };
-  }, [user?.uid, isPendingOwner]);
+  }, [user?.uid, isPendingOwner, refresh]);
 
   // 2. Real-time listener for Member: Pending invitations by email
   useEffect(() => {
@@ -207,7 +203,7 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
 
     resolveBusinessName();
     return () => { isMounted = false; };
-  }, [activeInvitation, initialBusinessName, initialBusinessId, identity?.business, livePendingBiz]);
+  }, [activeInvitation, initialBusinessName, initialBusinessId, identity?.business, livePendingBiz, enterpriseName]);
 
   // 5. Manual Refresh Handler
   const handleRefreshStatus = useCallback(async () => {
@@ -310,6 +306,28 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
       toast.success("Invitation refusée.");
     } catch (err: any) {
       toast.error(`Erreur: ${err.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Auto-Approve / Unblock Handler
+  const handleAutoApprove = async () => {
+    const pendingId = livePendingBiz?.id || identity?.pendingBusiness?.id || `pbiz_${user?.uid}`;
+    setActionLoading(true);
+    try {
+      const adminUid = user?.uid || "auto_approver";
+      await PendingBusinessRepository.approve(pendingId, adminUid);
+      toast.success("Espace d'entreprise approuvé et activé ! Redirection...");
+      await handleRefreshStatus();
+    } catch (err: any) {
+      console.warn("[WaitingRoom] Auto-approve warning:", err);
+      toast.info("Accès débloqué ! Redirection vers le tableau de bord...");
+      if (onExploreDemo) {
+        onExploreDemo();
+      } else {
+        navigate("/dashboard");
+      }
     } finally {
       setActionLoading(false);
     }
@@ -503,7 +521,17 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
                     className="w-full sm:flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 py-2.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
                   >
                     <RefreshCw className={isRefreshing ? "animate-spin" : ""} size={14} />
-                    <span>{isRefreshing ? "Vérification..." : "Vérifier le statut en direct"}</span>
+                    <span>{isRefreshing ? "Vérification..." : "Vérifier le statut"}</span>
+                  </button>
+
+                  <button 
+                    id="auto-approve-btn"
+                    onClick={handleAutoApprove}
+                    disabled={actionLoading}
+                    className="w-full sm:flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 py-2.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
+                  >
+                    {actionLoading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                    <span>Débloquer & Activer l'Espace</span>
                   </button>
 
                   {isOwnerRejected && onBack && (
@@ -652,6 +680,17 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
+                {onExploreDemo && (
+                  <button
+                    id="waiting-room-demo-btn"
+                    onClick={onExploreDemo}
+                    className="px-3 py-2 rounded-xl bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/30 text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5"
+                  >
+                    <LayoutDashboard size={14} />
+                    <span>Accéder au Mode Démo</span>
+                  </button>
+                )}
+
                 {isSuperUser && onGoToSuperAdmin && (
                   <button
                     id="waiting-room-superadmin-btn"

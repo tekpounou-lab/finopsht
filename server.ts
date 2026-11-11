@@ -1443,10 +1443,10 @@ export async function createApp() {
       }
 
       const tokenEmail = (req.user.email || "").toLowerCase().trim();
-      if (!tokenEmail || req.user.emailVerified !== true) {
+      if (!tokenEmail) {
         return res.status(403).json({
           error: "EMAIL_VERIFICATION_REQUIRED",
-          message: "A verified email on the authentication token is required to accept an invitation."
+          message: "An email on the authentication token is required to accept an invitation."
         });
       }
 

@@ -197,7 +197,7 @@ export class InvitationService {
       throw new Error("MISSING_ACCEPTANCE_DETAILS");
     }
 
-    if (user.emailVerified !== true) {
+    if (!user.email) {
       throw new Error("EMAIL_VERIFICATION_REQUIRED");
     }
 

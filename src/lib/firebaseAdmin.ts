@@ -25,14 +25,31 @@ export function getAdminApp(): App {
     return getApp();
   }
 
-  const targetProjectId = firebaseConfig.projectId || process.env.GOOGLE_CLOUD_PROJECT || "tek-pou-nou-tpn";
+  const targetProjectId = firebaseConfig.projectId || process.env.GOOGLE_CLOUD_PROJECT || "finopsht";
   const options: AppOptions = {
     projectId: targetProjectId,
   };
 
+  const isCloudRun = Boolean(process.env.K_SERVICE) && !process.env.K_SERVICE.startsWith("ais-");
+
+  // In Cloud Run (K_SERVICE is set for production deployment), strictly enforce Application Default Credentials (ADC)
+  if (isCloudRun) {
+    try {
+      options.credential = applicationDefault();
+      console.log(`[Firebase Admin] Cloud Run environment detected (K_SERVICE=${process.env.K_SERVICE}): Enforcing Application Default Credentials (ADC) for project: ${targetProjectId}`);
+    } catch (err: any) {
+      console.error("[Firebase Admin] Fatal: Failed initializing Application Default Credentials (ADC) in Cloud Run:", err?.message || String(err));
+      throw new Error(`ADC_INITIALIZATION_FAILED: Cloud Run runtime failed to load Application Default Credentials for project ${targetProjectId}. Verify attached service account and IAM permissions.`);
+    }
+
+    adminApp = initializeApp(options);
+    console.log(`[Firebase Admin] App initialized successfully in Cloud Run for project: ${targetProjectId}`);
+    return adminApp;
+  }
+
   let credentialLoaded = false;
 
-  // 1. Check GOOGLE_APPLICATION_CREDENTIALS env var
+  // 1. Check GOOGLE_APPLICATION_CREDENTIALS env var (local dev only)
   const envCredPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (envCredPath) {
     const resolvedPath = path.isAbsolute(envCredPath) ? envCredPath : path.resolve(process.cwd(), envCredPath);
@@ -40,9 +57,13 @@ export function getAdminApp(): App {
       try {
         const keyData = JSON.parse(fs.readFileSync(resolvedPath, "utf-8"));
         if (keyData.type === "service_account" && keyData.private_key) {
-          options.credential = cert(keyData);
-          credentialLoaded = true;
-          console.log(`[Firebase Admin] Loaded credentials from GOOGLE_APPLICATION_CREDENTIALS: ${resolvedPath}`);
+          if (keyData.project_id && keyData.project_id !== targetProjectId) {
+            console.warn(`[Firebase Admin] Skipping GOOGLE_APPLICATION_CREDENTIALS file: project_id mismatch (${keyData.project_id} !== ${targetProjectId})`);
+          } else {
+            options.credential = cert(keyData);
+            credentialLoaded = true;
+            console.log(`[Firebase Admin] Loaded credentials from GOOGLE_APPLICATION_CREDENTIALS: ${resolvedPath}`);
+          }
         }
       } catch (err) {
         console.warn(`[Firebase Admin] Failed reading GOOGLE_APPLICATION_CREDENTIALS file ${resolvedPath}:`, err);
@@ -50,7 +71,7 @@ export function getAdminApp(): App {
     }
   }
 
-  // 2. Check FIREBASE_SERVICE_ACCOUNT_KEY env var (raw JSON string or base64)
+  // 2. Check FIREBASE_SERVICE_ACCOUNT_KEY env var (local dev only, raw JSON string or base64)
   if (!credentialLoaded && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     try {
       let raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim();
@@ -59,20 +80,23 @@ export function getAdminApp(): App {
       }
       const keyData = JSON.parse(raw);
       if (keyData.type === "service_account" && keyData.private_key) {
-        options.credential = cert(keyData);
-        credentialLoaded = true;
-        console.log("[Firebase Admin] Loaded credentials from FIREBASE_SERVICE_ACCOUNT_KEY env variable");
+        if (keyData.project_id && keyData.project_id !== targetProjectId) {
+          console.warn(`[Firebase Admin] Skipping FIREBASE_SERVICE_ACCOUNT_KEY: project_id mismatch (${keyData.project_id} !== ${targetProjectId})`);
+        } else {
+          options.credential = cert(keyData);
+          credentialLoaded = true;
+          console.log("[Firebase Admin] Loaded credentials from FIREBASE_SERVICE_ACCOUNT_KEY env variable");
+        }
       }
     } catch (err) {
       console.warn("[Firebase Admin] Failed parsing FIREBASE_SERVICE_ACCOUNT_KEY env var:", err);
     }
   }
 
-  // 3. Check for local workspace service account files
+  // 3. Check for local workspace service account files (local dev only)
   if (!credentialLoaded) {
     const candidates = [
       path.resolve(process.cwd(), "service-account-key.json"),
-      path.resolve(process.cwd(), "tek-pou-nou-tpn-firebase-adminsdk-fbsvc-8987873e95.json"),
       ...fs.readdirSync(process.cwd())
         .filter(f => f.endsWith(".json") && (f.includes("firebase-adminsdk") || f.includes("service-account")))
         .map(f => path.resolve(process.cwd(), f))
@@ -83,6 +107,11 @@ export function getAdminApp(): App {
         try {
           const keyData = JSON.parse(fs.readFileSync(keyPath, "utf-8"));
           if (keyData.type === "service_account" && keyData.private_key) {
+            // Guard: Only load local keys if project_id matches targetProjectId
+            if (keyData.project_id && keyData.project_id !== targetProjectId) {
+              console.warn(`[Firebase Admin] Skipping local key file ${path.basename(keyPath)}: project_id mismatch (${keyData.project_id} !== ${targetProjectId})`);
+              continue;
+            }
             options.credential = cert(keyData);
             credentialLoaded = true;
             console.log(`[Firebase Admin] Loaded service account credential from: ${path.basename(keyPath)}`);
@@ -111,20 +140,16 @@ export function getAdminApp(): App {
 }
 
 /**
- * Returns the Firestore Admin instance bound to the target project and database.
+ * Returns the Firestore Admin instance bound exclusively to the target project and database.
+ * Strictly uses Firebase Admin SDK without client fallback.
  */
 export function getAdminFirestore(): Firestore {
   const app = getAdminApp();
   const dbId = firebaseConfig.firestoreDatabaseId;
-  try {
-    if (dbId && dbId !== "YOUR_FIRESTORE_DATABASE_ID" && dbId !== "(default)") {
-      return getFirestore(app, dbId);
-    }
-    return getFirestore(app);
-  } catch (e) {
-    console.warn("[Firebase Admin] Custom database binding fallback:", e);
-    return getFirestore(app);
+  if (dbId && dbId !== "YOUR_FIRESTORE_DATABASE_ID" && dbId !== "(default)") {
+    return getFirestore(app, dbId);
   }
+  return getFirestore(app);
 }
 
 /**

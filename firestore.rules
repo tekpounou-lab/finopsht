@@ -512,6 +512,7 @@ service cloud.firestore {
       );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
+        (getAuthEmail() != '' && (resource.data.get('email', '').lower() == getAuthEmail().lower() || resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())) ||
         isTenantAdminOrManager(getBusinessId(resource.data))
       );
       allow delete: if isAuthenticated() && (

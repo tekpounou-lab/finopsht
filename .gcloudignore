@@ -1,0 +1,34 @@
+# .gcloudignore — FINOPS ERP Cloud Build Packaging Rules
+# Excludes development artifacts, local keys, and temporary files from Cloud Run build context.
+
+.gcloudignore
+.git/
+.cache/
+node_modules/
+dist/
+coverage/
+scratch/
+.aistudio/
+
+# Mandatory P0 Isolation: Service account keys and private credentials
+*-firebase-adminsdk-*.json
+service-account*.json
+tek-pou-nou-tpn-*.json
+
+# Environment variables containing secrets
+.env
+.env.*
+!.env.example
+
+# Temporary scripts and reports
+test-*.js
+patch*.cjs
+fix*.cjs
+*.log
+*.debug.log
+phase3_cleanup_report_*.json
+
+# Documentation
+/docs/
+*.md
+!README.md

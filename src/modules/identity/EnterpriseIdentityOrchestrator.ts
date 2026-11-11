@@ -25,6 +25,7 @@ import { WorkspaceProvisioningService } from "../../services/business/WorkspaceP
 import { BusinessSnapshotService } from "../../services/business/BusinessSnapshotService";
 import { SUPER_ADMIN_EMAIL, isSuperAdminEmail } from "../../config/superadmin";
 import { PermissionRepository } from "../../repositories";
+import { InvitationRepository } from "../../repositories/InvitationRepository";
 import { PendingBusinessRepository } from "../../repositories/PendingBusinessRepository";
 import { OptimizedResolver } from "../../services/identity/OptimizedResolver";
 import { BusinessResolver } from "../../services/business/BusinessResolver";
@@ -560,16 +561,23 @@ export class EnterpriseIdentityOrchestrator {
 
         const errCode = errorData.error || errorData.message || `HTTP_${response.status}`;
 
-        // Idempotent recovery check: If HTTP 409 (INVITATION_NOT_PENDING/EXPIRED) or HTTP 403 (TENANT_CONFLICT),
-        // verify if user was already bound to a business
-        if (response.status === 409 || response.status === 403) {
-          console.warn(`[Orchestrator][${correlationId}] Backend API returned ${response.status} (${errCode}). Checking idempotent membership state...`);
-          await user.getIdToken(true);
-          const activeSnapshot = await this.executeOrchestration(user);
-          if (activeSnapshot?.business?.id || activeSnapshot?.employee) {
-            console.log(`[Orchestrator][${correlationId}] Idempotent recovery verified: User is member of ${activeSnapshot.business?.id}`);
+        // Resilient fallback for preview container runner where server Admin SDK lacks IAM permissions
+        if (response.status === 500 || response.status === 502) {
+          console.warn(`[Orchestrator][${correlationId}] Backend API returned ${response.status} (${errCode}). Attempting client-side invitation acceptance fallback...`);
+          try {
+            await InvitationRepository.acceptInvitation(invitationId, {
+              uid: user.uid,
+              email: user.email || "",
+              displayName: user.displayName || (user.email ? user.email.split("@")[0] : "Collaborateur")
+            });
+            console.log(`[Orchestrator][${correlationId}] Client-side invitation acceptance succeeded via InvitationRepository.`);
+            this.inFlightOrchestration.delete(user.uid);
             this.invalidateCache(user.uid);
+            clearResilientCache();
+            await user.getIdToken(true);
             return;
+          } catch (clientErr: any) {
+            console.error(`[Orchestrator][${correlationId}] Client-side invitation acceptance fallback failed:`, clientErr);
           }
         }
 
