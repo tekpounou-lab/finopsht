@@ -191,7 +191,12 @@ export const TENANT_ERP_CAPABILITIES = new Set([
   "audit.read",
   "view_reports",
   "export_reports",
-  "view_dashboard"
+  "view_dashboard",
+
+  // Cash & Till Operations
+  "cash.view",
+  "cash.operate",
+  "cash.transfer"
 ]);
 
 export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, boolean>> = {
@@ -395,6 +400,26 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     aicfo: false,
     employeespace: true,
     settings: false
+  },
+  HEAD_TELLER: {
+    cash_management: true, cash: true, operations: true,
+    attendance: true, planning: true, leave: true, documents: true, employeespace: true
+  },
+  SENIOR_TELLER: {
+    cash_management: true, cash: true, operations: true,
+    attendance: true, planning: true, documents: true, employeespace: true
+  },
+  JUNIOR_TELLER: {
+    cash_management: true, cash: true, operations: true,
+    attendance: true, planning: true, documents: true, employeespace: true
+  },
+  TELLER: {
+    cash_management: true, cash: true, operations: true,
+    attendance: true, planning: true, documents: true, employeespace: true
+  },
+  AUDITOR: {
+    accounting: true, ledger: true, bi: true, aicfo: true,
+    cash_management: true, cash: true, operations: true, documents: true, employeespace: true
   }
 };
 
@@ -679,7 +704,18 @@ class PermissionServiceClass {
         // Security Logs Audit
         case "security.view":
         case "audit.read":
-          result = this.permissions.includes("view_audit_logs") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO"].includes(this.activeRole || "");
+          result = this.permissions.includes("view_audit_logs") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "AUDITOR"].includes(this.activeRole || "");
+          break;
+
+        // Cash & Till Operations
+        case "cash.view":
+          result = this.permissions.includes("cash.view") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "cash_management");
+          break;
+        case "cash.operate":
+          result = (this.permissions.includes("cash.operate") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+          break;
+        case "cash.transfer":
+          result = (this.permissions.includes("cash.transfer") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
           break;
 
         default:
@@ -817,16 +853,16 @@ class PermissionServiceClass {
 
     // 7. Canonical ERP Role Defaults
     const defaultAllowedRoles: Record<string, string[]> = {
-      bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      personnel: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      organization: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"],
-      leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "SUPERVISOR"],
-      attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "SUPERVISOR"],
-      payroll: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      ledger: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      accounting: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+      bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "AUDITOR"],
+      personnel: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
+      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
+      organization: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER"],
+      planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "TEAM_LEADER", "HR_MANAGER", "EMPLOYEE"],
+      leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      payroll: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER"],
+      ledger: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+      accounting: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
       crm: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
       leads: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
       prospects: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
@@ -834,7 +870,7 @@ class PermissionServiceClass {
       invoices: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
       invoice_template: ["SUPER_ADMIN", "OWNER", "ADMIN"],
       invoiceTemplate: ["SUPER_ADMIN", "OWNER", "ADMIN"],
-      documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+      documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
       forensic: ["SUPER_ADMIN"],
       health: ["SUPER_ADMIN"],
       system_health: ["SUPER_ADMIN"],
@@ -843,9 +879,12 @@ class PermissionServiceClass {
       dlq: ["SUPER_ADMIN"],
       recovery: ["SUPER_ADMIN"],
       disaster_recovery: ["SUPER_ADMIN"],
-      aicfo: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      employeespace: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE"],
-      settings: ["SUPER_ADMIN", "OWNER", "ADMIN"]
+      aicfo: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "AUDITOR"],
+      employeespace: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      settings: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+      cash_management: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
+      cash: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
+      operations: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"]
     };
 
     const allowed = defaultAllowedRoles[modLower] || ["SUPER_ADMIN", "OWNER", "ADMIN"];

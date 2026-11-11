@@ -301,30 +301,53 @@ export const PermissionRepository = {
       OWNER: [
         "view_dashboard", "read_bi", "manage_settings", "manage_employees", "invite_employees",
         "manage_payroll", "lock_payroll", "view_ledger", "write_ledger", "view_documents",
-        "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs"
+        "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs",
+        "cash.view", "cash.operate", "cash.transfer"
+      ],
+      ADMIN: [
+        "view_dashboard", "read_bi", "manage_settings", "manage_employees", "invite_employees",
+        "manage_payroll", "view_ledger", "write_ledger", "view_documents",
+        "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs",
+        "cash.view", "cash.operate", "cash.transfer"
       ],
       DIRECTOR: [
         "view_dashboard", "read_bi", "manage_employees", "manage_payroll", "view_ledger",
-        "view_documents", "manage_leaves", "view_employee_space", "use_aicfo"
+        "view_documents", "manage_leaves", "view_employee_space", "use_aicfo", "cash.view"
       ],
       MANAGER: [
         "view_dashboard", "manage_employees", "invite_employees", "manage_payroll", "view_ledger",
-        "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "use_aicfo"
+        "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "use_aicfo",
+        "cash.view", "cash.operate", "cash.transfer"
       ],
       SUPERVISOR: [
-        "view_dashboard", "manage_employees", "view_documents", "manage_leaves", "view_employee_space", "override_attendance"
+        "view_dashboard", "manage_employees", "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "cash.view"
       ],
       HR_MANAGER: [
-        "manage_employees", "invite_employees", "manage_leaves", "view_documents", "view_employee_space"
+        "view_dashboard", "manage_employees", "invite_employees", "manage_leaves", "view_documents", "view_employee_space"
       ],
       ACCOUNTANT: [
-        "view_ledger", "write_ledger", "view_documents", "view_employee_space"
+        "view_dashboard", "view_ledger", "write_ledger", "view_documents", "view_employee_space", "cash.view"
       ],
       PAYROLL_MANAGER: [
-        "manage_payroll", "lock_payroll", "view_documents", "view_employee_space"
+        "view_dashboard", "manage_payroll", "lock_payroll", "view_documents", "view_employee_space"
       ],
       TEAM_LEADER: [
-        "manage_leaves", "override_attendance", "view_employee_space"
+        "view_dashboard", "manage_leaves", "override_attendance", "view_employee_space"
+      ],
+      HEAD_TELLER: [
+        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "view_documents", "view_employee_space", "override_attendance"
+      ],
+      SENIOR_TELLER: [
+        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "view_documents", "view_employee_space"
+      ],
+      JUNIOR_TELLER: [
+        "view_dashboard", "cash.view", "cash.operate", "view_documents", "view_employee_space"
+      ],
+      TELLER: [
+        "view_dashboard", "cash.view", "cash.operate", "view_documents", "view_employee_space"
+      ],
+      AUDITOR: [
+        "view_dashboard", "read_bi", "view_ledger", "view_documents", "view_audit_logs", "cash.view", "view_employee_space", "use_aicfo"
       ],
       EMPLOYEE: [
         "view_employee_space", "view_documents", "request_leaves", "log_attendance"
@@ -334,8 +357,13 @@ export const PermissionRepository = {
       ]
     };
 
+    const upperRole = (role || "").toUpperCase();
+    if (!defaultPermissionsMap[upperRole]) {
+      return []; // Unknown or invalid roles are granted ZERO permissions (defense-in-depth)
+    }
+
     if (!business_id || !auth.currentUser) {
-      return defaultPermissionsMap[role.toUpperCase()] || defaultPermissionsMap.GUEST;
+      return defaultPermissionsMap[upperRole];
     }
 
     try {

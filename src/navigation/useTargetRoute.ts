@@ -76,14 +76,14 @@ export function resolveTargetRoute(params: {
       };
 
     case "OWNER_ACTIVE":
-      if (role && role !== "OWNER") {
+      if (role && role !== "OWNER" && role !== "ADMIN") {
         console.warn(`[NavigationInvariant] Contradiction: flowState is OWNER_ACTIVE but role is ${role}`);
       }
       return {
         targetPath: "/dashboard",
-        reason: "Active Business Owner workspace",
+        reason: "Active Business Owner / Admin workspace",
         isProtected: true,
-        requiredRole: "OWNER"
+        requiredRole: role || "OWNER"
       };
 
     case "MANAGER_ACTIVE":
@@ -109,6 +109,23 @@ export function resolveTargetRoute(params: {
       };
 
     case "EMPLOYEE_ACTIVE":
+      const upperRole = (role || "").toUpperCase();
+      if (["HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(upperRole)) {
+        return {
+          targetPath: "/dashboard",
+          reason: "Active Teller operational workspace",
+          isProtected: true,
+          requiredRole: (role as Role) || "TELLER"
+        };
+      }
+      if (upperRole === "AUDITOR") {
+        return {
+          targetPath: "/dashboard",
+          reason: "Active Auditor read-only workspace",
+          isProtected: true,
+          requiredRole: "AUDITOR"
+        };
+      }
       if (role && role !== "EMPLOYEE") {
         console.warn(`[NavigationInvariant] Contradiction: flowState is EMPLOYEE_ACTIVE but role is ${role}`);
       }
