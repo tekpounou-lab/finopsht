@@ -6,16 +6,17 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 
 interface ExecutiveAlertCenterProps {
   snapshot: AnalyticsSnapshot | null;
+  currency?: string;
 }
 
-const ExecutiveAlertCenterComponent: React.FC<ExecutiveAlertCenterProps> = ({ snapshot }) => {
+const ExecutiveAlertCenterComponent: React.FC<ExecutiveAlertCenterProps> = ({ snapshot, currency = "HTG" }) => {
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<Record<string, boolean>>({});
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_ALERT_CENTER", snapshot);
 
   const alerts: ExecutiveAlert[] = React.useMemo(() => {
     if (!stabilizedSnapshot) return [];
-    return ExecutiveAlertEngine.generateAlerts(stabilizedSnapshot);
-  }, [stabilizedSnapshot]);
+    return ExecutiveAlertEngine.generateAlerts(stabilizedSnapshot, currency);
+  }, [stabilizedSnapshot, currency]);
 
   const activeAlerts = alerts.filter(
     (a) => a.severity !== "INFO" && !acknowledgedAlerts[a.description]
@@ -93,5 +94,7 @@ const ExecutiveAlertCenterComponent: React.FC<ExecutiveAlertCenterProps> = ({ sn
 
 export const ExecutiveAlertCenter = React.memo(
   ExecutiveAlertCenterComponent,
-  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+  (prev, next) =>
+    prev.currency === next.currency &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );

@@ -261,9 +261,13 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
   }, []);
 
   const setAccountingBasis = useCallback((basis: "CASH" | "ACCRUAL") => {
-    updateFilter("accountingBasis", basis);
-    updateFilter("accountingMode", basis);
-  }, [updateFilter]);
+    setFilters((prev) => {
+      if (prev.accountingBasis === basis && prev.accountingMode === basis) return prev;
+      setFilterVersion((v) => v + 1);
+      return { ...prev, accountingBasis: basis, accountingMode: basis };
+    });
+    setPendingFilter(null);
+  }, []);
 
   const setPresentationMode = useCallback((mode: "SIMPLIFIED" | "EXPERT") => {
     updateFilter("presentationMode", mode);

@@ -6,16 +6,17 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 
 interface ExecutiveActionsChecklistProps {
   snapshot: AnalyticsSnapshot | null;
+  currency?: string;
 }
 
-const ExecutiveActionsChecklistComponent: React.FC<ExecutiveActionsChecklistProps> = ({ snapshot }) => {
+const ExecutiveActionsChecklistComponent: React.FC<ExecutiveActionsChecklistProps> = ({ snapshot, currency = "HTG" }) => {
   const [completedActions, setCompletedActions] = useState<Record<string, boolean>>({});
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_ACTIONS_CHECKLIST", snapshot);
 
   const recommendations: ActionableRecommendation[] = React.useMemo(() => {
     if (!stabilizedSnapshot) return [];
-    return ExecutiveRecommendationEngine.generateRecommendations(stabilizedSnapshot);
-  }, [stabilizedSnapshot]);
+    return ExecutiveRecommendationEngine.generateRecommendations(stabilizedSnapshot, currency);
+  }, [stabilizedSnapshot, currency]);
 
   const toggleAction = (title: string) => {
     setCompletedActions((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -97,5 +98,7 @@ const ExecutiveActionsChecklistComponent: React.FC<ExecutiveActionsChecklistProp
 
 export const ExecutiveActionsChecklist = React.memo(
   ExecutiveActionsChecklistComponent,
-  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+  (prev, next) =>
+    prev.currency === next.currency &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );

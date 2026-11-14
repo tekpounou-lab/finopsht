@@ -15,7 +15,7 @@ export class ExecutiveScoreEngine {
   /**
    * Calculates the 8 corporate scorecards based strictly on the snapshot metrics.
    */
-  static calculateScorecards(snapshot: AnalyticsSnapshot): ScorecardMetric[] {
+  static calculateScorecards(snapshot: AnalyticsSnapshot, currency: string = "HTG"): ScorecardMetric[] {
     const scorecards: ScorecardMetric[] = [];
 
     const rev = snapshot.revenue.currentValue;
@@ -134,7 +134,7 @@ export class ExecutiveScoreEngine {
       "Cash Flow Security",
       cashScore,
       snapshot.cashOnHand.trend as "UP" | "DOWN" | "STABLE",
-      `Evaluates liquid reserve viability (${cash.toLocaleString()} HTG) against current operational spending.`,
+      `Evaluates liquid reserve viability (${cash.toLocaleString()} ${currency}) against current operational spending.`,
       cashScore > 75 ? "LOW" : cashScore > 50 ? "MEDIUM" : "HIGH",
       cashScore > 75 ? "Reserves are in perfect safety zones." : "Expedite accounts receivable, pause secondary capital expenses, and preserve liquidity."
     ));

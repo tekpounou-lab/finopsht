@@ -5,9 +5,10 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 
 interface ExecutiveHealthGaugeProps {
   snapshot: AnalyticsSnapshot | null;
+  currency?: string;
 }
 
-const ExecutiveHealthGaugeComponent: React.FC<ExecutiveHealthGaugeProps> = ({ snapshot }) => {
+const ExecutiveHealthGaugeComponent: React.FC<ExecutiveHealthGaugeProps> = ({ snapshot, currency = "HTG" }) => {
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_HEALTH_GAUGE", snapshot);
 
   const healthScore = React.useMemo(() => {
@@ -15,11 +16,11 @@ const ExecutiveHealthGaugeComponent: React.FC<ExecutiveHealthGaugeProps> = ({ sn
     if (stabilizedSnapshot.businessHealthScore !== undefined) {
       return stabilizedSnapshot.businessHealthScore;
     }
-    const scorecards = ExecutiveScoreEngine.calculateScorecards(stabilizedSnapshot);
+    const scorecards = ExecutiveScoreEngine.calculateScorecards(stabilizedSnapshot, currency);
     if (!scorecards || scorecards.length === 0) return 0;
     const total = scorecards.reduce((acc, curr) => acc + curr.score, 0);
     return Math.round(total / scorecards.length);
-  }, [stabilizedSnapshot]);
+  }, [stabilizedSnapshot, currency]);
 
   const status = React.useMemo(() => {
     if (healthScore >= 80)
@@ -107,7 +108,12 @@ const ExecutiveHealthGaugeComponent: React.FC<ExecutiveHealthGaugeProps> = ({ sn
       <div className="mt-4 pt-4 border-t border-slate-800/80">
         <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
           Votre entreprise indique une note de santé globale de{" "}
-          <strong>{healthScore}%</strong>. Les dépenses d'exploitation restent maîtrisées et le taux d'assiduité est optimal.
+          <strong>{healthScore}%</strong>.{" "}
+          {healthScore >= 60
+            ? "Les indicateurs financiers et opérationnels restent dans les tolérances cibles."
+            : healthScore > 0
+            ? "Une attention exécutive est requise sur les marges, la trésorerie ou l'assiduité."
+            : "Aucune activité exploitable détectée sur cette période."}
         </p>
       </div>
     </div>
@@ -116,6 +122,8 @@ const ExecutiveHealthGaugeComponent: React.FC<ExecutiveHealthGaugeProps> = ({ sn
 
 export const ExecutiveHealthGauge = React.memo(
   ExecutiveHealthGaugeComponent,
-  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+  (prev, next) =>
+    prev.currency === next.currency &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );
 

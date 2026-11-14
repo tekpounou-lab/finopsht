@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { useAnalytics } from "../../domains/analytics/context/AnalyticsContext";
+import { useExecutiveFilters } from "../../domains/analytics/context/ExecutiveFilterContext";
 import { useBusinessContext } from "../../contexts/BusinessContext";
 import { SmartKPICard } from "../../domains/analytics/components/SmartKPICard";
 import { ExecutiveActionsChecklist } from "./ExecutiveActionsChecklist";
@@ -18,9 +19,13 @@ import { RefreshCw } from "lucide-react";
 
 export const ExecutiveIntelligenceCenter: React.FC = () => {
   const { snapshot, employees, loading } = useAnalytics();
-  const { businessSettings, ledgerTransactions, attendanceRecords } = useBusinessContext();
+  const { filters } = useExecutiveFilters();
+  const { businessSettings, branches } = useBusinessContext();
 
   const activeSnapshot = snapshot;
+  const activeCurrency = filters.currency || "HTG";
+  const accountingBasis: "CASH" | "ACCRUAL" = filters.accountingBasis || filters.accountingMode || "CASH";
+  const isCashBasis = accountingBasis === "CASH";
 
   const effectiveRevenue = useMemo(() => {
     if (activeSnapshot?.revenue?.currentValue !== undefined) {
@@ -30,12 +35,12 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
   }, [activeSnapshot?.revenue?.currentValue]);
 
   const effectiveExpenses = useMemo(() => {
-    const snapVal = (activeSnapshot?.operationalExpenses || activeSnapshot?.expenses)?.currentValue;
+    const snapVal = (activeSnapshot?.totalExpenses || activeSnapshot?.expenses || activeSnapshot?.operationalExpenses)?.currentValue;
     if (snapVal !== undefined) {
       return snapVal;
     }
     return null;
-  }, [activeSnapshot?.operationalExpenses, activeSnapshot?.expenses]);
+  }, [activeSnapshot?.totalExpenses, activeSnapshot?.expenses, activeSnapshot?.operationalExpenses]);
 
   const effectiveProfit = useMemo(() => {
     if (activeSnapshot?.profit?.currentValue !== undefined) {
@@ -56,6 +61,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
       console.debug("[ExecutiveIntelligenceCenter] Rendered snapshot metrics:", {
         generatedAt: activeSnapshot.generatedAt,
         period: activeSnapshot.period,
+        accountingBasis,
         customRange: activeSnapshot.customRange,
         revenue: activeSnapshot.revenue.currentValue,
         expenses: activeSnapshot.expenses.currentValue,
@@ -65,7 +71,7 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
         activeStaff: activeSnapshot.activeStaff.currentValue,
       });
     }
-  }, [activeSnapshot]);
+  }, [activeSnapshot, accountingBasis]);
 
   const isSocialTaxEnabled = useMemo(() => {
     if (businessSettings?.payroll_policies?.enableTaxes !== undefined) return Boolean(businessSettings.payroll_policies.enableTaxes);
@@ -84,42 +90,44 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
     );
   }
 
+  const expensesMetric = activeSnapshot?.totalExpenses || activeSnapshot?.expenses || activeSnapshot?.operationalExpenses;
+
   return (
     <div className="space-y-6 bg-slate-950/40 p-6 rounded-2xl border border-slate-800/80 shadow-2xl backdrop-blur-sm" id="executive-intelligence-center">
       {/* HEADER KPI GRID */}
       {activeSnapshot && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <SmartKPICard
-            title="Chiffre d'Affaires Brut"
+            title={isCashBasis ? "Encaissements (Cash)" : "Chiffre d'Affaires Brut"}
             currentValue={effectiveRevenue}
             previousValue={activeSnapshot.revenue.previousValue}
             difference={activeSnapshot.revenue.difference}
             percentage={activeSnapshot.revenue.differencePercentage}
             trend={activeSnapshot.revenue.trend}
             direction={activeSnapshot.revenue.direction}
-            unit="HTG"
+            unit={activeCurrency}
             status={effectiveRevenue !== null && effectiveRevenue > 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
-            title="Dépenses d'Exploitation"
+            title={isCashBasis ? "Décaissements Totaux" : "Dépenses Totales"}
             currentValue={effectiveExpenses}
-            previousValue={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).previousValue}
-            difference={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).difference}
-            percentage={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).differencePercentage}
-            trend={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).trend}
-            direction={(activeSnapshot.operationalExpenses || activeSnapshot.expenses).direction}
-            unit="HTG"
+            previousValue={expensesMetric?.previousValue ?? null}
+            difference={expensesMetric?.difference ?? null}
+            percentage={expensesMetric?.differencePercentage ?? null}
+            trend={expensesMetric?.trend || "STABLE"}
+            direction={expensesMetric?.direction || "NEUTRAL"}
+            unit={activeCurrency}
             status={effectiveExpenses !== null && effectiveExpenses > 0 ? "Healthy" : "Warning"}
           />
           <SmartKPICard
-            title="Bénéfice Net"
+            title={isCashBasis ? "Résultat de Trésorerie" : "Bénéfice Net"}
             currentValue={effectiveProfit}
             previousValue={activeSnapshot.profit.previousValue}
             difference={activeSnapshot.profit.difference}
             percentage={activeSnapshot.profit.differencePercentage}
             trend={activeSnapshot.profit.trend}
             direction={activeSnapshot.profit.direction}
-            unit="HTG"
+            unit={activeCurrency}
             status={effectiveProfit !== null && effectiveProfit >= 0 ? "Healthy" : "Critical"}
           />
           <SmartKPICard
@@ -138,25 +146,30 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
 
       {/* ACTIONS & ALERTS GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ExecutiveActionsChecklist snapshot={activeSnapshot} />
-        <ExecutiveAlertCenter snapshot={activeSnapshot} />
+        <ExecutiveActionsChecklist snapshot={activeSnapshot} currency={activeCurrency} />
+        <ExecutiveAlertCenter snapshot={activeSnapshot} currency={activeCurrency} />
       </div>
 
       {/* AI CFO & HEALTH GAUGE */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="executive-summary-bento-grid">
         <div className="lg:col-span-8">
-          <ExecutiveAIAdvisor snapshot={activeSnapshot} />
+          <ExecutiveAIAdvisor snapshot={activeSnapshot} currency={activeCurrency} accountingBasis={accountingBasis} />
         </div>
         <div className="lg:col-span-4">
-          <ExecutiveHealthGauge snapshot={activeSnapshot} />
+          <ExecutiveHealthGauge snapshot={activeSnapshot} currency={activeCurrency} />
         </div>
       </div>
 
       {/* TREASURY, ATTENDANCE, PAYROLL */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <ExecutiveTreasury snapshot={activeSnapshot} />
+        <ExecutiveTreasury snapshot={activeSnapshot} currency={activeCurrency} accountingBasis={accountingBasis} />
         <ExecutiveAttendance snapshot={activeSnapshot} />
-        <ExecutivePayroll snapshot={activeSnapshot} isSocialTaxEnabled={isSocialTaxEnabled} />
+        <ExecutivePayroll
+          snapshot={activeSnapshot}
+          isSocialTaxEnabled={isSocialTaxEnabled}
+          currency={activeCurrency}
+          accountingBasis={accountingBasis}
+        />
       </div>
 
       {/* CHARTS & LEADERBOARDS */}
@@ -169,11 +182,11 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
                 Trajectoire Financière & Rentabilité (SSOT)
               </span>
               <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                Chiffre d'Affaires vs Profit Net
+                {isCashBasis ? "Encaissements vs Résultat Net" : "Chiffre d'Affaires vs Profit Net"}
               </span>
             </div>
             <p className="text-[11px] text-slate-400 mb-4">
-              Évolution chronologique des revenus bruts réels et des marges nettes déduites des coûts d'exploitation.
+              Évolution chronologique des revenus réels et des marges nettes déduites des coûts d'exploitation ({accountingBasis}).
             </p>
 
             <div className="h-64 w-full">
@@ -207,16 +220,18 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
                       fontSize: "11px",
                     }}
                     formatter={(value: any, name: any) => [
-                      `${Number(value).toLocaleString()} HTG`,
-                      name === "gross" || name === "Gross Revenue" ? "Chiffre d'Affaires" : "Bénéfice Net",
+                      `${Number(value).toLocaleString()} ${activeCurrency}`,
+                      name === "gross" || name === "Gross Revenue"
+                        ? (isCashBasis ? "Encaissements" : "Chiffre d'Affaires")
+                        : (isCashBasis ? "Résultat de Trésorerie" : "Bénéfice Net"),
                     ]}
                   />
                   <Legend
                     wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }}
                     formatter={(value) =>
                       value === "gross" || value === "Gross Revenue"
-                        ? "Chiffre d'Affaires Brut"
-                        : "Bénéfice Net"
+                        ? (isCashBasis ? "Encaissements (Cash)" : "Chiffre d'Affaires Brut")
+                        : (isCashBasis ? "Résultat Net (Cash)" : "Bénéfice Net")
                     }
                   />
                   <Area
@@ -245,14 +260,23 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
 
         {/* Staff Leaderboard */}
         <div className="lg:col-span-5">
-          <ExecutiveStaffLeaderboard snapshot={activeSnapshot} employees={employees} />
+          <ExecutiveStaffLeaderboard
+            snapshot={activeSnapshot}
+            employees={employees}
+            branches={branches}
+            currency={activeCurrency}
+          />
         </div>
       </div>
 
       {/* BRANCH REVENUE & DEPARTMENT EXPENSES */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <ExecutiveBranchRevenue snapshot={activeSnapshot} />
-        <ExecutiveDepartmentExpenses snapshot={activeSnapshot} />
+        <ExecutiveBranchRevenue snapshot={activeSnapshot} currency={activeCurrency} />
+        <ExecutiveDepartmentExpenses
+          snapshot={activeSnapshot}
+          currency={activeCurrency}
+          accountingBasis={accountingBasis}
+        />
       </div>
     </div>
   );

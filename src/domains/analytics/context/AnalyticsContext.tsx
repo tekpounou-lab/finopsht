@@ -23,7 +23,7 @@ import { AnalyticsEngine as SemanticAnalyticsEngine } from "../../../modules/ana
 import { RuntimeEngine } from "../../../modules/runtime/RuntimeEngine";
 import { useExecutiveFilters } from "./ExecutiveFilterContext";
 import { useAnalyticsFilters } from "../../../contexts/AnalyticsFilterContext";
-import { toDateOnly, resolveAnalyticsPayrollDate } from "../../../utils/dateNormalization";
+import { toDateOnly, matchesDateFilter, resolveAnalyticsPayrollDate } from "../../../utils/dateNormalization";
 import { isOperationalEmployee } from "../../../services/workforce/EmployeeEligibilityService";
 
 import { CurrencyRateRepository } from "../../../repositories/CurrencyRateRepository";
@@ -350,46 +350,37 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const filteredTransactions = useMemo(() => {
     return scopedTransactions.filter((tx) => {
-      if (filters.startDate && filters.endDate) {
-        const rawDate =
-          tx.date ||
-          (tx as any).transaction_date ||
-          (tx as any).transactionDate ||
-          (tx as any).effectiveAccountingDate ||
-          (tx as any).effective_date ||
-          (tx as any).date_str ||
-          (tx as any).dateStr ||
-          (tx as any).created_at ||
-          (tx as any).createdAt ||
-          (tx as any).timestamp;
-        const txDate = normalizeDateStr(rawDate);
-        if (!txDate || txDate < filters.startDate || txDate > filters.endDate) return false;
-      }
-      return true;
+      const rawDate =
+        tx.date ||
+        (tx as any).transaction_date ||
+        (tx as any).transactionDate ||
+        (tx as any).effectiveAccountingDate ||
+        (tx as any).effective_date ||
+        (tx as any).date_str ||
+        (tx as any).dateStr ||
+        (tx as any).created_at ||
+        (tx as any).createdAt ||
+        (tx as any).timestamp;
+      const txDate = normalizeDateStr(rawDate);
+      return matchesDateFilter(txDate, filters.startDate, filters.endDate);
     });
   }, [scopedTransactions, filters.startDate, filters.endDate]);
 
   const filteredAttendance = useMemo(() => {
     return scopedAttendance.filter((rec) => {
-      if (filters.startDate && filters.endDate) {
-        const attDate = getAttendanceDate(rec);
-        if (!attDate || attDate < filters.startDate || attDate > filters.endDate) return false;
-      }
-      return true;
+      const attDate = getAttendanceDate(rec);
+      return matchesDateFilter(attDate, filters.startDate, filters.endDate);
     });
   }, [scopedAttendance, filters.startDate, filters.endDate]);
 
   const filteredPayrolls = useMemo(() => {
     return scopedPayrolls.filter((rec) => {
       const pDate = resolveAnalyticsPayrollDate(rec, filters.accountingMode === "CASH");
-      if (filters.startDate && filters.endDate) {
-        if (!pDate || pDate < filters.startDate || pDate > filters.endDate) return false;
-      }
-      return true;
+      return matchesDateFilter(pDate, filters.startDate, filters.endDate);
     });
   }, [scopedPayrolls, filters.startDate, filters.endDate, filters.accountingMode]);
 
-  // Filtered collections reflecting ExecutiveFilters for SSOT alignment
+  // Filtered collections reflecting ExecutiveFilters for SSOT alignment (preserving active operational staff for attendance denominators)
   const filteredEmployees = useMemo(() => {
     return effectiveEmployees.filter((e) => {
       // 1. Exclude suspended, inactive or non-operational employees
@@ -407,17 +398,6 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (filters.departmentId !== "ALL" && eDept !== filters.departmentId) return false;
       if (filters.employeeId !== "ALL" && e.id !== filters.employeeId) return false;
 
-      // 2. Filter by activity in the selected period (if date filters are active)
-      if (filters.startDate && filters.endDate) {
-        const hasAttendance = filteredAttendance.some((rec) => (rec.employeeId || (rec as any).employee_id) === e.id);
-        const hasPayroll = filteredPayrolls.some((rec) => (rec.employeeId || rec.employee_id) === e.id);
-        const hasTransaction = filteredTransactions.some((tx) => (tx.employeeId || (tx as any).employee_id) === e.id);
-
-        if (!hasAttendance && !hasPayroll && !hasTransaction) {
-          return false;
-        }
-      }
-
       return true;
     });
   }, [
@@ -425,11 +405,6 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     filters.branchId,
     filters.departmentId,
     filters.employeeId,
-    filters.startDate,
-    filters.endDate,
-    filteredAttendance,
-    filteredPayrolls,
-    filteredTransactions,
   ]);
 
   const [snapshot, setSnapshot] = useState<AnalyticsSnapshot | null>(null);

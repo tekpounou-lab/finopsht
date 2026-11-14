@@ -3,6 +3,8 @@ import { CashBasisSnapshot } from "../types/cash-basis";
 import { CashBasisEngine as CanonicalCashEngine } from "../domains/cash/engine/CashBasisEngine";
 import { useBusinessContext } from "../contexts/BusinessContext";
 import { useAnalyticsFilters } from "../contexts/AnalyticsFilterContext";
+import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
+import { resolveAnalyticsTxDate, resolveAnalyticsPayrollDate } from "../utils/dateNormalization";
 
 /**
  * @deprecated Legacy hook for CashBasisSnapshot.
@@ -12,16 +14,18 @@ import { useAnalyticsFilters } from "../contexts/AnalyticsFilterContext";
 export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
   const { currentBusiness, ledgerTransactions, payrollRecords, payrollCycles, employees, invoices } = useBusinessContext() as any;
   const { filters: globalFilters } = useAnalyticsFilters();
+  const { filters: execFilters } = useExecutiveFilters();
   const [snapshot, setSnapshot] = useState<CashBasisSnapshot | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   const resolvedFilters = {
-    startDate: overrideFilters?.startDate || globalFilters.dateRange.startDate,
-    endDate: overrideFilters?.endDate || globalFilters.dateRange.endDate,
+    startDate: overrideFilters?.startDate !== undefined ? overrideFilters.startDate : globalFilters.dateRange.startDate,
+    endDate: overrideFilters?.endDate !== undefined ? overrideFilters.endDate : globalFilters.dateRange.endDate,
     branchId: (overrideFilters?.branchId && overrideFilters.branchId !== "ALL") ? overrideFilters.branchId : (globalFilters.branchId || "ALL"),
     departmentId: (overrideFilters?.departmentId && overrideFilters.departmentId !== "ALL") ? overrideFilters.departmentId : (globalFilters.departmentId || "ALL"),
     employeeId: (overrideFilters?.employeeId && overrideFilters.employeeId !== "ALL") ? overrideFilters.employeeId : (globalFilters.employeeId || "ALL"),
-    currency: overrideFilters?.currency || (globalFilters as any).currency || "HTG",
+    transactionType: overrideFilters?.transactionType || execFilters.transactionType || "ALL",
+    currency: overrideFilters?.currency || execFilters.currency || "HTG",
     cashAccountId: overrideFilters?.cashAccountId,
   };
 
@@ -37,30 +41,92 @@ export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
       }
       setLoading(true);
       try {
-        const startDate = resolvedFilters.startDate || "2026-09-01";
-        const endDate = resolvedFilters.endDate || "2026-09-30";
         const currency = resolvedFilters.currency || "HTG";
-
-        // Filter raw records by branch/dept if specified
         const branchId = resolvedFilters.branchId;
         const departmentId = resolvedFilters.departmentId;
+        const employeeId = resolvedFilters.employeeId;
+        const transactionType = resolvedFilters.transactionType;
+
+        const empBranchMap = new Map<string, string>();
+        const empDeptMap = new Map<string, string>();
+        (employees || []).forEach((e: any) => {
+          if (!e?.id) return;
+          const b = e.branchId || e.branch_id;
+          const d = e.departmentId || e.department_id;
+          if (b) empBranchMap.set(e.id, b);
+          if (d) empDeptMap.set(e.id, d);
+        });
 
         const filteredLedger = (ledgerTransactions || []).filter((tx: any) => {
-          if (branchId && branchId !== "ALL" && (!tx.branchId || tx.branchId !== branchId)) return false;
-          if (departmentId && departmentId !== "ALL" && (!tx.departmentId || tx.departmentId !== departmentId)) return false;
+          const txBizId = tx.business_id || tx.businessId;
+          if (txBizId && txBizId !== businessId) return false;
+          const txEmpId = tx.employeeId || tx.employee_id;
+          const txBranch = tx.branchId || tx.branch_id || tx.cost_center_id || (txEmpId ? empBranchMap.get(txEmpId) : undefined);
+          const txDept = tx.departmentId || tx.department_id || tx.department || (txEmpId ? empDeptMap.get(txEmpId) : undefined);
+
+          if (branchId && branchId !== "ALL" && (!txBranch || txBranch !== branchId)) return false;
+          if (departmentId && departmentId !== "ALL" && (!txDept || txDept !== departmentId)) return false;
+          if (employeeId && employeeId !== "ALL" && (!txEmpId || txEmpId !== employeeId)) return false;
+          if (transactionType && transactionType !== "ALL" && tx.type !== transactionType && tx.category !== transactionType) return false;
           return true;
         });
 
         const filteredPayroll = (payrollRecords || []).filter((p: any) => {
-          if (branchId && branchId !== "ALL" && (!p.branchId || p.branchId !== branchId)) return false;
-          if (departmentId && departmentId !== "ALL" && (!p.departmentId || p.departmentId !== departmentId)) return false;
+          const pBizId = p.business_id || p.businessId;
+          if (pBizId && pBizId !== businessId) return false;
+          const pEmpId = p.employeeId || p.employee_id;
+          const pBranch = p.branchId || p.branch_id || (pEmpId ? empBranchMap.get(pEmpId) : undefined);
+          const pDept = p.departmentId || p.department_id || (pEmpId ? empDeptMap.get(pEmpId) : undefined);
+
+          if (branchId && branchId !== "ALL" && (!pBranch || pBranch !== branchId)) return false;
+          if (departmentId && departmentId !== "ALL" && (!pDept || pDept !== departmentId)) return false;
+          if (employeeId && employeeId !== "ALL" && (!pEmpId || pEmpId !== employeeId)) return false;
+          if (transactionType && transactionType !== "ALL" && transactionType !== "PAYROLL") return false;
           return true;
         });
+
+        const filteredInvoices = (invoices || []).filter((inv: any) => {
+          const iBizId = inv.business_id || inv.businessId;
+          if (iBizId && iBizId !== businessId) return false;
+          const iEmpId = inv.employeeId || inv.employee_id;
+          const iBranch = inv.branchId || inv.branch_id || inv.cost_center_id || (iEmpId ? empBranchMap.get(iEmpId) : undefined);
+          const iDept = inv.departmentId || inv.department_id || (iEmpId ? empDeptMap.get(iEmpId) : undefined);
+
+          if (branchId && branchId !== "ALL" && (!iBranch || iBranch !== branchId)) return false;
+          if (departmentId && departmentId !== "ALL" && (!iDept || iDept !== departmentId)) return false;
+          if (employeeId && employeeId !== "ALL" && (!iEmpId || iEmpId !== employeeId)) return false;
+          if (transactionType && transactionType !== "ALL" && transactionType !== "INCOME") return false;
+          return true;
+        });
+
+        // DEF-TF-01: Never hardcode a historical month fallback when dates are empty ("All Dates").
+        let startDate = resolvedFilters.startDate || "";
+        let endDate = resolvedFilters.endDate || "";
+        if (!startDate || !endDate) {
+          let minD = "";
+          let maxD = "";
+          for (const tx of filteredLedger) {
+            const d = resolveAnalyticsTxDate(tx, true);
+            if (d) {
+              if (!minD || d < minD) minD = d;
+              if (!maxD || d > maxD) maxD = d;
+            }
+          }
+          for (const pr of filteredPayroll) {
+            const d = resolveAnalyticsPayrollDate(pr, true);
+            if (d) {
+              if (!minD || d < minD) minD = d;
+              if (!maxD || d > maxD) maxD = d;
+            }
+          }
+          if (!startDate) startDate = minD || "1900-01-01";
+          if (!endDate) endDate = maxD || "2099-12-31";
+        }
 
         // Run canonical Cash Basis pipeline
         const statement = CanonicalCashEngine.executePipeline(
           {
-            invoices: invoices || [],
+            invoices: filteredInvoices,
             payrollRecords: filteredPayroll,
             payrollCycles: payrollCycles || [],
             ledgerTransactions: filteredLedger,
@@ -82,7 +148,7 @@ export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
 
         for (const m of statement.periodMovements) {
           if (m.direction === "OUTFLOW") {
-            if (m.sourceModule === "PAYROLL" || m.movementType === "PAYROLL") {
+            if (m.sourceModule === "PAYROLL" || m.movementType === "PAYROLL" || m.movementType === "COMMISSION") {
               payrollPaid += m.amount;
             } else if (m.movementType === "RENT") {
               rentPaid += m.amount;

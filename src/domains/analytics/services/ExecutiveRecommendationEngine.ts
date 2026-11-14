@@ -14,7 +14,7 @@ export class ExecutiveRecommendationEngine {
   /**
    * Evaluates the corporate snapshot and drafts smart, contextual operational recommendations.
    */
-  static generateRecommendations(snapshot: AnalyticsSnapshot): ActionableRecommendation[] {
+  static generateRecommendations(snapshot: AnalyticsSnapshot, currency: string = "HTG"): ActionableRecommendation[] {
     const recommendations: ActionableRecommendation[] = [];
 
     const activeScorecards = snapshot.employeeScorecards || [];
@@ -55,7 +55,7 @@ export class ExecutiveRecommendationEngine {
       recommendations.push({
         id: "rec_cash_reserve",
         title: "Accelerate Accounts Collections Cycle",
-        description: `Current liquid cash of ${cashVal.toLocaleString()} HTG is thin. Speed up billing collection times and restrict secondary expenses.`,
+        description: `Current liquid cash of ${cashVal.toLocaleString()} ${currency} is thin. Speed up billing collection times and restrict secondary expenses.`,
         priority: "HIGH",
         targetMetric: "Working Capital Safety",
         estimatedImpact: "+15% liquid buffer",

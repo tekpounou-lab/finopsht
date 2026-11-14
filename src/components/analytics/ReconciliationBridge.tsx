@@ -4,11 +4,14 @@ import { Scale, ArrowUpRight, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface ReconciliationBridgeProps {
   snapshot: AccrualBasisSnapshot | null;
+  currency?: string;
 }
 
-export const ReconciliationBridge: React.FC<ReconciliationBridgeProps> = ({ snapshot }) => {
+export const ReconciliationBridge: React.FC<ReconciliationBridgeProps> = ({ snapshot, currency = "HTG" }) => {
   if (!snapshot) return null;
   const { reconciliation } = snapshot;
+
+  const formatSigned = (val: number) => `${val > 0 ? `+${val.toLocaleString()}` : val.toLocaleString()} ${currency}`;
 
   return (
     <div className="bg-slate-900/80 border border-slate-800/80 backdrop-blur-md rounded-2xl shadow-xl p-6 mb-8">
@@ -42,28 +45,28 @@ export const ReconciliationBridge: React.FC<ReconciliationBridgeProps> = ({ snap
           <tbody className="divide-y divide-slate-800/60 text-xs font-mono">
             <tr className="hover:bg-slate-800/30 transition-colors">
               <td className="py-3.5 px-4 font-semibold text-slate-200 font-sans">Revenus / Encaissements</td>
-              <td className="py-3.5 px-4 text-right text-emerald-400 font-bold">{reconciliation.cashRevenue.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualRevenue.toLocaleString()} HTG</td>
+              <td className="py-3.5 px-4 text-right text-emerald-400 font-bold">{reconciliation.cashRevenue.toLocaleString()} {currency}</td>
+              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualRevenue.toLocaleString()} {currency}</td>
               <td className={`py-3.5 px-4 text-right font-bold ${reconciliation.varianceRevenue >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                {reconciliation.varianceRevenue > 0 ? `+${reconciliation.varianceRevenue.toLocaleString()}` : reconciliation.varianceRevenue.toLocaleString()} HTG
+                {formatSigned(reconciliation.varianceRevenue)}
               </td>
               <td className="py-3.5 px-4 text-slate-400 font-sans text-xs">Factures émises non encore encaissées (AR)</td>
             </tr>
             <tr className="hover:bg-slate-800/30 transition-colors">
               <td className="py-3.5 px-4 font-semibold text-slate-200 font-sans">Masse Salariale / Personnel</td>
-              <td className="py-3.5 px-4 text-right text-indigo-400 font-bold">{reconciliation.cashPayroll.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualPayroll.toLocaleString()} HTG</td>
+              <td className="py-3.5 px-4 text-right text-indigo-400 font-bold">{reconciliation.cashPayroll.toLocaleString()} {currency}</td>
+              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualPayroll.toLocaleString()} {currency}</td>
               <td className={`py-3.5 px-4 text-right font-bold ${reconciliation.variancePayroll >= 0 ? "text-indigo-400" : "text-emerald-400"}`}>
-                +{reconciliation.variancePayroll.toLocaleString()} HTG
+                {formatSigned(reconciliation.variancePayroll)}
               </td>
               <td className="py-3.5 px-4 text-slate-400 font-sans text-xs">Salaires et charges sociales engagés mais non encore virés</td>
             </tr>
             <tr className="hover:bg-slate-800/30 transition-colors">
               <td className="py-3.5 px-4 font-semibold text-slate-200 font-sans">Charges & Dépenses</td>
-              <td className="py-3.5 px-4 text-right text-rose-400 font-bold">{reconciliation.cashExpenses.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualExpenses.toLocaleString()} HTG</td>
-              <td className="py-3.5 px-4 text-right font-bold text-amber-400">
-                +{reconciliation.varianceExpenses.toLocaleString()} HTG
+              <td className="py-3.5 px-4 text-right text-rose-400 font-bold">{reconciliation.cashExpenses.toLocaleString()} {currency}</td>
+              <td className="py-3.5 px-4 text-right text-slate-200">{reconciliation.accrualExpenses.toLocaleString()} {currency}</td>
+              <td className={`py-3.5 px-4 text-right font-bold ${reconciliation.varianceExpenses >= 0 ? "text-amber-400" : "text-emerald-400"}`}>
+                {formatSigned(reconciliation.varianceExpenses)}
               </td>
               <td className="py-3.5 px-4 text-slate-400 font-sans text-xs">Factures fournisseurs reçues en attente de décaissement (AP)</td>
             </tr>
@@ -76,7 +79,7 @@ export const ReconciliationBridge: React.FC<ReconciliationBridgeProps> = ({ snap
         <div>
           <h4 className="text-xs uppercase font-extrabold text-cyan-300 tracking-wider">Note d'analyse de l'IA CFO</h4>
           <p className="text-xs text-slate-300 mt-1 font-sans leading-relaxed">
-            « {reconciliation.variancePayroll.toLocaleString()} HTG de coûts de personnel sont engagés mais n'ont pas encore été décaissés. Votre encours créances (AR) dépasse vos dettes fournisseurs (AP), maintenant un fonds de roulement solide. »
+            « {reconciliation.variancePayroll.toLocaleString()} {currency} d'écart net entre salaires engagés et décaissés. Votre encours créances (AR) dépasse vos dettes fournisseurs (AP), maintenant un fonds de roulement solide. »
           </p>
         </div>
       </div>

@@ -5,15 +5,23 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 
 interface ExecutiveTreasuryProps {
   snapshot: AnalyticsSnapshot | null;
+  currency?: string;
+  accountingBasis?: "CASH" | "ACCRUAL";
 }
 
 import { useExecutiveFilters } from "../../domains/analytics/context/ExecutiveFilterContext";
 
-const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot }) => {
+const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({
+  snapshot,
+  currency,
+  accountingBasis,
+}) => {
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_TREASURY", snapshot);
   const { filters } = useExecutiveFilters();
 
-  const isCashBasis = filters.accountingMode === "CASH";
+  const resolvedBasis = accountingBasis || filters.accountingBasis || filters.accountingMode || "CASH";
+  const isCashBasis = resolvedBasis === "CASH";
+  const activeCurrency = currency || filters.currency || "HTG";
 
   const cashVal = stabilizedSnapshot?.cashOnHand?.currentValue || 0;
   const dailyBurn = stabilizedSnapshot?.burnRate?.currentValue || 0;
@@ -35,7 +43,7 @@ const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot
           <span className="text-2xl font-black font-mono text-slate-50">
             {cashVal.toLocaleString()}
           </span>
-          <span className="text-[10px] text-slate-400 font-bold uppercase">HTG</span>
+          <span className="text-[10px] text-slate-400 font-bold uppercase">{activeCurrency}</span>
         </div>
         <div className="text-cyan-400 font-semibold text-[11px] mt-1 font-mono flex items-center gap-1">
           <TrendingUp className="w-3 h-3" /> Runway :{" "}
@@ -56,8 +64,8 @@ const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot
                 netProfit >= 0 ? "text-emerald-400" : "text-rose-400"
               }`}
             >
-              {netProfit >= 0 ? "+" : ""}
-              {netProfit.toLocaleString()} HTG
+              {netProfit > 0 ? "+" : ""}
+              {netProfit.toLocaleString()} {activeCurrency}
             </span>
           </div>
 
@@ -72,14 +80,14 @@ const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot
                 netCashFlow >= 0 ? "text-cyan-400" : "text-rose-400"
               }`}
             >
-              {netCashFlow >= 0 ? "+" : ""}
-              {netCashFlow.toLocaleString()} HTG
+              {netCashFlow > 0 ? "+" : ""}
+              {netCashFlow.toLocaleString()} {activeCurrency}
             </span>
           </div>
 
           <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40 pt-1.5">
             <span>Burn Rate mensuel estimé :</span>
-            <span className="text-slate-200 font-mono">{monthlyBurn.toLocaleString()} HTG</span>
+            <span className="text-slate-200 font-mono">{monthlyBurn.toLocaleString()} {activeCurrency}</span>
           </div>
           <div className="flex justify-between items-center py-0.5">
             <span>Indice de solvabilité :</span>
@@ -110,5 +118,8 @@ const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({ snapshot
 
 export const ExecutiveTreasury = React.memo(
   ExecutiveTreasuryComponent,
-  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+  (prev, next) =>
+    prev.currency === next.currency &&
+    prev.accountingBasis === next.accountingBasis &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );

@@ -27,6 +27,7 @@ interface BIExecutiveKpisProps {
   isLoading?: boolean;
   handleSaveSnapshot: () => void;
   isSimplifiedMode?: boolean;
+  accountingBasis?: "CASH" | "ACCRUAL";
   cashSnapshot?: any;
   accrualSnapshot?: any;
 }
@@ -47,22 +48,24 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
   isLoading = false,
   handleSaveSnapshot,
   isSimplifiedMode = false,
+  accountingBasis,
   cashSnapshot,
   accrualSnapshot,
 }) => {
   const { filters } = useAnalyticsFilters();
   const selectedBranchId = selectedBranchIdProp !== undefined ? selectedBranchIdProp : filters.branchId;
+  const isCashBasis = accountingBasis ? accountingBasis === "CASH" : isSimplifiedMode;
 
   const rev = totalRevenue;
   const exp = totalExpenses;
   
   // DEF-9B-02: Canonical Net Cash Flow vs Operating Result.
-  // In simplified mode, "Variation de trésorerie" MUST strictly bind to canonical net cash flow (inflows - outflows),
+  // In Cash basis, "Variation de trésorerie" MUST strictly bind to canonical net cash flow (inflows - outflows),
   // NEVER falling back to Net Profit (Revenue - Expenses).
   const cashVariation = cashSnapshot?.netCashFlow !== undefined ? cashSnapshot.netCashFlow : (biSnapshot?.netCashFlow?.currentValue !== undefined ? biSnapshot.netCashFlow.currentValue : null);
   const operatingResult = netProfit;
-  const card3Value = isSimplifiedMode ? cashVariation : operatingResult;
-  const payroll = isSimplifiedMode
+  const card3Value = isCashBasis ? cashVariation : operatingResult;
+  const payroll = isCashBasis
     ? (cashSnapshot?.cashOut?.payrollPaid !== undefined ? cashSnapshot.cashOut.payrollPaid : (payrollAggregates?.payrollPaid ?? null))
     : (accrualSnapshot?.payrollAccrued?.total !== undefined ? accrualSnapshot.payrollAccrued.total : (payrollAggregates?.totalEmploymentCost ?? null));
 
@@ -96,6 +99,9 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
       </>
     );
   };
+
+  const forecast7Days = biSnapshot?.forecast?.forecast7Days;
+  const burnRateVal = biSnapshot?.burnRate?.currentValue;
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -144,14 +150,14 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             className="glass p-4 rounded-xl border-l-2 border-l-emerald-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
-              {isSimplifiedMode ? "Argent entré (Caisse)" : tbi.revenue}
+              {isCashBasis ? "Argent entré (Caisse)" : tbi.revenue}
             </span>
-            <div className="font-mono text-lg sm:text-base font-black text-emerald-400 mt-1 truncate" title={rev !== null && rev !== undefined ? `${rev.toLocaleString()} HTG` : "N/D"}>
+            <div className="font-mono text-lg sm:text-base font-black text-emerald-400 mt-1 truncate" title={rev !== null && rev !== undefined ? `${rev.toLocaleString()} ${activeCurrency}` : "N/D"}>
               {formatAmount(rev, "+")}
             </div>
             <div className="flex items-center gap-1 text-[10px] text-emerald-500 font-semibold truncate">
               <TrendingUp className="w-3 h-3 shrink-0" />
-              <span className="truncate">{isSimplifiedMode ? "Flux de trésorerie effectif" : "Comptabilité d'exercice"}</span>
+              <span className="truncate">{isCashBasis ? "Flux de trésorerie effectif" : "Comptabilité d'exercice"}</span>
             </div>
           </motion.div>
 
@@ -162,31 +168,31 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             className="glass p-4 rounded-xl border-l-2 border-l-rose-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
-              {isSimplifiedMode ? "Argent sorti (Décaissements)" : tbi.expenses}
+              {isCashBasis ? "Argent sorti (Décaissements)" : tbi.expenses}
             </span>
-            <div className="font-mono text-lg sm:text-base font-black text-rose-500 mt-1 truncate" title={exp !== null && exp !== undefined ? `-${exp.toLocaleString()} HTG` : "N/D"}>
+            <div className="font-mono text-lg sm:text-base font-black text-rose-500 mt-1 truncate" title={exp !== null && exp !== undefined ? `-${exp.toLocaleString()} ${activeCurrency}` : "N/D"}>
               {formatAmount(exp, "-")}
             </div>
             <div className="flex items-center gap-1 text-[10px] text-slate-500 truncate">
               <Clock className="w-3 h-3 shrink-0" />
-              <span className="truncate">{isSimplifiedMode ? "Sorties de caisse réelles" : "Factures reçues et passifs"}</span>
+              <span className="truncate">{isCashBasis ? "Sorties de caisse réelles" : "Factures reçues et passifs"}</span>
             </div>
           </motion.div>
 
-          {/* Net Cash Flow (Simplified) / Operating Result (Accrual) - DEF-9B-02 & DEF-9B-03 */}
+          {/* Net Cash Flow (Cash) / Operating Result (Accrual) - DEF-9B-02 & DEF-9B-03 */}
           <motion.div
             whileHover={{ y: -3, scale: 1.02, boxShadow: "0 10px 20px -6px rgba(0, 0, 0, 0.45)" }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className="glass p-4 rounded-xl border-l-2 border-l-cyan-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
-              {isSimplifiedMode ? "Variation de trésorerie" : tbi.netProfit}
+              {isCashBasis ? "Variation de trésorerie" : tbi.netProfit}
             </span>
-            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${card3Value !== null && card3Value >= 0 ? "text-cyan-400" : "text-rose-400"}`} title={card3Value !== null && card3Value !== undefined ? `${card3Value >= 0 ? "+" : ""}${card3Value.toLocaleString()} HTG` : "N/D"}>
-              {card3Value !== null && card3Value !== undefined ? `${card3Value >= 0 ? "+" : ""}${card3Value.toLocaleString()}` : <span className="text-slate-500 font-sans text-sm font-normal">N/D</span>} {card3Value !== null && card3Value !== undefined && <span className="text-[10px] text-slate-500 font-normal">HTG</span>}
+            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${card3Value !== null && card3Value >= 0 ? "text-cyan-400" : "text-rose-400"}`} title={card3Value !== null && card3Value !== undefined ? `${card3Value >= 0 ? "+" : ""}${card3Value.toLocaleString()} ${activeCurrency}` : "N/D"}>
+              {card3Value !== null && card3Value !== undefined ? `${card3Value >= 0 ? "+" : ""}${card3Value.toLocaleString()}` : <span className="text-slate-500 font-sans text-sm font-normal">N/D</span>} {card3Value !== null && card3Value !== undefined && <span className="text-[10px] text-slate-500 font-normal">{activeCurrency}</span>}
             </div>
             <div className="flex items-center gap-1 text-[10px] text-slate-400 truncate">
-              {isSimplifiedMode ? (
+              {isCashBasis ? (
                 <>
                   <span className="font-semibold text-cyan-400">Flux net</span>
                   <span className="truncate">Encaissements - Décaissements</span>
@@ -194,7 +200,7 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
               ) : (
                 <>
                   <span className="font-semibold text-cyan-400">{profitMarginPercentage !== null && profitMarginPercentage !== undefined ? `${profitMarginPercentage}%` : "N/D"}</span>
-                  <span className="truncate" title={rev !== null && exp !== null ? `Formule SSOT: Recettes (${rev.toLocaleString()}) - Dépenses (${exp.toLocaleString()}) = ${card3Value !== null ? card3Value.toLocaleString() : 0} HTG` : ""}>
+                  <span className="truncate" title={rev !== null && exp !== null ? `Formule SSOT: Recettes (${rev.toLocaleString()}) - Dépenses (${exp.toLocaleString()}) = ${card3Value !== null ? card3Value.toLocaleString() : 0} ${activeCurrency}` : ""}>
                     {tbi.profitMargin} {rev !== null && exp !== null ? `(Recettes - Dépenses)` : ""}
                   </span>
                 </>
@@ -209,13 +215,17 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             className="glass p-4 rounded-xl border-l-2 border-l-indigo-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">
-              {isSimplifiedMode ? "Salaires payés (Virements)" : "Masse salariale engagée"}
+              {isCashBasis ? "Salaires payés (Virements)" : "Masse salariale engagée"}
             </span>
-            <div className="font-mono text-lg sm:text-base font-black text-indigo-400 mt-1 truncate" title={payroll !== null && payroll !== undefined ? `${payroll.toLocaleString()} HTG` : "N/D"}>
+            <div className="font-mono text-lg sm:text-base font-black text-indigo-400 mt-1 truncate" title={payroll !== null && payroll !== undefined ? `${payroll.toLocaleString()} ${activeCurrency}` : "N/D"}>
               {formatAmount(payroll)}
             </div>
             <div className="text-[9.5px] text-slate-500 font-normal truncate">
-              {isSimplifiedMode ? "RH : Décaissements effectifs" : "RH : Brut + Charges patronales (ONA/OFATMA)"}
+              {isCashBasis
+                ? "RH : Décaissements effectifs"
+                : isSocialTaxEnabled
+                ? "RH : Brut + Charges patronales (ONA/OFATMA)"
+                : "RH : Salaires bruts engagés"}
             </div>
           </motion.div>
 
@@ -242,7 +252,7 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.attendanceRate}</span>
             <div className="flex items-baseline gap-2 mt-1 truncate">
-              <div className="font-mono text-lg sm:text-base font-black text-green-400" title={`Performance horaire: ${attendanceAggregates.attendanceRate}%`}>
+              <div className="font-mono text-lg sm:text-base font-black text-green-400" title={attendanceAggregates.attendanceRate !== null ? `Performance horaire: ${attendanceAggregates.attendanceRate}%` : "N/D"}>
                 {formatPct(attendanceAggregates.attendanceRate)}
               </div>
               {attendanceAggregates.attendanceFrequency !== null && (
@@ -287,7 +297,7 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             className="glass p-4 rounded-xl border-l-2 border-l-purple-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.debtExposure}</span>
-            <div className="font-mono text-lg sm:text-base font-black text-purple-400 mt-1 truncate" title={totalAdvancesPending !== null && totalAdvancesPending !== undefined ? `${totalAdvancesPending.toLocaleString()} HTG` : "N/D"}>
+            <div className="font-mono text-lg sm:text-base font-black text-purple-400 mt-1 truncate" title={totalAdvancesPending !== null && totalAdvancesPending !== undefined ? `${totalAdvancesPending.toLocaleString()} ${activeCurrency}` : "N/D"}>
               {formatAmount(totalAdvancesPending)}
             </div>
             <div className="text-[9.5px] text-purple-500 font-medium tracking-tight truncate">
@@ -302,11 +312,23 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             className="glass p-4 rounded-xl border-l-2 border-l-fuchsia-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.projection7Days}</span>
-            <div className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${(biSnapshot?.forecast?.forecast7Days || 0) >= 0 ? "text-fuchsia-400" : "text-rose-400"}`} title={`${(biSnapshot?.forecast?.forecast7Days || 0).toLocaleString()} HTG`}>
-              {(biSnapshot?.forecast?.forecast7Days || 0) >= 0 ? "+" : ""}{(biSnapshot?.forecast?.forecast7Days || 0).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">HTG</span>
+            <div
+              className={`font-mono text-lg sm:text-base font-black mt-1 truncate ${
+                forecast7Days === null || forecast7Days === undefined || forecast7Days >= 0 ? "text-fuchsia-400" : "text-rose-400"
+              }`}
+              title={forecast7Days !== null && forecast7Days !== undefined ? `${forecast7Days.toLocaleString()} ${activeCurrency}` : "N/D"}
+            >
+              {forecast7Days !== null && forecast7Days !== undefined ? (
+                <>
+                  {forecast7Days >= 0 ? "+" : ""}
+                  {forecast7Days.toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">{activeCurrency}</span>
+                </>
+              ) : (
+                <span className="text-slate-500 font-sans text-sm font-normal">N/D</span>
+              )}
             </div>
             <div className="text-[9.5px] text-slate-500 truncate">
-              {tbi.burnRateLabel}: {(biSnapshot?.burnRate?.currentValue || 0).toLocaleString()} HTG/j
+              {tbi.burnRateLabel}: {burnRateVal !== null && burnRateVal !== undefined ? `${burnRateVal.toLocaleString()} ${activeCurrency}/j` : "N/D"}
             </div>
           </motion.div>
         </div>

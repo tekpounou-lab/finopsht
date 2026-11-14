@@ -5,9 +5,10 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 
 interface ExecutiveBranchRevenueProps {
   snapshot: AnalyticsSnapshot | null;
+  currency?: string;
 }
 
-const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = ({ snapshot }) => {
+const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = ({ snapshot, currency = "HTG" }) => {
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_BRANCH_REVENUE", snapshot);
 
   const totalRev = stabilizedSnapshot?.revenue?.currentValue || 0;
@@ -76,7 +77,7 @@ const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = (
                   <span className="font-bold text-slate-200">{b.name}</span>
                   <div className="font-mono text-right">
                     <span className="text-emerald-400 font-bold">
-                      +{b.revenue.toLocaleString()} HTG
+                      +{b.revenue.toLocaleString()} {currency}
                     </span>
                     <span className="text-slate-500 text-[10px] ml-2">( {b.percentage}% )</span>
                   </div>
@@ -98,6 +99,8 @@ const ExecutiveBranchRevenueComponent: React.FC<ExecutiveBranchRevenueProps> = (
 
 export const ExecutiveBranchRevenue = React.memo(
   ExecutiveBranchRevenueComponent,
-  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+  (prev, next) =>
+    prev.currency === next.currency &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );
 

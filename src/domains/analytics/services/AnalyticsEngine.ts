@@ -2093,15 +2093,50 @@ export class AnalyticsEngine {
     const commissionsPaid = this.compareValues(curComms, prevComms);
 
     // 5. Segment breakdown (Branches)
+    const empBranchById = new Map<string, string>();
+    const empBranchByEmail = new Map<string, string>();
+    activeEmployees.forEach((e) => {
+      const bId = e.branchId || (e as any).branch_id;
+      if (bId) {
+        if (e.id) empBranchById.set(e.id, bId);
+        if (e.email) empBranchByEmail.set(e.email.toLowerCase().trim(), bId);
+      }
+    });
+
     const branchPerformance: BranchPerformance[] = (actualBranches || [])
       .filter((b) => !actualBizId || !b.business_id || b.business_id === actualBizId || (b as any).businessId === actualBizId)
       .map((br) => {
         const brEmployees = activeEmployees.filter((e) => (e.branchId || (e as any).branch_id) === br.id);
-        const brAttendance = curAttendance.filter((a) => (a.branchId || (a as any).branch_id) === br.id);
-        const brTxs = curTxs.filter((t) => (t.branchId || (t as any).branch_id) === br.id);
+        const brAttendance = curAttendance.filter((a) => {
+          const aEmpId = a.employeeId || (a as any).employee_id;
+          const aEmail = ((a as any).employee_email || (a as any).email || "").toLowerCase().trim();
+          const resolvedBranch =
+            a.branchId ||
+            (a as any).branch_id ||
+            (aEmpId ? empBranchById.get(aEmpId) : undefined) ||
+            (aEmail ? empBranchByEmail.get(aEmail) : undefined);
+          return resolvedBranch === br.id;
+        });
+        const brTxs = curTxs.filter((t) => {
+          const tEmpId = t.employeeId || (t as any).employee_id;
+          const tEmail = (t.employee_email || (t as any).employeeEmail || (t as any).email || "").toLowerCase().trim();
+          const resolvedBranch =
+            t.branchId ||
+            (t as any).branch_id ||
+            (t as any).cost_center_id ||
+            (tEmpId ? empBranchById.get(tEmpId) : undefined) ||
+            (tEmail ? empBranchByEmail.get(tEmail) : undefined);
+          return resolvedBranch === br.id;
+        });
         const brPayrolls = curPayroll.filter((p) => {
-          const emp = activeEmployees.find((e) => e.id === (p.employeeId || p.employee_id));
-          return (p.branch_id || (p as any).branchId || emp?.branchId || (emp as any)?.branch_id) === br.id;
+          const pEmpId = p.employeeId || p.employee_id;
+          const pEmail = ((p as any).employee_email || (p as any).employeeEmail || (p as any).email || "").toLowerCase().trim();
+          const resolvedBranch =
+            p.branch_id ||
+            (p as any).branchId ||
+            (pEmpId ? empBranchById.get(pEmpId) : undefined) ||
+            (pEmail ? empBranchByEmail.get(pEmail) : undefined);
+          return resolvedBranch === br.id;
         });
 
         let brRev = 0;
@@ -2249,7 +2284,10 @@ export class AnalyticsEngine {
 
     // Attribute transaction expenses & income to departments
     curTxs
-      .filter((t) => t.status !== "REVERSED" && (t.status as any) !== "VOID" && (t.status as any) !== "CANCELLED")
+      .filter((t) => {
+        const st = (t.status || "").toUpperCase();
+        return st !== "REVERSED" && st !== "VOID" && st !== "VOIDED" && st !== "CANCELLED";
+      })
       .forEach((t) => {
         const tEmail = (t.employee_email || (t as any).employeeEmail || (t as any).email || "").toLowerCase().trim();
         const emp = activeEmployees.find(
@@ -2284,8 +2322,11 @@ export class AnalyticsEngine {
           entry.glIncome += tAmount;
         } else if (!AnalyticsEngine.isPayrollRelatedTransaction(t)) {
           // EXCLUSION STRICTE : Ne jamais mélanger les écritures de paie avec les dépenses d'exploitation
-          if (t.type === "EXPENSE" || t.type === "BONUS" || t.type === "COMPENSATION" || (t.type as any) === "PENALTY") {
+          const typeUpper = (t.type || "").toUpperCase();
+          if (typeUpper === "EXPENSE" || typeUpper === "BONUS" || typeUpper === "COMPENSATION") {
             entry.nonPayrollExp += tAmount;
+          } else if (typeUpper === "PENALTY") {
+            entry.nonPayrollExp -= tAmount;
           }
         }
       });

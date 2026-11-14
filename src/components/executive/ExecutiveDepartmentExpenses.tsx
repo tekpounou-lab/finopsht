@@ -5,24 +5,37 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 
 interface ExecutiveDepartmentExpensesProps {
   snapshot: AnalyticsSnapshot | null;
+  currency?: string;
+  accountingBasis?: "CASH" | "ACCRUAL";
 }
 
 type ExpenseViewMode = "all" | "operational" | "payroll";
 
 const ExecutiveDepartmentExpensesComponent: React.FC<ExecutiveDepartmentExpensesProps> = ({
   snapshot,
+  currency = "HTG",
+  accountingBasis = "ACCRUAL",
 }) => {
   const [viewMode, setViewMode] = useState<ExpenseViewMode>("all");
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_DEPARTMENT_EXPENSES", snapshot);
 
   const rawDeptList = stabilizedSnapshot?.departmentPerformance || [];
 
-  // Calculate totals according to view mode based on SSOT data
+  // Calculate totals according to view mode based strictly on semantic SSOT components
   const modeTotals = useMemo(() => {
-    const totalAll = stabilizedSnapshot?.totalExpenses?.currentValue ?? stabilizedSnapshot?.expenses?.currentValue ?? 0;
-    const totalOperational = stabilizedSnapshot?.operationalExpenses?.currentValue ?? 
-      rawDeptList.reduce((sum, d) => sum + (d.nonPayrollExpenses || 0), 0);
-    const totalPayroll = stabilizedSnapshot?.payrollCost?.currentValue ?? 
+    const deptAll = rawDeptList.reduce(
+      (sum, d) => sum + (d.expenses || ((d.payrollCost || 0) + (d.nonPayrollExpenses || 0))),
+      0
+    );
+    const totalAll =
+      stabilizedSnapshot?.totalExpenses?.currentValue ??
+      stabilizedSnapshot?.expenses?.currentValue ??
+      deptAll;
+    // DEF-SSOT: operationalExpenses on AnalyticsSnapshot aliases total expenses (incl. payroll);
+    // for the "Exploitation GL" (non-payroll) segment tab, aggregate strictly nonPayrollExpenses.
+    const totalOperational = rawDeptList.reduce((sum, d) => sum + (d.nonPayrollExpenses || 0), 0);
+    const totalPayroll =
+      stabilizedSnapshot?.payrollCost?.currentValue ??
       rawDeptList.reduce((sum, d) => sum + (d.payrollCost || 0), 0);
 
     return {
@@ -105,7 +118,7 @@ const ExecutiveDepartmentExpensesComponent: React.FC<ExecutiveDepartmentExpenses
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Toutes ({activeTotal.toLocaleString()} HTG)</span>
+            <span>Toutes ({modeTotals.all.toLocaleString()} {currency})</span>
           </button>
           <button
             type="button"
@@ -158,7 +171,7 @@ const ExecutiveDepartmentExpensesComponent: React.FC<ExecutiveDepartmentExpenses
                   </div>
                   <div className="font-mono text-right">
                     <span className="text-amber-400 font-bold">
-                      {d.amount.toLocaleString()} HTG
+                      {d.amount.toLocaleString()} {currency}
                     </span>
                     <span className="text-slate-500 text-[10px] ml-1.5">({d.percentage}%)</span>
                   </div>
@@ -175,10 +188,11 @@ const ExecutiveDepartmentExpensesComponent: React.FC<ExecutiveDepartmentExpenses
                 {/* Sub-breakdown: SSOT Paie vs SSOT Exploitation */}
                 <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 pt-0.5">
                   <span>
-                    Exploitation (GL) : <strong className="text-slate-300">{d.nonPayrollExpenses.toLocaleString()} HTG</strong>
+                    Exploitation (GL) : <strong className="text-slate-300">{d.nonPayrollExpenses.toLocaleString()} {currency}</strong>
                   </span>
                   <span>
-                    Paie scellée : <strong className="text-slate-300">{d.payrollCost.toLocaleString()} HTG</strong>
+                    {accountingBasis === "CASH" ? "Paie décaissée :" : "Paie scellée :"}{" "}
+                    <strong className="text-slate-300">{d.payrollCost.toLocaleString()} {currency}</strong>
                   </span>
                 </div>
               </div>
@@ -192,5 +206,8 @@ const ExecutiveDepartmentExpensesComponent: React.FC<ExecutiveDepartmentExpenses
 
 export const ExecutiveDepartmentExpenses = React.memo(
   ExecutiveDepartmentExpensesComponent,
-  (prev, next) => getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
+  (prev, next) =>
+    prev.currency === next.currency &&
+    prev.accountingBasis === next.accountingBasis &&
+    getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );

@@ -98,7 +98,7 @@ export default function BusinessIntelligence({
     currentRole,
   });
 
-  const { setFilters: setExecutiveFilters } = useExecutiveFilters();
+  const { filters: execFilters, setFilters: setExecutiveFilters } = useExecutiveFilters();
 
   // Synchronize local BI UI filters to ExecutiveFilterContext to align all sub-components (SSOT)
   useEffect(() => {
@@ -108,6 +108,7 @@ export default function BusinessIntelligence({
         prev.endDate === uiState.endDate &&
         prev.branchId === uiState.selectedBranchId &&
         prev.departmentId === uiState.selectedDeptId &&
+        prev.employeeId === uiState.selectedEmployeeId &&
         prev.transactionType === uiState.selectedTxType
       ) {
         return prev;
@@ -118,6 +119,7 @@ export default function BusinessIntelligence({
         endDate: uiState.endDate,
         branchId: uiState.selectedBranchId,
         departmentId: uiState.selectedDeptId,
+        employeeId: uiState.selectedEmployeeId,
         transactionType: uiState.selectedTxType,
       };
     });
@@ -126,6 +128,7 @@ export default function BusinessIntelligence({
     uiState.endDate,
     uiState.selectedBranchId,
     uiState.selectedDeptId,
+    uiState.selectedEmployeeId,
     uiState.selectedTxType,
     setExecutiveFilters,
   ]);
@@ -137,7 +140,9 @@ export default function BusinessIntelligence({
     endDate: uiState.endDate,
     branchId: uiState.selectedBranchId,
     departmentId: uiState.selectedDeptId,
-  }), [uiState.startDate, uiState.endDate, uiState.selectedBranchId, uiState.selectedDeptId]);
+    employeeId: uiState.selectedEmployeeId,
+    transactionType: uiState.selectedTxType,
+  }), [uiState.startDate, uiState.endDate, uiState.selectedBranchId, uiState.selectedDeptId, uiState.selectedEmployeeId, uiState.selectedTxType]);
   const { snapshot: cashSnapshot } = useCashBasisSnapshot(filters);
   const { snapshot: accrualSnapshot } = useAccrualBasisSnapshot(filters);
 
@@ -154,6 +159,7 @@ export default function BusinessIntelligence({
     forensicLogs,
     selectedBranchId: uiState.selectedBranchId,
     selectedDeptId: uiState.selectedDeptId,
+    selectedEmployeeId: uiState.selectedEmployeeId,
     selectedTxType: uiState.selectedTxType,
     selectedAttendanceStatus: uiState.selectedAttendanceStatus,
     selectedPaymentModel: uiState.selectedPaymentModel,
@@ -162,6 +168,7 @@ export default function BusinessIntelligence({
     rankBy: uiState.rankBy,
     language: language as "fr" | "ht" | "en",
     isSimplifiedMode: uiState.isSimplifiedMode,
+    accountingBasis: uiState.accountingBasis,
   });
 
   // AI CFO Advisor
@@ -328,11 +335,16 @@ export default function BusinessIntelligence({
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
           <span>
-            Mode Actif : <strong className="text-cyan-300 font-bold">{uiState.isSimplifiedMode ? "Mode Simple — Vue Constaté (Trésorerie / Décaissement)" : "Mode Expert — Vue Engagement (Économique)"}</strong>
+            Mode Actif : <strong className="text-cyan-300 font-bold">{uiState.isSimplifiedMode ? "Vue Simplifiée" : "Vue Expert"}</strong> | Base Comptable :{" "}
+            <strong className={uiState.accountingBasis === "CASH" ? "text-emerald-300 font-bold" : "text-indigo-300 font-bold"}>
+              {uiState.accountingBasis === "CASH" ? "Trésorerie (CASH)" : "Engagement (ACCRUAL)"}
+            </strong>
           </span>
         </div>
         <span className="text-[11px] text-slate-400">
-          {uiState.isSimplifiedMode ? "Comptabilité de caisse (Décaissements effectifs & flux réels sur les 6 onglets)" : "Comptabilité d'engagement (Périodes de travail & salaires engagés sur les 6 onglets)"}
+          {uiState.accountingBasis === "CASH"
+            ? "Comptabilité de caisse (Encaissements & décaissements effectifs sur les 6 onglets)"
+            : "Comptabilité d'engagement (Droits constatés, exercices & salaires engagés sur les 6 onglets)"}
         </span>
       </div>
 
@@ -379,6 +391,7 @@ export default function BusinessIntelligence({
             biSnapshot={dataAgg.biSnapshot}
             handleSaveSnapshot={handleSaveSnapshot}
             isSimplifiedMode={uiState.isSimplifiedMode}
+            accountingBasis={uiState.accountingBasis}
             cashSnapshot={cashSnapshot}
             accrualSnapshot={accrualSnapshot}
           />
@@ -387,9 +400,9 @@ export default function BusinessIntelligence({
             <ExecutiveIntelligenceCenter />
           </div>
 
-          {!uiState.isSimplifiedMode && (
+          {(uiState.accountingBasis === "ACCRUAL" || !uiState.isSimplifiedMode) && (
             <div className="mt-8">
-              <ReconciliationBridge snapshot={accrualSnapshot} />
+              <ReconciliationBridge snapshot={accrualSnapshot} currency={execFilters.currency || "HTG"} />
             </div>
           )}
 

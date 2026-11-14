@@ -13,7 +13,7 @@ interface UseBIUIStateParams {
 }
 
 export function useBIUIState(params?: UseBIUIStateParams) {
-  const { filters, updateFilter } = useExecutiveFilters();
+  const { filters, updateFilter, setAccountingBasis: setExecAccountingBasis, setPresentationMode: setExecPresentationMode } = useExecutiveFilters();
 
   // Delegation of filter parameters to the shared global ExecutiveFilterContext
   const selectedBranchId = filters.branchId;
@@ -33,12 +33,11 @@ export function useBIUIState(params?: UseBIUIStateParams) {
 
   const accountingBasis = filters.accountingBasis || filters.accountingMode || "CASH";
   const setAccountingBasis = (basis: "CASH" | "ACCRUAL") => {
-    updateFilter("accountingBasis", basis);
-    updateFilter("accountingMode", basis);
+    setExecAccountingBasis(basis);
   };
 
   const presentationMode = filters.presentationMode || "SIMPLIFIED";
-  const setPresentationMode = (mode: "SIMPLIFIED" | "EXPERT") => updateFilter("presentationMode", mode);
+  const setPresentationMode = (mode: "SIMPLIFIED" | "EXPERT") => setExecPresentationMode(mode);
 
   const isSimplifiedMode = presentationMode === "SIMPLIFIED";
   const setIsSimplifiedMode = (val: boolean) => setPresentationMode(val ? "SIMPLIFIED" : "EXPERT");

@@ -13,7 +13,7 @@ const ExecutiveAttendanceComponent: React.FC<ExecutiveAttendanceProps> = ({ snap
   const rawAttRate = stabilizedSnapshot?.attendanceRate?.currentValue ?? null;
   const attRate =
     typeof rawAttRate === "number" && !isNaN(rawAttRate)
-      ? Math.min(100, Math.max(0, Math.round(rawAttRate)))
+      ? Math.min(100, Math.max(0, parseFloat(rawAttRate.toFixed(1))))
       : null;
   const activeStaffCount = stabilizedSnapshot?.activeStaff?.currentValue ?? 0;
   const checkedInCount = attRate !== null ? Math.round((activeStaffCount * attRate) / 100) : null;

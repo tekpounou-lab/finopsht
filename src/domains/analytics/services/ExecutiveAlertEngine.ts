@@ -15,7 +15,7 @@ export class ExecutiveAlertEngine {
   /**
    * Generates a dynamic array of executive and financial alerts based on the snapshot.
    */
-  static generateAlerts(snapshot: AnalyticsSnapshot): ExecutiveAlert[] {
+  static generateAlerts(snapshot: AnalyticsSnapshot, currency: string = "HTG"): ExecutiveAlert[] {
     const alerts: ExecutiveAlert[] = [];
     const nowStr = new Date().toISOString();
 
@@ -26,7 +26,7 @@ export class ExecutiveAlertEngine {
         id: "alert_rev_drop",
         severity: "CRITICAL",
         title: "Significant Revenue Drop Detected",
-        description: `Revenue has decreased by ${Math.abs(rev.differencePercentage).toFixed(1)}% compared to the previous period. Current: ${rev.currentValue.toLocaleString()} HTG, Prev: ${rev.previousValue.toLocaleString()} HTG.`,
+        description: `Revenue has decreased by ${Math.abs(rev.differencePercentage).toFixed(1)}% compared to the previous period. Current: ${rev.currentValue.toLocaleString()} ${currency}, Prev: ${rev.previousValue.toLocaleString()} ${currency}.`,
         source: "All Operations",
         suggestedAction: "Audit branch transaction cycles, evaluate promotional efforts, or cross-verify open ledger entries.",
         relatedKpi: "Revenue",
@@ -41,7 +41,7 @@ export class ExecutiveAlertEngine {
         id: "alert_payroll_spike",
         severity: "WARNING",
         title: "Personnel Budget Overrun Alert",
-        description: `Payroll costs rose by ${payroll.differencePercentage.toFixed(1)}% (+${(payroll.difference || 0).toLocaleString()} HTG). This indicates budget creep.`,
+        description: `Payroll costs rose by ${payroll.differencePercentage.toFixed(1)}% (+${(payroll.difference || 0).toLocaleString()} ${currency}). This indicates budget creep.`,
         source: "Human Resources",
         suggestedAction: "Review overtime hours, recently authorized contract rate upgrades, or commission disbursements.",
         relatedKpi: "Payroll Cost",
@@ -72,7 +72,7 @@ export class ExecutiveAlertEngine {
         id: "alert_cash_low",
         severity: "CRITICAL",
         title: "Working Capital Safety Level Breach",
-        description: `Cash balance is at ${cash.currentValue.toLocaleString()} HTG, which is below the threshold required to handle immediate payroll runs safely.`,
+        description: `Cash balance is at ${cash.currentValue.toLocaleString()} ${currency}, which is below the threshold required to handle immediate payroll runs safely.`,
         source: "Treasury Department",
         suggestedAction: "Postpone secondary non-essential ledger disbursements and accelerate active accounts receivable.",
         relatedKpi: "Cash Balance",
@@ -88,7 +88,7 @@ export class ExecutiveAlertEngine {
           id: `alert_dept_budget_${d.departmentId}`,
           severity: "WARNING",
           title: `Budget Spike: ${d.departmentName}`,
-          description: `The ${d.departmentName} department generated ${d.expenses.toLocaleString()} HTG in operational expenses this period.`,
+          description: `The ${d.departmentName} department generated ${d.expenses.toLocaleString()} ${currency} in operational expenses this period.`,
           source: `Department: ${d.departmentName}`,
           suggestedAction: "Inspect recent material acquisitions, payroll allocation lines, and vendor transactions.",
           relatedKpi: "Department Performance",

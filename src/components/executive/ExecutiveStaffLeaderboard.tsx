@@ -6,13 +6,25 @@ import { useLoggedSnapshot, getSnapshotSemanticSignature } from "../../hooks/use
 interface ExecutiveStaffLeaderboardProps {
   snapshot: AnalyticsSnapshot | null;
   employees?: any[];
+  branches?: { id: string; branch_id?: string; name?: string }[];
+  currency?: string;
 }
 
 const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProps> = ({
   snapshot,
-  employees = [],
+  branches = [],
+  currency = "HTG",
 }) => {
   const { stabilizedSnapshot } = useLoggedSnapshot("EXECUTIVE_STAFF_LEADERBOARD", snapshot);
+
+  const branchNameMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    (branches || []).forEach((b) => {
+      if (b.id && b.name) map.set(b.id, b.name);
+      if (b.branch_id && b.name) map.set(b.branch_id, b.name);
+    });
+    return map;
+  }, [branches]);
 
   const leaderboardData = React.useMemo(() => {
     if (stabilizedSnapshot?.employeeScorecards && stabilizedSnapshot.employeeScorecards.length > 0) {
@@ -25,21 +37,11 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
           sc.attendanceConsistencyScore !== null && sc.attendanceConsistencyScore !== undefined
             ? Math.round((sc.attendanceConsistencyScore + sc.productivityIndex) / 2)
             : Math.round(sc.productivityIndex || 0),
-        branchName: "Bureau Central",
+        branchName: (sc.branchId && branchNameMap.get(sc.branchId)) || "Non assignée",
       }));
     }
-    return employees.slice(0, 6).map((emp) => ({
-      employeeId: emp.id || emp.employeeId,
-      employeeName:
-        `${emp.firstName || emp.first_name || ""} ${emp.lastName || emp.last_name || ""}`.trim() ||
-        emp.name ||
-        "Collaborateur",
-      netPaid: emp.netPaid || emp.salary || 0,
-      hoursWorked: emp.hoursWorked || emp.workedHours || 0,
-      performanceScore: emp.performanceScore || 0,
-      branchName: emp.branchName || "Bureau Central",
-    }));
-  }, [stabilizedSnapshot, employees]);
+    return [];
+  }, [stabilizedSnapshot, branchNameMap]);
 
   return (
     <div className="bg-slate-900/70 border border-slate-800/80 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
@@ -66,7 +68,7 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
               const pay = staff.netPaid ?? staff.amount ?? 0;
               return (
                 <div
-                  key={idx}
+                  key={staff.employeeId || idx}
                   className="p-3 bg-slate-950/60 border border-slate-800/60 rounded-xl flex justify-between items-center hover:border-slate-700 transition-colors"
                 >
                   <div className="flex items-center gap-3">
@@ -88,7 +90,7 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
                         {staff.employeeName}
                       </span>
                       <span className="text-[10px] font-mono text-slate-500">
-                        {staff.branchName || "Bureau Central"}
+                        {staff.branchName}
                       </span>
                     </div>
                   </div>
@@ -97,7 +99,7 @@ const ExecutiveStaffLeaderboardComponent: React.FC<ExecutiveStaffLeaderboardProp
                       {hours} hrs réelles
                     </span>
                     <span className="text-[10px] text-slate-400">
-                      {pay > 0 ? `${pay.toLocaleString()} HTG` : "Pointage régulier"}
+                      {pay > 0 ? `${pay.toLocaleString()} ${currency}` : "Pointage régulier"}
                     </span>
                   </div>
                 </div>
@@ -118,5 +120,7 @@ export const ExecutiveStaffLeaderboard = React.memo(
   ExecutiveStaffLeaderboardComponent,
   (prev, next) =>
     prev.employees === next.employees &&
+    prev.branches === next.branches &&
+    prev.currency === next.currency &&
     getSnapshotSemanticSignature(prev.snapshot) === getSnapshotSemanticSignature(next.snapshot)
 );

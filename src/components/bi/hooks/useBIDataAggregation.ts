@@ -39,6 +39,7 @@ interface UseBIDataAggregationParams {
   forensicLogs?: ForensicLog[];
   selectedBranchId: string;
   selectedDeptId: string;
+  selectedEmployeeId?: string;
   selectedTxType?: string;
   selectedAttendanceStatus?: string;
   selectedPaymentModel?: string;
@@ -48,6 +49,7 @@ interface UseBIDataAggregationParams {
   employeeRankMetric?: RankMetricType;
   language: "fr" | "ht" | "en";
   isSimplifiedMode?: boolean;
+  accountingBasis?: "CASH" | "ACCRUAL";
 }
 
 export function useBIDataAggregation({
@@ -61,6 +63,7 @@ export function useBIDataAggregation({
   departments = [],
   selectedBranchId,
   selectedDeptId,
+  selectedEmployeeId = "ALL",
   selectedTxType = "ALL",
   selectedAttendanceStatus = "ALL",
   selectedPaymentModel = "ALL",
@@ -70,9 +73,12 @@ export function useBIDataAggregation({
   employeeRankMetric,
   language,
   isSimplifiedMode = false,
+  accountingBasis,
 }: UseBIDataAggregationParams) {
-  const { snapshot, loading, status } = useAnalytics();
-  const { selectedCurrency, businessSettings } = useBusinessContext();
+  const effectiveAccountingBasis: "CASH" | "ACCRUAL" = accountingBasis || (isSimplifiedMode ? "CASH" : "ACCRUAL");
+  const isCashBasis = effectiveAccountingBasis === "CASH";
+  const { snapshot, loading, status, contracts: ctxContracts } = useAnalytics();
+  const { selectedCurrency, businessSettings, employeeContracts, payrollCycles, departmentActivities } = useBusinessContext() as any;
   const [usdToHtgRate, setUsdToHtgRate] = useState<number>(135.0);
   const [normalizationContext, setNormalizationContext] = useState<NormalizationContext>({});
 
@@ -162,9 +168,9 @@ export function useBIDataAggregation({
       const txStatus = String(tx.status || "").toUpperCase();
       if (txStatus === "REVERSED" || txStatus === "VOID" || txStatus === "CANCELLED") return false;
 
-      // ANO-BI-01: In Cash-Basis (isSimplifiedMode = true), strictly require effective settled cash movements.
+      // ANO-BI-01: In Cash-Basis (accountingBasis === "CASH"), strictly require effective settled cash movements.
       // Pure accounting accruals (status POSTED without treasury leg or cash settlement) are strictly excluded.
-      if (isSimplifiedMode) {
+      if (isCashBasis) {
         if (["PENDING", "DRAFT", "REOPENED", "VOID", "VOIDED", "CANCELLED", "REVERSED"].includes(txStatus)) {
           return false;
         }
@@ -188,11 +194,6 @@ export function useBIDataAggregation({
           return false;
         }
 
-        // A transaction is admitted in Cash-Basis ONLY if it represents an actual cash settlement:
-        // - Explicitly settled (PAID, SETTLED, CLEARED, isSettled=true), OR
-        // - Tied to a physical cash register / till session, OR
-        // - Touches treasury accounts (Class 10) with an explicit cash payment method, OR
-        // - Touches treasury accounts and is NOT an uncollected receivable/payable leg (12xx/20xx).
         const isCashMovement =
           isExplicitlySettled ||
           isTillOrCashPhysical ||
@@ -233,17 +234,18 @@ export function useBIDataAggregation({
         if (!matchesDept) return false;
       }
 
+      if (selectedEmployeeId !== "ALL" && txEmpId !== selectedEmployeeId) return false;
       if (selectedTxType !== "ALL" && tx.type !== selectedTxType && (tx as any).category !== selectedTxType) return false;
       return true;
     });
-  }, [ledgerTransactions, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedTxType, isSimplifiedMode, empBranchMap, empDeptMap, branches, departments]);
+  }, [ledgerTransactions, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedEmployeeId, selectedTxType, isCashBasis, empBranchMap, empDeptMap, branches, departments]);
 
   const filteredTx = useMemo(() => {
     return scopedTx.filter((tx) => {
-      const txDate = resolveAnalyticsTxDate(tx, isSimplifiedMode);
+      const txDate = resolveAnalyticsTxDate(tx, isCashBasis);
       return matchesDateFilter(txDate, startDate, endDate);
     });
-  }, [scopedTx, startDate, endDate, isSimplifiedMode]);
+  }, [scopedTx, startDate, endDate, isCashBasis]);
 
   const normalizeDateStr = (rawDate: any): string => {
     if (!rawDate) return "";
@@ -359,16 +361,18 @@ export function useBIDataAggregation({
       const recBizId = rec.business_id || (rec as any).businessId;
       if (recBizId && recBizId !== currentBusiness.id) return false;
       
-      const rBranch = rec.branchId || (rec as any).branch_id || (rec.employeeId ? empBranchMap.get(rec.employeeId) : undefined);
+      const rEmp = rec.employeeId || (rec as any).employee_id;
+      const rBranch = rec.branchId || (rec as any).branch_id || (rEmp ? empBranchMap.get(rEmp) : undefined);
       if (selectedBranchId !== "ALL" && (!rBranch || rBranch !== selectedBranchId)) return false;
       
-      const rDept = rec.departmentId || (rec as any).department_id || (rec.employeeId ? empDeptMap.get(rec.employeeId) : undefined);
+      const rDept = rec.departmentId || (rec as any).department_id || (rEmp ? empDeptMap.get(rEmp) : undefined);
       if (selectedDeptId !== "ALL" && (!rDept || rDept !== selectedDeptId)) return false;
+      if (selectedEmployeeId !== "ALL" && rEmp !== selectedEmployeeId) return false;
 
       if (selectedAttendanceStatus !== "ALL" && rec.status !== selectedAttendanceStatus) return false;
       return true;
     });
-  }, [attendanceRecords, currentBusiness?.id, selectedBranchId, selectedDeptId, empDeptMap, empBranchMap, selectedAttendanceStatus]);
+  }, [attendanceRecords, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedEmployeeId, empDeptMap, empBranchMap, selectedAttendanceStatus]);
 
   const filteredAttendance = useMemo(() => {
     return scopedAttendance.filter((rec) => {
@@ -384,7 +388,7 @@ export function useBIDataAggregation({
       if (recBizId && recBizId !== currentBusiness.id) return false;
       if (rec.isExcluded) return false;
 
-      if (isSimplifiedMode) {
+      if (isCashBasis) {
         const pStatus = String(rec.status || "").toUpperCase();
         if (pStatus === "DRAFT" || pStatus === "PENDING" || pStatus === "REJECTED" || pStatus === "VOID") return false;
       }
@@ -396,17 +400,18 @@ export function useBIDataAggregation({
 
       if (selectedBranchId !== "ALL" && (!rBranch || rBranch !== selectedBranchId)) return false;
       if (selectedDeptId !== "ALL" && (!rDept || rDept !== selectedDeptId)) return false;
+      if (selectedEmployeeId !== "ALL" && rEmpId !== selectedEmployeeId) return false;
 
       return true;
     });
-  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, isSimplifiedMode, empBranchMap, empDeptMap]);
+  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedEmployeeId, isCashBasis, empBranchMap, empDeptMap]);
 
   const filteredPayrolls = useMemo(() => {
     return scopedPayrolls.filter((rec) => {
-      const pDate = resolveAnalyticsPayrollDate(rec, isSimplifiedMode);
+      const pDate = resolveAnalyticsPayrollDate(rec, isCashBasis);
       return matchesDateFilter(pDate, startDate, endDate);
     });
-  }, [scopedPayrolls, startDate, endDate, isSimplifiedMode]);
+  }, [scopedPayrolls, startDate, endDate, isCashBasis]);
 
   const filteredEmployees = useMemo(() => {
     return operationalEmployees.filter((emp) => {
@@ -421,6 +426,7 @@ export function useBIDataAggregation({
 
       if (selectedBranchId !== "ALL" && (!empBranch || empBranch !== selectedBranchId)) return false;
       if (selectedDeptId !== "ALL" && (!empDept || empDept !== selectedDeptId)) return false;
+      if (selectedEmployeeId !== "ALL" && emp.id !== selectedEmployeeId) return false;
       if (selectedPaymentModel !== "ALL" && emp.paymentModel !== selectedPaymentModel) return false;
 
       return true;
@@ -429,6 +435,7 @@ export function useBIDataAggregation({
     operationalEmployees,
     selectedBranchId,
     selectedDeptId,
+    selectedEmployeeId,
     selectedPaymentModel,
   ]);
 
@@ -459,22 +466,26 @@ export function useBIDataAggregation({
     (selectedAttendanceStatus && selectedAttendanceStatus !== "ALL")
   ), [selectedBranchId, selectedDeptId, startDate, endDate, selectedTxType, selectedPaymentModel, selectedAttendanceStatus]);
 
-  // Canonical SSOT Snapshot Calculation for Filtered State
+  // Canonical SSOT Snapshot Calculation for Filtered State (uses non-date-clipped scoped collections so trends, cumulative cashOnHand & proration match AnalyticsContext)
+  const resolvedContracts = (ctxContracts && ctxContracts.length > 0) ? ctxContracts : (employeeContracts || []);
   const computedSnapshot = useMemo(() => {
     if (!currentBusiness?.id) return null;
     return AnalyticsEngine.generateSnapshot({
       period: "CUSTOM",
       customRange: { startDate: startDate ?? "", endDate: endDate ?? "" },
       employees: filteredEmployees,
-      transactions: filteredTx,
-      attendanceLogs: filteredAttendance,
-      payrollRecords: filteredPayrolls,
+      transactions: scopedTx,
+      attendanceLogs: scopedAttendance,
+      payrollRecords: scopedPayrolls,
       branches,
       departments,
+      contracts: resolvedContracts,
+      payrollCycles: payrollCycles || [],
+      activities: departmentActivities || [],
       businessId: currentBusiness.id,
       language: language as "fr" | "ht" | "en",
       businessSettings: { ...businessSettings, ...currentBusiness?.settings },
-      accountingMode: isSimplifiedMode ? "CASH" : "ACCRUAL",
+      accountingMode: effectiveAccountingBasis,
       normalizationContext
     });
   }, [
@@ -485,12 +496,15 @@ export function useBIDataAggregation({
     endDate,
     language,
     filteredEmployees,
-    filteredTx,
-    filteredAttendance,
-    filteredPayrolls,
+    scopedTx,
+    scopedAttendance,
+    scopedPayrolls,
     branches,
     departments,
-    isSimplifiedMode,
+    resolvedContracts,
+    payrollCycles,
+    departmentActivities,
+    effectiveAccountingBasis,
     normalizationContext
   ]);
 
@@ -903,7 +917,7 @@ export function useBIDataAggregation({
         formattedExpenses: formatCurrencyValue(expenses),
       };
     });
-  }, [biSnapshot?.departmentPerformance, departments, filteredEmployees, filteredTx, filteredPayrolls, employees, currentBusiness?.id, formatCurrencyValue]);
+  }, [effectiveSnapshot?.departmentPerformance, departments, filteredEmployees, filteredTx, filteredPayrolls, employees, currentBusiness?.id, formatCurrencyValue]);
 
   // Ranked Employees
   const effectiveRankMetric = rankBy || employeeRankMetric || "productivity";
@@ -969,7 +983,7 @@ export function useBIDataAggregation({
       });
 
     return items;
-  }, [biSnapshot?.historicalTrends, filteredTx, isFiltered]);
+  }, [effectiveSnapshot?.historicalTrends, filteredTx, isFiltered]);
 
   // Expense Categories
   const expenseCategoryChartData = useMemo(() => {
@@ -999,7 +1013,7 @@ export function useBIDataAggregation({
     }));
 
     return entries.length > 0 ? entries : [{ name: "Aucune Dépense", value: 1 }];
-  }, [biSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost]);
+  }, [effectiveSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost]);
 
   // Dashboard Chart Data
   const dashboardChartData = useMemo(() => {
@@ -1073,7 +1087,7 @@ export function useBIDataAggregation({
       startDate,
       endDate,
       currency: selectedCurrency || "HTG",
-      accountingMode: isSimplifiedMode ? "CASH" : "ACCRUAL",
+      accountingMode: effectiveAccountingBasis,
     });
   }, [
     currentBusiness?.id,
@@ -1087,7 +1101,7 @@ export function useBIDataAggregation({
     startDate,
     endDate,
     selectedCurrency,
-    isSimplifiedMode,
+    effectiveAccountingBasis,
   ]);
 
   // Phase 6D Workforce Planning, Forecasting & Labor Capacity Intelligence Dataset
@@ -1203,8 +1217,8 @@ export function useBIDataAggregation({
     phase6cDataset,
     phase6dDataset,
     phase7Dataset,
-    biSnapshot,
-    snapshot: biSnapshot,
+    biSnapshot: effectiveSnapshot,
+    snapshot: effectiveSnapshot,
     usdToHtgRate,
     isSocialTaxEnabled,
     selectedCurrency,
