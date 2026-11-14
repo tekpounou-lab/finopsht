@@ -29,6 +29,11 @@ import { useAuth } from '../hooks/useAuth';
 import { auth } from '../lib/firebase';
 import { TransactionMappingEngine } from '../services/cash/transactionMappingEngine';
 import { EventBus } from '../modules/runtime/EventBus';
+import {
+  EXECUTIVE_RBAC_ROLES,
+  extractRawOperationalProfileFromRecord,
+  validateRoleOperationalProfileCompatibility
+} from '../domains/rbac/operationalProfilePolicy';
 
 const DEFAULT_GL_FILTERS: LedgerFilterParams = {
   type: ['ALL'],
@@ -78,6 +83,30 @@ export default function FinanceLedger({
   const { language } = useI18n();
   const tText = useTranslate();
   const { user: authUser } = useAuth();
+
+  const currentEmployee = React.useMemo(() => {
+    const uid = authUser?.uid || auth.currentUser?.uid;
+    const email = (authUser?.email || auth.currentUser?.email || '').toLowerCase().trim();
+    return employees.find(
+      (e) =>
+        (uid && (e.firebase_uid === uid || (e as any).uid === uid || e.id === uid)) ||
+        (email && (e.email || '').toLowerCase().trim() === email)
+    );
+  }, [employees, authUser]);
+
+  const currentEmployeeProfileInfo = React.useMemo(
+    () =>
+      currentEmployee
+        ? extractRawOperationalProfileFromRecord(currentEmployee as unknown as Record<string, unknown>)
+        : { hasValue: false, rawValue: undefined, conflict: false },
+    [currentEmployee]
+  );
+
+  const currentOperationalProfile = currentEmployeeProfileInfo.conflict
+    ? null
+    : typeof currentEmployeeProfileInfo.rawValue === 'string'
+      ? currentEmployeeProfileInfo.rawValue
+      : null;
   
   // Centralized SSOT Filter Store for General Ledger
   const {
@@ -419,15 +448,39 @@ export default function FinanceLedger({
 
   const handleSaveTransaction = async (txData: Partial<LedgerTransaction>) => {
     const roleUpper = (currentRole || '').toUpperCase();
-    const canSave = ['OWNER', 'MANAGER', 'SUPER_ADMIN', 'ACCOUNTANT', 'HEAD_TELLER', 'SENIOR_TELLER', 'JUNIOR_TELLER'].includes(roleUpper);
+    const canSave = [
+      'OWNER',
+      'ADMIN',
+      'MANAGER',
+      'SUPER_ADMIN',
+      'ACCOUNTANT',
+      'MASTER_HEAD_TELLER',
+      'HEAD_TELLER',
+      'SENIOR_TELLER',
+      'JUNIOR_TELLER',
+      'TELLER',
+      'EMPLOYEE'
+    ].includes(roleUpper);
     if (!canSave) {
       toast.error(tText("Accès refusé."));
       return;
     }
 
-    // Defense-in-depth: Validate operational profile boundaries for operational staff
-    if (roleUpper !== 'OWNER' && roleUpper !== 'SUPER_ADMIN' && roleUpper !== 'MANAGER') {
-      const opProfile = TransactionMappingEngine.resolveOperationalProfile(currentRole);
+    // Defense-in-depth: Enforce server-aligned Role x operational_profile boundaries for non-executive roles
+    if (!EXECUTIVE_RBAC_ROLES.has(roleUpper) && roleUpper !== 'ACCOUNTANT') {
+      if (currentEmployeeProfileInfo.conflict) {
+        toast.error(tText("Conflit détecté entre operational_profile et operationalProfile (accès refusé)."));
+        return;
+      }
+      const compat = validateRoleOperationalProfileCompatibility(
+        roleUpper,
+        currentEmployeeProfileInfo.rawValue,
+        { allowLegacyBarberAlias: roleUpper === 'EMPLOYEE', allowMissingForExecutiveOrOversight: false }
+      );
+      if (!compat.valid || !compat.normalizedProfile) {
+        toast.error(tText(compat.reason || "Profil opérationnel manquant ou incompatible avec votre rôle."));
+        return;
+      }
       if (txData.transaction_type_code || txData.category) {
         const check = TransactionMappingEngine.isOperationAllowedForProfile(
           {
@@ -435,7 +488,8 @@ export default function FinanceLedger({
             category: txData.category as any,
             name: txData.description
           },
-          opProfile
+          compat.normalizedProfile,
+          roleUpper
         );
         if (!check.isAllowed) {
           toast.error(tText(check.reason || "Opération non autorisée pour votre profil RH."));
@@ -674,6 +728,7 @@ export default function FinanceLedger({
         current_business_id={current_business_id}
         onSave={handleSaveTransaction}
         currentRole={currentRole}
+        currentOperationalProfile={currentOperationalProfile}
       />
 
       <BulkTransactionImportDialog 

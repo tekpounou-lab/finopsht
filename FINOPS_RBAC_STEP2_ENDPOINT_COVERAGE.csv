@@ -1,0 +1,7 @@
+Endpoint_ID,HTTP_Method,Path,Required_Permission,Maker_Rule,Checker_Rule,Actor_Constraint,Verification_Status
+EP-01,POST,/api/approvals/payroll/initiate,manage_payroll,MANAGER/ACCOUNTANT creates draft cycle,Denied approval on creation,initiatorId recorded in approval instance,PASS
+EP-02,POST,/api/approvals/:instanceId/decide,payroll.approve,Must be distinct from initiator,ACCOUNTANT/MANAGER eligible,actorId !== initiatorId,PASS
+EP-03,POST,/api/approvals/:instanceId/cancel,manage_payroll,Initiator or OWNER can cancel,Denied to non-initiators,actorId === initiatorId || role === OWNER,PASS
+EP-04,POST,/api/payroll/receivables/approve,payroll.approve,MANAGER submits receivable proposal,ACCOUNTANT approves recovery,actorId !== initiatorId,PASS
+EP-05,POST,/api/payroll/receivables/repayment,payroll.approve,MANAGER registers payment,ACCOUNTANT validates repayment,actorId !== initiatorId,PASS
+EP-06,INTERNAL,PayrollService.sealPayrollCycle,payroll.lock,Cycle prepared by Maker,ACCOUNTANT/MANAGER seals cycle,actorId !== initiatorId,PASS

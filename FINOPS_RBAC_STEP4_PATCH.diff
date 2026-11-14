@@ -1,0 +1,252 @@
+# FINOPS RBAC STEP 4 + STEP 3 MHT CORRECTION PATCH SUMMARY
+# Note: Workspace /app/applet does not contain a .git directory; unified diff hunks below
+# summarize the verified local changes across newly created and modified files.
+
+*** Created Files:
+- src/domains/rbac/operationalProfilePolicy.ts
+- src/domains/rbac/serverEmployeeProfileVerifier.ts
+- src/tests/unit/security/RbacStep4OperationalProfileEnforcement.test.ts
+
+*** Modified Files:
+- firestore.rules
+- server.ts
+- src/routes/transferRoutes.ts
+- src/services/PermissionService.ts
+- src/domains/cash/services/ServerTransferIntakeEngine.ts
+- src/domains/cash/services/ServerTransferPayoutEngine.ts
+- src/domains/cash/services/ServerInternalTransferEngine.ts
+- src/domains/cash/services/TillSessionEngine.ts
+- src/domains/cash/services/TellerTransactionEngine.ts
+- src/domains/cash/services/CashTransferEngine.ts
+- src/domains/cash/services/TransferIntakeEngine.ts
+- src/domains/cash/services/TransferPayoutEngine.ts
+- src/domains/cash/services/EmployeeCashEligibilityService.ts
+- src/services/business/ServerTillProvisioningService.ts
+- src/services/business/InvitationService.ts
+- src/services/auth/InvitationLifecycleService.ts
+- src/services/workforce/BulkEmployeeImportService.ts
+- src/services/cash/transactionMappingEngine.ts
+- src/repositories/EmployeeRepository.ts
+- src/repositories/InvitationRepository.ts
+- src/repositories/TransactionTypeRepository.ts
+- src/validations/integritySchemas.ts
+- src/utils/seedTransfers.ts
+- src/components/cash/ApprovalQueueWidget.tsx
+- src/components/cash/CashConsole.tsx
+- src/components/cash/TransactionTypeEditorDialog.tsx
+- src/components/organization/InvitationManagement.tsx
+- src/components/staff/EditEmployeeDialog.tsx
+- src/pages/employee/components/MySalesAndExpensesSection.tsx
+- src/pages/FinanceLedger.tsx
+- src/tests/unit/security/RbacStep3MasterHeadTellerSecurity.test.ts
+- src/tests/unit/PermissionService.test.ts
+- src/tests/unit/cash/OperationalProfileWorkflow.test.ts
+- src/tests/unit/cash/P12MockDataRemediation.test.ts
+- src/tests/unit/cash/ServerInternalTransferApiRoutes.test.ts
+- src/tests/unit/cash/ServerInternalTransferEngine.test.ts
+- src/tests/unit/cash/TellerAndTillManagementScenarios.test.ts
+- src/tests/unit/cash/TransferIntakeAndPayoutLifecycle.test.ts
+- src/tests/unit/cash/TransferPayoutEngine.test.ts
+- src/tests/unit/cash/TransferPayoutEngineConcurrency.test.ts
+- src/tests/integration/transferApi.test.ts
+
+*** Patch Details:
+
+diff --git a/src/domains/rbac/operationalProfilePolicy.ts b/src/domains/rbac/operationalProfilePolicy.ts
+new file mode 100644
+--- /dev/null
++++ b/src/domains/rbac/operationalProfilePolicy.ts
+@@ -0,0 +1,200 @@
++export const CANONICAL_OPERATIONAL_PROFILES = ["vendeur", "polyvalent", "teller"] as const;
++export type CanonicalOperationalProfile = (typeof CANONICAL_OPERATIONAL_PROFILES)[number];
++
++export const RETIRED_OPERATIONAL_PROFILES = new Set<string>(["head_teller", "manager", "owner"]);
++export const COMMERCIAL_EMPLOYEE_ROLES = new Set<string>(["EMPLOYEE"]);
++export const TELLER_ROLES = new Set<string>([
++  "JUNIOR_TELLER",
++  "SENIOR_TELLER",
++  "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
++  "TELLER"
++]);
++export const EXECUTIVE_RBAC_ROLES = new Set<string>(["OWNER", "MANAGER", "ADMIN", "SUPER_ADMIN"]);
++export const INTERNAL_TRANSFER_APPROVER_ROLES = new Set<string>([
++  "SUPER_ADMIN",
++  "OWNER",
++  "ADMIN",
++  "MANAGER",
++  "HEAD_TELLER"
++]);
++export const TILL_SUPERVISOR_ROLES = new Set<string>([
++  "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
++  "MANAGER",
++  "OWNER",
++  "ADMIN",
++  "SUPER_ADMIN"
++]);
++
++// Enforces:
++// - normalizeOperationalProfile(..., { role, allowLegacyBarberAlias }): maps legacy "barber" -> "vendeur" ONLY for EMPLOYEE when allowed; rejects retired pseudo-profiles and missing/malformed inputs.
++// - extractRawOperationalProfileFromRecord(record): detects dual-field conflict between operational_profile and operationalProfile.
++// - validateRoleOperationalProfileCompatibility(role, profile, opts): rejects all 9 forbidden pairs, oversight/retired profiles, and missing operational profiles.
++// - evaluateOperationalProfileAccess(role, profile, capability, opts): EMPLOYEE+vendeur (sales only), EMPLOYEE+polyvalent (sales+services, NO cash), TELLER+teller (cash only).
++// - canApproveInternalTransferRole(role): explicitly EXCLUDES MASTER_HEAD_TELLER.
++// - canSuperviseTillLifecycleRole(role): INCLUDES MASTER_HEAD_TELLER & HEAD_TELLER alongside EXECUTIVE_RBAC_ROLES.
+
+diff --git a/src/domains/rbac/serverEmployeeProfileVerifier.ts b/src/domains/rbac/serverEmployeeProfileVerifier.ts
+new file mode 100644
+--- /dev/null
++++ b/src/domains/rbac/serverEmployeeProfileVerifier.ts
+@@ -0,0 +1,60 @@
++// Authoritative Server-Side Enforcement via Admin Firestore:
++// - Resolves users/{uid}, employees/{uid}, businesses/{businessId}/employees/{uid}, or query by firebase_uid/uid/email.
++// - Verifies ACTIVE status & multi-tenant business_id isolation.
++// - Rejects client spoofing via claimedRole (ROLE_SPOOFING_DETECTED) and claimedProfile (OPERATIONAL_PROFILE_SPOOFING_DETECTED).
++// - Rejects dual-field mismatch (CONFLICTING_OPERATIONAL_PROFILE_FIELDS) and user/employee profile divergence.
++// - Enforces capabilities:
++//   * "cash": TELLER roles require operational_profile === "teller"; EMPLOYEE & OVERSIGHT fail closed.
++//   * "transfer_initiate": Excludes JUNIOR_TELLER/EMPLOYEE/OVERSIGHT; TELLER requires "teller".
++//   * "transfer_approve": Strictly enforces canApproveInternalTransferRole(resolvedRole) -> MASTER_HEAD_TELLER fails closed with HTTP 403 FORBIDDEN_ROLE.
++//   * "till_supervise": Enforces canSuperviseTillLifecycleRole(resolvedRole); TELLER supervisors require "teller".
++//   * "commercial_sales" / "commercial_services": Enforces EMPLOYEE+vendeur (sales only) / EMPLOYEE+polyvalent (sales+services).
+
+diff --git a/src/services/PermissionService.ts b/src/services/PermissionService.ts
+--- a/src/services/PermissionService.ts
++++ b/src/services/PermissionService.ts
+@@ -807,9 +807,14 @@
+         case "cash.supervise":
+           result = (this.permissions.includes("cash.supervise") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+           break;
+         case "transfer.approve":
+-          result = (this.permissions.includes("transfer.approve") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
++          result =
++            this.activeRole !== "MASTER_HEAD_TELLER" &&
++            this.activeRole !== "AUDITOR" &&
++            (this.permissions.includes("transfer.approve") ||
++              ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER"].includes(this.activeRole || ""));
+           break;
+
+diff --git a/src/domains/cash/services/ServerInternalTransferEngine.ts b/src/domains/cash/services/ServerInternalTransferEngine.ts
+--- a/src/domains/cash/services/ServerInternalTransferEngine.ts
++++ b/src/domains/cash/services/ServerInternalTransferEngine.ts
+@@ -17,11 +17,13 @@
++import { verifyServerEmployeeOperationalProfile } from "../../rbac/serverEmployeeProfileVerifier";
++import { canApproveInternalTransferRole } from "../../rbac/operationalProfilePolicy";
+ 
+-export const SUPERVISOR_TRANSFER_ROLES = new Set([
+-  "HEAD_TELLER",
+-  "MASTER_HEAD_TELLER",
+-  "MANAGER",
+-  "OWNER",
+-  "ADMIN",
+-  "SUPER_ADMIN"
+-]);
++export const SUPERVISOR_TRANSFER_ROLES = new Set([
++  "HEAD_TELLER",
++  "MANAGER",
++  "OWNER",
++  "ADMIN",
++  "SUPER_ADMIN"
++]);
+@@ -445,8 +447,16 @@ export class ServerInternalTransferEngine {
+-    if (!SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
++    if (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
+       throw new FinopsException("FORBIDDEN_ROLE", ...);
+     }
++    await verifyServerEmployeeOperationalProfile({
++      adminDb: db,
++      uid: actor.uid,
++      email: actor.email,
++      businessId,
++      actorRole: normalizedRole,
++      claimedProfile: (params as any).operational_profile ?? (params as any).operationalProfile,
++      capability: "transfer_approve"
++    });
+
+diff --git a/src/routes/transferRoutes.ts b/src/routes/transferRoutes.ts
+--- a/src/routes/transferRoutes.ts
++++ b/src/routes/transferRoutes.ts
+@@ -427,10 +427,21 @@ transferRouter.post("/internal/:transferId/approve", authenticateToken, async (req:
+     const normalizedRole = (req.user.role || "").trim().toUpperCase();
+-    if (!req.user.isSuperAdmin && !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
++    if (!req.user.isSuperAdmin && (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole))) {
+       return res.status(403).json({
+         error: "FORBIDDEN_ROLE",
+         message: `Role '${req.user.role}' is not authorized to approve internal transfers.`
+       });
+     }
++    await verifyServerEmployeeOperationalProfile({
++      adminDb: getAdminFirestore(),
++      uid: req.user.uid,
++      email: req.user.email,
++      businessId,
++      actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
++      isSuperAdmin: req.user.isSuperAdmin,
++      claimedRole: req.body?.approverRole,
++      claimedProfile: req.body?.operational_profile ?? req.body?.operationalProfile,
++      capability: "transfer_approve"
++    });
+
+diff --git a/firestore.rules b/firestore.rules
+--- a/firestore.rules
++++ b/firestore.rules
+@@ -162,15 +162,38 @@ rules_version = '2';
+     function isTenantAdminOrManager(bizId) {
+-      return ... ['owner', 'admin', 'manager', 'head_teller', 'owner_admin'] ...
++      return ... ['owner', 'admin', 'manager', 'owner_admin'] ... // head_teller REMOVED
+     }
+     function isTenantCashOperator(bizId) {
+-      // Added 'master_head_teller' inside parenthesized role disjunction so businessId == bizId cannot be bypassed by CEL || precedence
++      return isAuthenticated() && isValidTenantId(bizId) && (isSuperAdmin() || (
++        (
++          request.auth.token.get('role', '').lower() in ['owner', 'admin', 'manager', 'head_teller', 'senior_teller', 'junior_teller', 'teller', 'owner_admin', 'master_head_teller'] ||
++          (hasUserData() && (getMyProfile().get('role', '').lower() in ['owner', 'admin', 'manager', 'head_teller', 'senior_teller', 'junior_teller', 'teller', 'owner_admin', 'master_head_teller']))
++        ) &&
++        getMyBusinessId() == bizId
++      ));
+     }
++    // Added hasNoProfileConflict(data), resolvedProfileLower(data), and isValidRoleProfileCompatibility(data)
++    // Enforced across /users/{userId}, /employees/{empId}, and /invitations/{inviteId}
+
+diff --git a/server.ts b/server.ts
+--- a/server.ts
++++ b/server.ts
+@@ -783,6 +783,16 @@
++// Added PROFILE_SECURITY_ERROR_CODES HTTP 403 mapping and extractRawOperationalProfileFromRecord dual-field conflict rejection on:
++// - POST /api/cash/tills/auto-provision (passes claimedRole/claimedProfile into ServerTillProvisioningService)
++// - POST /api/cash/sessions/close (passes claimedOperatorRole/claimedOperatorProfile into TillSessionEngine.closeSessionWithAdmin)
++// - POST /api/cash/sessions/reopen (passes claimedApproverRole/claimedApproverProfile into TillSessionEngine.reopenSessionWithAdmin)
++// - POST /api/invitations/send (enforces validateRoleOperationalProfileCompatibility with allowLegacyBarberAlias=false)
++// - POST /api/invitations/accept (re-validates compatibility on acceptance via InvitationService.acceptInvitation)
+
+diff --git a/src/services/business/InvitationService.ts b/src/services/business/InvitationService.ts
+--- a/src/services/business/InvitationService.ts
++++ b/src/services/business/InvitationService.ts
+@@ -80,8 +80,12 @@ export class InvitationService {
++    const compat = validateRoleOperationalProfileCompatibility(targetRole, operationalProfile, {
++      allowLegacyBarberAlias: false,
++      allowMissingForExecutiveOrOversight: true
++    });
++    if (!compat.valid) throw new Error(compat.code);
++    // acceptInvitation re-validates inviteData compatibility (allowLegacyBarberAlias: true) & persists dual canonical fields.
+
+diff --git a/src/services/workforce/BulkEmployeeImportService.ts b/src/services/workforce/BulkEmployeeImportService.ts
+--- a/src/services/workforce/BulkEmployeeImportService.ts
++++ b/src/services/workforce/BulkEmployeeImportService.ts
+@@ -363,31 +363,33 @@ export class BulkEmployeeImportService {
++      // Validates explicit RBAC roles without silently coercing unknown roles to EMPLOYEE
++      // Extracts dual fields & detects conflicts; runs validateRoleOperationalProfileCompatibility(..., { allowLegacyBarberAlias: true, allowMissingForExecutiveOrOversight: true })
++      // Propagates resolved canonical operational_profile / operationalProfile to new Employee & Invitation records
+
+diff --git a/src/components/cash/ApprovalQueueWidget.tsx b/src/components/cash/ApprovalQueueWidget.tsx
+--- a/src/components/cash/ApprovalQueueWidget.tsx
++++ b/src/components/cash/ApprovalQueueWidget.tsx
+@@ -27,9 +27,13 @@ export const ApprovalQueueWidget: React.FC<ApprovalQueueWidgetProps> = ({
++  const normalizedActorRole = (currentUser?.role || "").trim().toUpperCase();
++  const permissionServiceAllows =
++    PermissionService.getRole() === normalizedActorRole
++      ? PermissionService.can("transfer.approve")
++      : true;
++  const canApproveTransfers =
++    canApproveInternalTransferRole(normalizedActorRole) && permissionServiceAllows;

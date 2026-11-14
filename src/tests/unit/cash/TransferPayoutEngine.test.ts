@@ -258,7 +258,9 @@ describe("TRANSFER PAYOUT MANAGEMENT — ACCEPTANCE SUITE", () => {
       },
       {
         id: OPERATOR_ID,
-        name: OPERATOR_NAME
+        name: OPERATOR_NAME,
+        role: "TELLER",
+        operational_profile: "teller"
       }
     );
 

@@ -283,6 +283,29 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
     }));
   }, [companyEmployees]);
 
+  const [editingTill, setEditingTill] = useState<CashTill | null>(null);
+  const [editTillName, setEditTillName] = useState("");
+  const [editTillBranchId, setEditTillBranchId] = useState("");
+  const [editTillDeptId, setEditTillDeptId] = useState("");
+  const [editTillTellerId, setEditTillTellerId] = useState("");
+  const [editTillStatus, setEditTillStatus] = useState<"OPEN" | "CLOSED" | "LOCKED">("CLOSED");
+  const [isUpdatingTill, setIsUpdatingTill] = useState(false);
+
+  const eligibleTellerOptionsForEditTill = useMemo(() => {
+    if (!editingTill) return [];
+    const eligible = EmployeeCashEligibilityService.filterEligibleTellers({
+      employees: companyEmployees,
+      businessId,
+      currency: editingTill.currency,
+      existingTills: tills,
+      excludeTillId: editingTill.id
+    });
+    return eligible.map((e) => ({
+      id: e.id,
+      name: `${e.name || e.displayName} — ${e.role || "TELLER"} [Éligible RH]`
+    }));
+  }, [companyEmployees, businessId, editingTill, tills]);
+
   const companyEmployeeNameOptions = useMemo(() => {
     return companyEmployees.map((e) => ({
       id: e.name || e.displayName || e.id,
@@ -317,14 +340,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   const [safeMaxLimit, setSafeMaxLimit] = useState(5000000);
   const [isSavingSafe, setIsSavingSafe] = useState(false);
 
-  // Edit & Suspend Till modal state
-  const [editingTill, setEditingTill] = useState<CashTill | null>(null);
-  const [editTillName, setEditTillName] = useState("");
-  const [editTillBranchId, setEditTillBranchId] = useState("");
-  const [editTillDeptId, setEditTillDeptId] = useState("");
-  const [editTillTellerId, setEditTillTellerId] = useState("");
-  const [editTillStatus, setEditTillStatus] = useState<"OPEN" | "CLOSED" | "LOCKED">("CLOSED");
-  const [isUpdatingTill, setIsUpdatingTill] = useState(false);
+  // Edit & Suspend Till modal state (initialized above for eligibleTellerOptionsForEditTill)
 
   // Edit & Suspend Safe modal state
   const [editingSafe, setEditingSafe] = useState<BranchSafe | null>(null);
@@ -356,6 +372,19 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       return;
     }
     const assignedEmp = companyEmployees.find((e) => e.id === editTillTellerId);
+    if (assignedEmp) {
+      const eligibility = EmployeeCashEligibilityService.isEligibleForTillAssignment({
+        employee: assignedEmp,
+        businessId,
+        currency: editingTill.currency,
+        existingTills: tills,
+        excludeTillId: editingTill.id
+      });
+      if (!eligibility.isEligible) {
+        toast.error(eligibility.reason || "Seul un caissier au profil 'teller' peut être assigné à une caisse.");
+        return;
+      }
+    }
     const selectedBranch = companyBranches.find((b) => b.id === editTillBranchId);
     const selectedDept = companyDepartments.find((d) => d.id === editTillDeptId);
 
@@ -476,7 +505,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   );
 
   const handleOpenCreateTill = () => {
-    const defaultEmp = companyEmployees.length > 0 ? companyEmployees[0] : null;
+    const defaultEmp = eligibleEmployeesForCreateTill.length > 0 ? eligibleEmployeesForCreateTill[0] : null;
     const empId = defaultEmp?.id || "";
     const empName = defaultEmp ? (defaultEmp.name || defaultEmp.displayName || "") : "";
     setSelectedTellerId(empId);
@@ -566,6 +595,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
         "ADMIN",
         "MANAGER",
         "HEAD_TELLER",
+        "MASTER_HEAD_TELLER",
         "SUPER_ADMIN"
       ].includes(normalizedUserRole);
 
@@ -653,6 +683,16 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
     const assignedEmployee = companyEmployees.find((emp) => emp.id === selectedTellerId);
     if (!assignedEmployee) {
       toast.error("L'utilisateur sélectionné n'existe pas dans le registre de l'entreprise.");
+      return;
+    }
+    const eligibility = EmployeeCashEligibilityService.isEligibleForTillAssignment({
+      employee: assignedEmployee,
+      businessId,
+      currency: tillCurrency,
+      existingTills: tills
+    });
+    if (!eligibility.isEligible) {
+      toast.error(eligibility.reason || "Seul un rôle caissier au profil 'teller' peut recevoir une caisse.");
       return;
     }
     const assignedName = assignedEmployee.name || assignedEmployee.displayName || `Employé ${assignedEmployee.id}`;
@@ -2320,10 +2360,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                       <span>Responsable Titulaire (Employé RH) *</span>
                     </label>
                     <SearchableSelect
-                      options={companyEmployeeOptions}
+                      options={eligibleTellerOptionsForEditTill}
                       value={editTillTellerId}
                       onChange={(val) => setEditTillTellerId(val)}
-                      placeholder="-- Sélectionner l'employé responsable --"
+                      placeholder="-- Sélectionner un caissier éligible (profil teller) --"
                     />
                   </div>
 

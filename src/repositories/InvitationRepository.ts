@@ -15,6 +15,10 @@ import { Invitation, Employee } from "../types";
 import { ForensicLogRepository } from "./ForensicLogRepository";
 import { NotificationEngine } from "../modules/workflow/NotificationEngine";
 import { InvitationLifecycleService } from "../services/auth/InvitationLifecycleService";
+import {
+  extractRawOperationalProfileFromRecord,
+  validateRoleOperationalProfileCompatibility
+} from "../domains/rbac/operationalProfilePolicy";
 
 export const InvitationRepository = {
   /**
@@ -54,6 +58,8 @@ export const InvitationRepository = {
       email: string;
       name: string;
       role: Employee["role"];
+      operational_profile?: Employee["operational_profile"];
+      operationalProfile?: Employee["operational_profile"];
       branchId: string;
       departmentId: string;
       position?: string;
@@ -76,6 +82,7 @@ export const InvitationRepository = {
         invitationId: result.invitation.id,
         email: result.invitation.email,
         role: result.invitation.role,
+        operationalProfile: result.invitation.operational_profile || null,
         branchId: result.invitation.branchId,
         departmentId: result.invitation.departmentId
       })
@@ -303,6 +310,27 @@ export const InvitationRepository = {
         const existingEmp = empSnap.exists() ? empSnap.data() : {};
         const existingUser = userSnap.exists() ? userSnap.data() : {};
 
+        const invProfileInfo = extractRawOperationalProfileFromRecord(invitation);
+        const empProfileInfo = extractRawOperationalProfileFromRecord(existingEmp);
+        if (invProfileInfo.conflict || empProfileInfo.conflict) {
+          throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS");
+        }
+        const effectiveRole = invitation.role || existingEmp.role;
+        const rawProfile = invProfileInfo.hasValue ? invProfileInfo.rawValue : empProfileInfo.rawValue;
+        const profileCompat = validateRoleOperationalProfileCompatibility(effectiveRole, rawProfile, {
+          allowLegacyBarberAlias: true,
+          allowMissingForExecutiveOrOversight: true
+        });
+        if (!profileCompat.valid) {
+          throw new Error(`${profileCompat.code}: ${profileCompat.reason}`);
+        }
+        const profileFields = profileCompat.normalizedProfile
+          ? {
+              operational_profile: profileCompat.normalizedProfile,
+              operationalProfile: profileCompat.normalizedProfile
+            }
+          : {};
+
         const nowIso = new Date().toISOString();
 
         // 1. Mark invitation ACCEPTED
@@ -329,7 +357,8 @@ export const InvitationRepository = {
           departmentId: invitation.departmentId || existingEmp.departmentId || "",
           status: "ACTIVE",
           isActive: true,
-          role: invitation.role || existingEmp.role || "EMPLOYEE",
+          role: effectiveRole || "EMPLOYEE",
+          ...profileFields,
           onboardingComplete: true,
           updatedAt: serverTimestamp()
         };
@@ -349,7 +378,8 @@ export const InvitationRepository = {
           business_id: targetBizId,
           branchId: invitation.branchId || existingEmp.branchId || existingUser.branchId || "",
           departmentId: invitation.departmentId || existingEmp.departmentId || existingUser.departmentId || "",
-          role: invitation.role || existingEmp.role || existingUser.role || "EMPLOYEE",
+          role: effectiveRole || existingUser.role || "EMPLOYEE",
+          ...profileFields,
           accountStatus: "ACTIVE",
           account_status: "ACTIVE",
           businessStatus: "ACTIVE",

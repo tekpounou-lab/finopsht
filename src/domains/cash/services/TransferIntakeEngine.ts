@@ -5,6 +5,7 @@ import { LedgerTransaction } from "../../../types";
 import { CashAccountMapping } from "../validation/cashAccountMapping";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
 import { ForensicLogRepository, computeHMACSignature, getForensicHMACSecretKey } from "../../../repositories/ForensicLogRepository";
+import { canOperateCashTill, normalizeRole } from "../../rbac/operationalProfilePolicy";
 
 export interface InboundTransferParams {
   businessId: string;
@@ -28,6 +29,8 @@ export interface AuthenticatedUserContext {
   id: string;
   name: string;
   role?: string;
+  operational_profile?: string;
+  operationalProfile?: string;
 }
 
 export class TransferIntakeEngine {
@@ -54,6 +57,16 @@ export class TransferIntakeEngine {
         "UNAUTHORIZED_OPERATOR_SPOOF",
         `Usurpation d'identité détectée : l'opérateur (${operatorId}) ne correspond pas à l'utilisateur authentifié (${authenticatedUser.id}).`
       );
+    }
+
+    const authRole = normalizeRole(authenticatedUser.role);
+    if (!authRole) {
+      throw new FinopsException("FORBIDDEN_ROLE", "Rôle opérateur requis pour enregistrer un transfert d'entrée.");
+    }
+    const rawProfile = authenticatedUser.operational_profile ?? authenticatedUser.operationalProfile;
+    const cashDecision = canOperateCashTill(authRole, rawProfile, { allowExecutiveRoleBypass: true });
+    if (!cashDecision.allowed) {
+      throw new FinopsException(cashDecision.code || "FORBIDDEN_OPERATIONAL_PROFILE", cashDecision.reason);
     }
 
     if (!amountCents || amountCents <= 0) {

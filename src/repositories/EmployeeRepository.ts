@@ -18,6 +18,11 @@ import { BranchRepository, DepartmentRepository, CostCenterRepository } from "./
 import { mapEmployee } from "../utils/caseConverter";
 import { IntegrityValidator } from "../services/integrity/ForeignKeyIntegrityValidator";
 import { validateOrThrow, EmployeeIntegritySchema, FinopsException } from "../validations/integritySchemas";
+import {
+  extractRawOperationalProfileFromRecord,
+  normalizeRole,
+  validateRoleOperationalProfileCompatibility
+} from "../domains/rbac/operationalProfilePolicy";
 
 export class EmployeeRepository {
   /**
@@ -310,6 +315,45 @@ export class EmployeeRepository {
       updatedAt: new Date().toISOString()
     };
 
+    const touchesRoleOrProfile =
+      updates.role !== undefined ||
+      "operational_profile" in updates ||
+      "operationalProfile" in (updates as any);
+
+    if (touchesRoleOrProfile) {
+      const updateProfileInfo = extractRawOperationalProfileFromRecord(updates);
+      if (updateProfileInfo.conflict) {
+        throw new Error(
+          "CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence entre operational_profile et operationalProfile."
+        );
+      }
+      const effectiveRole = normalizeRole(updates.role ?? existingData?.role);
+      const hasExplicitProfileKey =
+        "operational_profile" in updates || "operationalProfile" in (updates as any);
+      const existingProfileInfo = extractRawOperationalProfileFromRecord(existingData);
+      const rawTargetProfile = hasExplicitProfileKey
+        ? updateProfileInfo.rawValue
+        : existingProfileInfo.rawValue;
+
+      const compat = validateRoleOperationalProfileCompatibility(effectiveRole, rawTargetProfile, {
+        allowLegacyBarberAlias: true,
+        allowMissingForExecutiveOrOversight: true
+      });
+      if (!compat.valid) {
+        throw new Error(`${compat.code}: ${compat.reason}`);
+      }
+      if (effectiveRole) {
+        finalUpdates.role = effectiveRole;
+      }
+      if (compat.normalizedProfile !== null) {
+        finalUpdates.operational_profile = compat.normalizedProfile;
+        finalUpdates.operationalProfile = compat.normalizedProfile;
+      } else {
+        finalUpdates.operational_profile = null;
+        finalUpdates.operationalProfile = null;
+      }
+    }
+
     if (updates.branchId !== undefined) {
       finalUpdates.branch_id = updates.branchId;
     } else if ((updates as any).branch_id !== undefined) {
@@ -387,7 +431,13 @@ export class EmployeeRepository {
             ...(invHistory.length > 0 ? { email_history: invHistory } : {}),
             employee_id: employeeId,
             employeeId: employeeId,
-            role: updates.role || undefined,
+            role: finalUpdates.role || updates.role || undefined,
+            ...(finalUpdates.operational_profile !== undefined
+              ? {
+                  operational_profile: finalUpdates.operational_profile,
+                  operationalProfile: finalUpdates.operationalProfile
+                }
+              : {}),
             branchId: (updates as any).branchId || undefined,
             departmentId: (updates as any).departmentId || undefined,
             updatedAt: new Date().toISOString()
@@ -493,10 +543,35 @@ export class EmployeeRepository {
       await IntegrityValidator.validateDepartmentExists(bizId, deptId);
     }
 
+    const empProfileInfo = extractRawOperationalProfileFromRecord(employee);
+    if (empProfileInfo.conflict) {
+      throw new Error(
+        "CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence entre operational_profile et operationalProfile."
+      );
+    }
+    const empCompat = validateRoleOperationalProfileCompatibility(
+      employee.role || "EMPLOYEE",
+      empProfileInfo.rawValue,
+      {
+        allowLegacyBarberAlias: true,
+        allowMissingForExecutiveOrOversight: true
+      }
+    );
+    if (!empCompat.valid) {
+      throw new Error(`${empCompat.code}: ${empCompat.reason}`);
+    }
+
     const id = employee.id || `emp_${Math.random().toString(36).substring(2, 9)}`;
     const newEmp = mapEmployee<Employee>({
       ...employee,
       id,
+      role: empCompat.normalizedRole || employee.role,
+      ...(empCompat.normalizedProfile
+        ? {
+            operational_profile: empCompat.normalizedProfile,
+            operationalProfile: empCompat.normalizedProfile
+          }
+        : {}),
       business_id: bizId,
       businessId: bizId,
       branch_id: branchId,
@@ -635,6 +710,22 @@ export class EmployeeRepository {
     branchesToCreate: any[] = [],
     departmentsToCreate: any[] = []
   ): Promise<{ committedBatches: number; totalBatches: number }> {
+    for (const emp of employees) {
+      const empProfileInfo = extractRawOperationalProfileFromRecord(emp);
+      if (empProfileInfo.conflict) {
+        throw new Error(
+          `CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence de profil opérationnel pour [${emp.name || emp.email}].`
+        );
+      }
+      const compat = validateRoleOperationalProfileCompatibility(emp.role, empProfileInfo.rawValue, {
+        allowLegacyBarberAlias: true,
+        allowMissingForExecutiveOrOversight: true
+      });
+      if (!compat.valid) {
+        throw new Error(`Erreur de validation (${compat.code}) pour [${emp.name || emp.email}]: ${compat.reason}`);
+      }
+    }
+
     if (employees.length > 0) {
       const sampleBizId = employees[0].business_id || employees[0].businessId;
       if (sampleBizId) {

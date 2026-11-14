@@ -1,7 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Employee, Role, Branch, Department } from "../../types";
+import { Employee, Role, Branch, Department, OperationalProfile } from "../../types";
 import { X } from "lucide-react";
+import { toast } from "sonner";
+import {
+  COMMERCIAL_EMPLOYEE_ROLES,
+  TELLER_ROLES,
+  extractRawOperationalProfileFromRecord,
+  normalizeRole,
+  validateRoleOperationalProfileCompatibility
+} from "../../domains/rbac/operationalProfilePolicy";
 
 interface EditEmployeeDialogProps {
   employee: Employee;
@@ -25,13 +33,29 @@ export default function EditEmployeeDialog({
   const initialContractType = employee.contractType || "cdi";
   const initialPayRegime = employee.paymentModel || (employee.payRegime ? (employee.payRegime.toUpperCase() === "FIXE" ? "FIXED" : (employee.payRegime.toUpperCase() as any)) : "FIXED");
 
+  const resolveInitialProfile = (emp: Employee): string => {
+    const normR = normalizeRole(emp.role) || "EMPLOYEE";
+    if (TELLER_ROLES.has(normR)) return "teller";
+    const rawInfo = extractRawOperationalProfileFromRecord(emp as unknown as Record<string, unknown>);
+    if (!rawInfo.conflict && typeof rawInfo.rawValue === "string") {
+      const cleaned = rawInfo.rawValue.trim().toLowerCase();
+      if (COMMERCIAL_EMPLOYEE_ROLES.has(normR)) {
+        if (cleaned === "barber" || cleaned === "vendeur") return "vendeur";
+        if (cleaned === "polyvalent") return "polyvalent";
+      }
+    }
+    return "";
+  };
+
   const [name, setName] = useState(employee.name);
   const [email, setEmail] = useState(employee.email);
   const [phone, setPhone] = useState(employee.phone || "");
   const [role, setRole] = useState<Role>(employee.role);
+  const [operationalProfile, setOperationalProfile] = useState<string>(() => resolveInitialProfile(employee));
   const [position, setPosition] = useState(employee.position || "");
   const [branchId, setBranchId] = useState(employee.branchId);
   const [departmentId, setDepartmentId] = useState(employee.departmentId);
+  const [profileError, setProfileError] = useState<string | null>(null);
   
   const [payRegime, setPayRegime] = useState<"FIXED" | "COMMISSION" | "HYBRID">(initialPayRegime);
   const [baseSalary, setBaseSalary] = useState(initialSalary);
@@ -49,6 +73,8 @@ export default function EditEmployeeDialog({
       setEmail(employee.email);
       setPhone(employee.phone || "");
       setRole(employee.role);
+      setOperationalProfile(resolveInitialProfile(employee));
+      setProfileError(null);
       setPosition(employee.position || "");
       setBranchId(employee.branchId);
       setDepartmentId(employee.departmentId);
@@ -61,10 +87,51 @@ export default function EditEmployeeDialog({
 
   if (!isOpen) return null;
 
+  const normalizedSelectedRole = normalizeRole(role) || "EMPLOYEE";
+  const isEmployeeRole = COMMERCIAL_EMPLOYEE_ROLES.has(normalizedSelectedRole);
+  const isTellerRole = TELLER_ROLES.has(normalizedSelectedRole);
+
+  const handleRoleChange = (nextRole: Role) => {
+    setRole(nextRole);
+    setProfileError(null);
+    const normNext = normalizeRole(nextRole) || "EMPLOYEE";
+    if (TELLER_ROLES.has(normNext)) {
+      setOperationalProfile("teller");
+    } else if (COMMERCIAL_EMPLOYEE_ROLES.has(normNext)) {
+      setOperationalProfile((prev) => (prev === "vendeur" || prev === "polyvalent" ? prev : ""));
+    } else {
+      setOperationalProfile("");
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setProfileError(null);
+
+    const rawProfileForValidation = isTellerRole
+      ? "teller"
+      : isEmployeeRole
+        ? operationalProfile || undefined
+        : undefined;
+
+    const compat = validateRoleOperationalProfileCompatibility(
+      role,
+      rawProfileForValidation,
+      {
+        allowLegacyBarberAlias: false,
+        allowMissingForExecutiveOrOversight: true
+      }
+    );
+
+    if (!compat.valid) {
+      setProfileError(compat.reason);
+      toast.error(compat.reason);
+      return;
+    }
+
     const effectiveSalary = (payRegime === "FIXED" || payRegime === "HYBRID") ? baseSalary : 0;
     const effectiveCommission = (payRegime === "COMMISSION" || payRegime === "HYBRID") ? commissionRate : 0;
+    const normalizedProf = compat.normalizedProfile as OperationalProfile | null;
 
     onSave({
       ...employee,
@@ -72,6 +139,8 @@ export default function EditEmployeeDialog({
       email,
       phone,
       role,
+      operational_profile: normalizedProf ?? undefined,
+      operationalProfile: normalizedProf ?? undefined,
       position,
       branchId,
       departmentId,
@@ -141,18 +210,56 @@ export default function EditEmployeeDialog({
               </div>
               <div>
                 <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Rôle Système</label>
-                <select required value={role} onChange={e => setRole(e.target.value as Role)} className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs text-slate-200">
+                <select required value={role} onChange={e => handleRoleChange(e.target.value as Role)} className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs text-slate-200">
                   <option value="OWNER">OWNER — Propriétaire</option>
                   <option value="ADMIN">ADMIN — Administrateur</option>
                   <option value="MANAGER">MANAGER — Gérant de Succursale</option>
                   <option value="SUPERVISOR">SUPERVISOR — Superviseur</option>
                   <option value="ACCOUNTANT">ACCOUNTANT — Comptable</option>
+                  <option value="MASTER_HEAD_TELLER">MASTER_HEAD_TELLER — Chef Caissier Principal</option>
                   <option value="HEAD_TELLER">HEAD_TELLER — Chef Caissier</option>
                   <option value="SENIOR_TELLER">SENIOR_TELLER — Caissier Senior</option>
                   <option value="JUNIOR_TELLER">JUNIOR_TELLER — Caissier Junior</option>
+                  {normalizedSelectedRole === "TELLER" && (
+                    <option value="TELLER">TELLER — Caissier (Hérité)</option>
+                  )}
                   <option value="AUDITOR">AUDITOR — Auditeur</option>
-                  <option value="EMPLOYEE">EMPLOYEE — Employé Standard</option>
+                  <option value="EMPLOYEE">EMPLOYEE — Employé Commercial</option>
                 </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                  Profil Opérationnel (Strict RBAC)
+                </label>
+                {isEmployeeRole ? (
+                  <select
+                    required
+                    value={operationalProfile}
+                    onChange={(e) => {
+                      setOperationalProfile(e.target.value);
+                      setProfileError(null);
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs text-slate-200"
+                  >
+                    <option value="">-- Sélectionner un profil commercial --</option>
+                    <option value="vendeur">vendeur — Ventes uniquement (sans caisse)</option>
+                    <option value="polyvalent">polyvalent — Ventes & Services (sans caisse)</option>
+                  </select>
+                ) : isTellerRole ? (
+                  <input
+                    type="text"
+                    readOnly
+                    value="teller — Opérations de Caisse & Guichet uniquement (Verrouillé)"
+                    className="w-full bg-slate-950/70 border border-emerald-500/30 rounded p-2 text-xs text-emerald-300 font-mono"
+                  />
+                ) : (
+                  <div className="w-full bg-slate-950/60 border border-slate-800 rounded p-2 text-xs text-slate-400">
+                    Aucun profil opérationnel (autorité dérivée uniquement du rôle RBAC {normalizedSelectedRole})
+                  </div>
+                )}
+                {profileError && (
+                  <p className="text-[11px] text-rose-400 mt-1 font-medium">{profileError}</p>
+                )}
               </div>
             </div>
           </div>

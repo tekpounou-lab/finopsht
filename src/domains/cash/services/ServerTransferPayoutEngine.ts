@@ -8,6 +8,10 @@ import {
   computeServerHMACSignature,
   ServerOperatorContext
 } from "./ServerTransferIntakeEngine";
+import {
+  ServerProfileVerificationError,
+  verifyServerEmployeeOperationalProfile
+} from "../../rbac/serverEmployeeProfileVerifier";
 
 export interface ServerPayoutParams {
   businessId: string;
@@ -49,13 +53,30 @@ export class ServerTransferPayoutEngine {
       );
     }
 
-    // Cash RBAC Validation
+    // Cash RBAC & Operational Profile Validation
     const normalizedRole = (operatorContext.role || "").trim().toUpperCase();
     if (!AUTHORIZED_CASH_OPERATOR_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
         `Le rôle (${operatorContext.role || "UNKNOWN"}) n'est pas habilité à exécuter des opérations de décaissement.`
       );
+    }
+
+    try {
+      await verifyServerEmployeeOperationalProfile({
+        adminDb: firestore,
+        uid: operatorContext.uid,
+        email: operatorContext.email,
+        businessId,
+        actorRole: normalizedRole,
+        isSuperAdmin: normalizedRole === "SUPER_ADMIN",
+        capability: "cash"
+      });
+    } catch (err: any) {
+      if (err instanceof ServerProfileVerificationError) {
+        throw new FinopsException(err.code, err.message);
+      }
+      throw err;
     }
 
     if (!transferId || !tillId || !sessionId) {

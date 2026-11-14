@@ -1,0 +1,85 @@
+*** firestore.rules
+--- firestore.rules
+@@ -238,16 +238,46 @@
+       allow update: if isAuthenticated() && (
+         isSuperAdmin() ||
+         (
+           request.auth.uid == userId &&
+-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+-            'is_super_admin', 'isSuperAdmin', 'super_admin', 'permissions', 'is_owner', 'isOwner'
++          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
++            'display_name', 'displayName', 'name',
++            'phone_number', 'phoneNumber', 'phone',
++            'address',
++            'photo_url', 'photoURL', 'avatarUrl', 'avatar_url',
++            'preferred_language', 'preferredLanguage', 'language', 'locale',
++            'timezone',
++            'email_notifications_enabled', 'emailNotificationsEnabled',
++            'push_notifications_enabled', 'pushNotificationsEnabled',
++            'notification_preferences', 'notificationPreferences',
++            'theme', 'ui_preferences', 'uiPreferences',
++            'bio', 'job_title', 'jobTitle', 'department',
++            'auth_provider', 'authProvider', 'auth_providers', 'authProviders',
++            'has_password', 'has_set_password', 'hasSetPassword',
++            'requested_role', 'requestedRole',
++            'company_code', 'companyCode',
++            'onboarding_completed', 'onboardingComplete',
++            'account_status', 'accountStatus',
++            'updated_at', 'updatedAt', 'last_active_at', 'lastActiveAt'
+           ]) &&
+-          (!('role' in request.resource.data) || request.resource.data.role.upper() != 'SUPER_ADMIN')
++          (
++            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['account_status', 'accountStatus']) ||
++            (
++              request.resource.data.get('account_status', '').upper() in ['NEW_USER', 'PENDING_MEMBER', 'PENDING_OWNER', 'WAITING_APPROVAL'] &&
++              request.resource.data.get('accountStatus', '').upper() in ['NEW_USER', 'PENDING_MEMBER', 'PENDING_OWNER', 'WAITING_APPROVAL']
++            )
++          ) &&
++          (
++            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['requested_role', 'requestedRole']) ||
++            (
++              request.resource.data.get('requested_role', '').upper() != 'SUPER_ADMIN' &&
++              request.resource.data.get('requestedRole', '').upper() != 'SUPER_ADMIN'
++            )
++          )
+         ) ||
+         (
+           request.auth.uid != userId &&
+           resource != null && getBusinessId(resource.data) != 'none' && isTenantAdminOrManager(getBusinessId(resource.data)) &&
+-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['is_super_admin', 'isSuperAdmin']) &&
++          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['is_super_admin', 'isSuperAdmin', 'super_admin']) &&
+           (!('role' in request.resource.data) || request.resource.data.role != 'SUPER_ADMIN') &&
+           (!('businessId' in request.resource.data) || request.resource.data.businessId == getBusinessId(resource.data)) &&
+           (!('business_id' in request.resource.data) || request.resource.data.business_id == getBusinessId(resource.data))
+         )
+@@ -504,18 +534,22 @@
+       allow read: if isAuthenticated();
+       allow create: if isAuthenticated() && (
+         isSuperAdmin() || 
+-        isTenantAdminOrManager(getBusinessId(request.resource.data)) ||
+-        request.resource.data.get('firebase_uid', '') == request.auth.uid ||
+-        request.resource.data.get('uid', '') == request.auth.uid ||
+-        (getAuthEmail() != '' && (request.resource.data.get('email', '').lower() == getAuthEmail().lower() || request.resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower()))
++        isTenantAdminOrManager(getBusinessId(request.resource.data))
+       );
+       allow update: if isAuthenticated() && (
+         isSuperAdmin() || 
+         isTenantAdminOrManager(getBusinessId(resource.data)) ||
+         (
+-          resource.data.get('firebase_uid', '') == request.auth.uid ||
+-          resource.data.get('uid', '') == request.auth.uid ||
+-          (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
+-          (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
++          (
++            resource.data.get('firebase_uid', '') == request.auth.uid ||
++            resource.data.get('uid', '') == request.auth.uid ||
++            (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
++            (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
++          ) &&
++          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
++            'businessId', 'business_id', 'role', 'permissions', 'salary', 'baseSalary', 'salary_base_htg',
++            'status', 'isActive', 'firebase_uid', 'uid', 'email', 'normalizedEmail',
++            'branchId', 'branch_id', 'departmentId', 'department_id', 'operational_profile'
++          ])
+         )
+       );

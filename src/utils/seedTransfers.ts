@@ -27,7 +27,8 @@ export async function seedTestTransfer(businessId: string): Promise<CustomerTran
     {
       id: "emp_system_seeder",
       name: "Système Seeder",
-      role: "TELLER"
+      role: "TELLER",
+      operational_profile: "teller"
     }
   );
 

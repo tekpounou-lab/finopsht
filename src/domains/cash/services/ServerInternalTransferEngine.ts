@@ -13,6 +13,11 @@ import { LedgerTransaction } from "../../../types";
 import { CashAccountMapping } from "../validation/cashAccountMapping";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
 import { computeServerHMACSignature } from "./ServerTransferIntakeEngine";
+import {
+  ServerProfileVerificationError,
+  verifyServerEmployeeOperationalProfile
+} from "../../rbac/serverEmployeeProfileVerifier";
+import { canApproveInternalTransferRole } from "../../rbac/operationalProfilePolicy";
 
 export interface ServerActorContext {
   uid: string;
@@ -78,6 +83,17 @@ export const SUPERVISOR_TRANSFER_ROLES = new Set([
   "SUPER_ADMIN"
 ]);
 
+export const AUTHORIZED_TRANSFER_INITIATOR_ROLES = new Set([
+  "TELLER",
+  "SENIOR_TELLER",
+  "HEAD_TELLER",
+  "MASTER_HEAD_TELLER",
+  "MANAGER",
+  "OWNER",
+  "ADMIN",
+  "SUPER_ADMIN"
+]);
+
 /**
  * FINOPS ERP — ServerInternalTransferEngine (Phase D4-B-2.1)
  *
@@ -107,6 +123,31 @@ export class ServerInternalTransferEngine {
 
     // 1. Identity & Tenant Verification
     this.validateActorContext(actor, params.businessId);
+
+    const initiatorRole = (actor.role || "").trim().toUpperCase();
+    if (!initiatorRole || !AUTHORIZED_TRANSFER_INITIATOR_ROLES.has(initiatorRole)) {
+      throw new FinopsException(
+        "FORBIDDEN_ROLE",
+        `Le rôle [${actor.role || "UNKNOWN"}] n'est pas habilité à initier un transfert interne.`
+      );
+    }
+
+    try {
+      await verifyServerEmployeeOperationalProfile({
+        adminDb: firestore,
+        uid: actor.uid,
+        email: actor.email,
+        businessId: params.businessId,
+        actorRole: initiatorRole,
+        isSuperAdmin: initiatorRole === "SUPER_ADMIN",
+        capability: "transfer_initiate"
+      });
+    } catch (err: any) {
+      if (err instanceof ServerProfileVerificationError) {
+        throw new FinopsException(err.code, err.message);
+      }
+      throw err;
+    }
 
     const {
       businessId,
@@ -402,13 +443,30 @@ export class ServerInternalTransferEngine {
 
     const { businessId, approvalNotes, idempotencyKey } = params;
 
-    // Role Permission Check
+    // Role Permission Check (Step 3 Mandatory Correction: MASTER_HEAD_TELLER strictly denied)
     const normalizedRole = (actor.role || "").trim().toUpperCase();
-    if (!SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
+    if (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
         `Le rôle [${actor.role}] n'est pas habilité à approuver les transferts de trésorerie.`
       );
+    }
+
+    try {
+      await verifyServerEmployeeOperationalProfile({
+        adminDb: firestore,
+        uid: actor.uid,
+        email: actor.email,
+        businessId,
+        actorRole: normalizedRole,
+        isSuperAdmin: normalizedRole === "SUPER_ADMIN",
+        capability: "transfer_approve"
+      });
+    } catch (err: any) {
+      if (err instanceof ServerProfileVerificationError) {
+        throw new FinopsException(err.code, err.message);
+      }
+      throw err;
     }
 
     if (!transferId || typeof transferId !== "string" || !transferId.trim()) {
@@ -803,11 +861,28 @@ export class ServerInternalTransferEngine {
     const { businessId, rejectionReason, idempotencyKey } = params;
 
     const normalizedRole = (actor.role || "").trim().toUpperCase();
-    if (!SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
+    if (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
         `Le rôle [${actor.role}] n'est pas habilité à rejeter les transferts de trésorerie.`
       );
+    }
+
+    try {
+      await verifyServerEmployeeOperationalProfile({
+        adminDb: firestore,
+        uid: actor.uid,
+        email: actor.email,
+        businessId,
+        actorRole: normalizedRole,
+        isSuperAdmin: normalizedRole === "SUPER_ADMIN",
+        capability: "transfer_approve"
+      });
+    } catch (err: any) {
+      if (err instanceof ServerProfileVerificationError) {
+        throw new FinopsException(err.code, err.message);
+      }
+      throw err;
     }
 
     if (!rejectionReason || typeof rejectionReason !== "string" || rejectionReason.trim().length < 5) {
@@ -846,6 +921,13 @@ export class ServerInternalTransferEngine {
         throw new FinopsException(
           "INVALID_TRANSFER_STATUS",
           `Le transfert [${transferId}] ne peut pas être rejeté car son statut est '${transfer.status}'.`
+        );
+      }
+
+      if (transfer.initiator_id === effectiveApproverId) {
+        throw new FinopsException(
+          "MAKER_CHECKER_VIOLATION",
+          "Séparation des tâches (Maker-Checker) : L'initiateur du transfert ne peut pas rejeter sa propre transaction."
         );
       }
 

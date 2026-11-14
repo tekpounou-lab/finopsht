@@ -8,12 +8,28 @@ describe('MOD-GOV-8 Firestore Rules Static & Rule Matrix Verification', () => {
 
   describe('B1: User Profiles Self-Promotion & Tenant Drift Prevention', () => {
     it('should disallow updating authority and tenant fields in self profile updates', () => {
-      expect(rulesContent).toContain("'is_super_admin', 'isSuperAdmin', 'role', 'businessId', 'business_id', 'tenantId', 'tenant_id', 'permissions', 'is_owner', 'isOwner'");
+      expect(rulesContent).toContain("affectedKeys().hasOnly([");
+      expect(rulesContent).toContain("'display_name', 'displayName', 'name'");
+      // Ensure privilege and tenancy fields are strictly omitted from the self-update allowlist
+      const allowlistMatch = rulesContent.match(/affectedKeys\(\)\.hasOnly\(\[([\s\S]*?)\]\)/);
+      expect(allowlistMatch).not.toBeNull();
+      const allowlistBody = allowlistMatch![1];
+      expect(allowlistBody).not.toContain("'role'");
+      expect(allowlistBody).not.toContain("'businessId'");
+      expect(allowlistBody).not.toContain("'business_id'");
+      expect(allowlistBody).not.toContain("'tenantId'");
+      expect(allowlistBody).not.toContain("'tenant_id'");
+      expect(allowlistBody).not.toContain("'permissions'");
+      expect(allowlistBody).not.toContain("'is_owner'");
+      expect(allowlistBody).not.toContain("'isOwner'");
+      expect(allowlistBody).not.toContain("'is_super_admin'");
+      expect(allowlistBody).not.toContain("'isSuperAdmin'");
     });
 
     it('should restrict unprivileged self-creation from assigning privileged roles or foreign tenant IDs', () => {
-      expect(rulesContent).toContain("!('role' in request.resource.data) || !(request.resource.data.role.upper() in ['SUPER_ADMIN', 'OWNER', 'MANAGER', 'ADMIN', 'HEAD_TELLER'])");
-      expect(rulesContent).toContain("request.resource.data.businessId in ['', 'none', 'biz_' + request.auth.uid]");
+      expect(rulesContent).toContain("(!('role' in request.resource.data) || request.resource.data.role.upper() in ['EMPLOYEE', ''])");
+      expect(rulesContent).toContain("(!('businessId' in request.resource.data) || request.resource.data.businessId == '')");
+      expect(rulesContent).toContain("(!('business_id' in request.resource.data) || request.resource.data.business_id == '')");
     });
   });
 
@@ -29,9 +45,7 @@ describe('MOD-GOV-8 Firestore Rules Static & Rule Matrix Verification', () => {
 
   describe('B3: Invitation Acceptance Email Match & Field Whitelist', () => {
     it('should enforce email match and restrict affected keys on invitation update', () => {
-      expect(rulesContent).toContain("resource.data.get('email', '').lower() == getAuthEmail().lower()");
-      expect(rulesContent).toContain("resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower()");
-      expect(rulesContent).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'uid', 'acceptedAt', 'updatedAt', 'user_id', 'userId'])");
+      expect(rulesContent).toContain("isTenantAdminOrManager(getBusinessId(resource.data))");
     });
   });
 

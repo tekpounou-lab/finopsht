@@ -13,11 +13,8 @@ export type FlowBehavior = 1 | -1 | 0; // +1 Cash In, -1 Cash Out, 0 Neutral
 
 export type OperationalProfile =
   | "vendeur"
-  | "teller"
   | "polyvalent"
-  | "head_teller"
-  | "manager"
-  | "owner";
+  | "teller";
 
 export interface TransactionTypeItem {
   id: string; // e.g. "tt_1001" or "tt_custom_1"

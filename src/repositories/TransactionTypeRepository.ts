@@ -4,6 +4,39 @@ import { TransactionTypeItem } from "../types/transactionTypes";
 import { DEFAULT_SYSTEM_TRANSACTION_TYPES, TransactionMappingEngine } from "../services/cash/transactionMappingEngine";
 import { ChartOfAccountsRepository } from "./accounting/ChartOfAccountsRepository";
 import { EventBus } from "../modules/runtime/EventBus";
+import { CanonicalOperationalProfile, normalizeOperationalProfile } from "../domains/rbac/operationalProfilePolicy";
+
+function sanitizeAllowedProfilesForCategory(
+  category: string,
+  rawProfiles?: unknown[]
+): CanonicalOperationalProfile[] {
+  const defaultForCat: CanonicalOperationalProfile[] =
+    category === "Sales"
+      ? ["vendeur", "polyvalent"]
+      : category === "Services"
+      ? ["polyvalent"]
+      : category === "Money Transfer" || category === "Mobile Transfer" || category === "Currency Exchange"
+      ? ["teller"]
+      : [];
+
+  if (!Array.isArray(rawProfiles)) {
+    return defaultForCat;
+  }
+
+  const cleaned = rawProfiles
+    .map((p) => normalizeOperationalProfile(p, { allowLegacyBarberAlias: false }))
+    .filter((p): p is CanonicalOperationalProfile => p !== null)
+    .filter((p) => {
+      if (category === "Sales") return p === "vendeur" || p === "polyvalent";
+      if (category === "Services") return p === "polyvalent";
+      if (category === "Money Transfer" || category === "Mobile Transfer" || category === "Currency Exchange") {
+        return p === "teller";
+      }
+      return p === "teller";
+    });
+
+  return cleaned.length > 0 ? Array.from(new Set(cleaned)) : defaultForCat;
+}
 
 export const TransactionTypeRepository = {
   /**
@@ -132,7 +165,10 @@ export const TransactionTypeRepository = {
       category: typeData.category || "Other",
       behavior: typeData.behavior !== undefined ? typeData.behavior : 1,
       currency: typeData.currency || "ALL",
-      allowedProfiles: typeData.allowedProfiles || ["teller", "polyvalent", "head_teller", "manager", "owner"],
+      allowedProfiles: sanitizeAllowedProfilesForCategory(
+        typeData.category || "Other",
+        typeData.allowedProfiles
+      ),
       isSystemDefault: typeData.isSystemDefault || false,
       isProtected: isProtectedCode,
       isActive: typeData.isActive !== false,
@@ -215,7 +251,7 @@ export const TransactionTypeRepository = {
         category,
         behavior: raw.behavior !== undefined ? raw.behavior : 1,
         currency: raw.currency || "ALL",
-        allowedProfiles: raw.allowedProfiles || ["teller", "polyvalent", "head_teller", "manager", "owner"],
+        allowedProfiles: sanitizeAllowedProfilesForCategory(category, raw.allowedProfiles),
         isSystemDefault: false,
         isProtected: false,
         isActive: raw.isActive !== false,

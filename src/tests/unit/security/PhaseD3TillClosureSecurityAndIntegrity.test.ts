@@ -522,10 +522,13 @@ describe("PHASE D3 — TRANSACTIONAL TILL CLOSURE, PENDING TRANSFERS & VARIANCE 
     simulateClientSetDocFailureOnCollection.value = null;
 
     for (const u of Object.values(tokenMap)) {
+      const opProf = u.role === "TELLER" ? "teller" : undefined;
       mockUserDocs.set(u.uid, {
         uid: u.uid,
         email: u.email,
         role: u.role,
+        operational_profile: opProf,
+        operationalProfile: opProf,
         status: "ACTIVE",
         is_active: true,
         business_id: u.business_id,
@@ -536,6 +539,8 @@ describe("PHASE D3 — TRANSACTIONAL TILL CLOSURE, PENDING TRANSFERS & VARIANCE 
         uid: u.uid,
         email: u.email,
         role: u.role,
+        operational_profile: opProf,
+        operationalProfile: opProf,
         status: "ACTIVE",
         is_active: true,
         business_id: u.business_id,

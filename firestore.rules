@@ -136,8 +136,8 @@ service cloud.firestore {
                 ))
               ) &&
               (
-                request.auth.token.get('role', '').lower() in ['owner', 'admin', 'manager', 'head_teller', 'owner_admin'] ||
-                (hasUserData() && getMyProfile().get('role', '').lower() in ['owner', 'admin', 'manager', 'head_teller', 'owner_admin'])
+                request.auth.token.get('role', '').lower() in ['owner', 'admin', 'manager', 'owner_admin'] ||
+                (hasUserData() && getMyProfile().get('role', '').lower() in ['owner', 'admin', 'manager', 'owner_admin'])
               )
             )
           )
@@ -161,15 +161,39 @@ service cloud.firestore {
                 ))
               ) &&
               (
-                request.auth.token.get('role', '').lower() in [
-                  'owner', 'admin', 'manager', 'head_teller', 'senior_teller', 'junior_teller', 'teller', 'owner_admin'
-                ] ||
-                (hasUserData() && getMyProfile().get('role', '').lower() in [
-                  'owner', 'admin', 'manager', 'head_teller', 'senior_teller', 'junior_teller', 'teller', 'owner_admin'
-                ])
+                request.auth.token.get('role', '').lower() in ['owner', 'admin', 'manager', 'head_teller', 'senior_teller', 'junior_teller', 'teller', 'owner_admin', 'master_head_teller'] ||
+                (hasUserData() && (
+                  getMyProfile().get('role', '').lower() in ['owner', 'admin', 'manager', 'head_teller', 'senior_teller', 'junior_teller', 'teller', 'owner_admin', 'master_head_teller']
+                ))
               )
             )
           )
+        )
+      );
+    }
+
+    function hasNoProfileConflict(data) {
+      return !('operational_profile' in data && 'operationalProfile' in data) ||
+        (data.operational_profile == null && data.operationalProfile == null) ||
+        (data.operational_profile is string && data.operationalProfile is string && data.operational_profile.lower() == data.operationalProfile.lower());
+    }
+
+    function resolvedProfileLower(data) {
+      return ('operational_profile' in data && data.operational_profile != null)
+        ? (data.operational_profile is string ? data.operational_profile.lower() : '__invalid__')
+        : (('operationalProfile' in data && data.operationalProfile != null)
+          ? (data.operationalProfile is string ? data.operationalProfile.lower() : '__invalid__')
+          : '');
+    }
+
+    function isValidRoleProfileCompatibility(data) {
+      return !('role' in data) || (
+        data.role is string &&
+        hasNoProfileConflict(data) &&
+        (
+          (data.role.upper() == 'EMPLOYEE' && resolvedProfileLower(data) in ['vendeur', 'polyvalent']) ||
+          (data.role.upper() in ['JUNIOR_TELLER', 'SENIOR_TELLER', 'HEAD_TELLER', 'MASTER_HEAD_TELLER', 'TELLER'] && resolvedProfileLower(data) == 'teller') ||
+          (!(data.role.upper() in ['EMPLOYEE', 'JUNIOR_TELLER', 'SENIOR_TELLER', 'HEAD_TELLER', 'MASTER_HEAD_TELLER', 'TELLER']) && resolvedProfileLower(data) == '')
         )
       );
     }
@@ -228,6 +252,8 @@ service cloud.firestore {
           !('is_owner' in request.resource.data && request.resource.data.is_owner == true) &&
           !('isOwner' in request.resource.data && request.resource.data.isOwner == true) &&
           !('permissions' in request.resource.data) &&
+          !('operational_profile' in request.resource.data) &&
+          !('operationalProfile' in request.resource.data) &&
           (!('role' in request.resource.data) || request.resource.data.role.upper() in ['EMPLOYEE', '']) &&
           (!('businessId' in request.resource.data) || request.resource.data.businessId == '') &&
           (!('business_id' in request.resource.data) || request.resource.data.business_id == '') &&
@@ -239,18 +265,49 @@ service cloud.firestore {
         isSuperAdmin() ||
         (
           request.auth.uid == userId &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'is_super_admin', 'isSuperAdmin', 'super_admin', 'permissions', 'is_owner', 'isOwner'
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'display_name', 'displayName', 'name',
+            'phone_number', 'phoneNumber', 'phone',
+            'address',
+            'photo_url', 'photoURL', 'avatarUrl', 'avatar_url',
+            'preferred_language', 'preferredLanguage', 'language', 'locale',
+            'timezone',
+            'email_notifications_enabled', 'emailNotificationsEnabled',
+            'push_notifications_enabled', 'pushNotificationsEnabled',
+            'notification_preferences', 'notificationPreferences',
+            'theme', 'ui_preferences', 'uiPreferences',
+            'bio', 'job_title', 'jobTitle', 'department',
+            'auth_provider', 'authProvider', 'auth_providers', 'authProviders',
+            'has_password', 'has_set_password', 'hasSetPassword',
+            'requested_role', 'requestedRole',
+            'company_code', 'companyCode',
+            'onboarding_completed', 'onboardingComplete',
+            'account_status', 'accountStatus',
+            'updated_at', 'updatedAt', 'last_active_at', 'lastActiveAt'
           ]) &&
-          (!('role' in request.resource.data) || request.resource.data.role.upper() != 'SUPER_ADMIN')
+          (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['account_status', 'accountStatus']) ||
+            (
+              request.resource.data.get('account_status', '').upper() in ['NEW_USER', 'PENDING_MEMBER', 'PENDING_OWNER', 'WAITING_APPROVAL'] &&
+              request.resource.data.get('accountStatus', '').upper() in ['NEW_USER', 'PENDING_MEMBER', 'PENDING_OWNER', 'WAITING_APPROVAL']
+            )
+          ) &&
+          (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['requested_role', 'requestedRole']) ||
+            (
+              request.resource.data.get('requested_role', '').upper() != 'SUPER_ADMIN' &&
+              request.resource.data.get('requestedRole', '').upper() != 'SUPER_ADMIN'
+            )
+          )
         ) ||
         (
           request.auth.uid != userId &&
           resource != null && getBusinessId(resource.data) != 'none' && isTenantAdminOrManager(getBusinessId(resource.data)) &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['is_super_admin', 'isSuperAdmin']) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['is_super_admin', 'isSuperAdmin', 'super_admin']) &&
           (!('role' in request.resource.data) || request.resource.data.role != 'SUPER_ADMIN') &&
           (!('businessId' in request.resource.data) || request.resource.data.businessId == getBusinessId(resource.data)) &&
-          (!('business_id' in request.resource.data) || request.resource.data.business_id == getBusinessId(resource.data))
+          (!('business_id' in request.resource.data) || request.resource.data.business_id == getBusinessId(resource.data)) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'operational_profile', 'operationalProfile']) || isValidRoleProfileCompatibility(request.resource.data))
         )
       );
       allow delete: if isSuperAdmin();
@@ -474,19 +531,23 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantAdminOrManager(getBusinessId(request.resource.data)) ||
-        request.resource.data.get('firebase_uid', '') == request.auth.uid ||
-        request.resource.data.get('uid', '') == request.auth.uid ||
-        (getAuthEmail() != '' && (request.resource.data.get('email', '').lower() == getAuthEmail().lower() || request.resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower()))
+        (isTenantAdminOrManager(getBusinessId(request.resource.data)) && isValidRoleProfileCompatibility(request.resource.data))
       );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantAdminOrManager(getBusinessId(resource.data)) ||
+        (isTenantAdminOrManager(getBusinessId(resource.data)) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'operational_profile', 'operationalProfile']) || isValidRoleProfileCompatibility(request.resource.data))) ||
         (
-          resource.data.get('firebase_uid', '') == request.auth.uid ||
-          resource.data.get('uid', '') == request.auth.uid ||
-          (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
-          (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
+          (
+            resource.data.get('firebase_uid', '') == request.auth.uid ||
+            resource.data.get('uid', '') == request.auth.uid ||
+            (getAuthEmail() != '' && resource.data.get('email', '').lower() == getAuthEmail().lower()) ||
+            (getAuthEmail() != '' && resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())
+          ) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'businessId', 'business_id', 'role', 'permissions', 'salary', 'baseSalary', 'salary_base_htg',
+            'status', 'isActive', 'firebase_uid', 'uid', 'email', 'normalizedEmail',
+            'branchId', 'branch_id', 'departmentId', 'department_id', 'operational_profile', 'operationalProfile'
+          ])
         )
       );
       allow delete: if isSuperAdmin() || (
@@ -503,12 +564,11 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated() && (
         isSuperAdmin() || 
-        isTenantAdminOrManager(getBusinessId(request.resource.data))
+        (isTenantAdminOrManager(getBusinessId(request.resource.data)) && isValidRoleProfileCompatibility(request.resource.data))
       );
       allow update: if isAuthenticated() && (
         isSuperAdmin() || 
-        (getAuthEmail() != '' && (resource.data.get('email', '').lower() == getAuthEmail().lower() || resource.data.get('normalizedEmail', '').lower() == getAuthEmail().lower())) ||
-        isTenantAdminOrManager(getBusinessId(resource.data))
+        (isTenantAdminOrManager(getBusinessId(resource.data)) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'operational_profile', 'operationalProfile']) || isValidRoleProfileCompatibility(request.resource.data)))
       );
       allow delete: if isAuthenticated() && (
         isSuperAdmin() || 

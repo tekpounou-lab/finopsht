@@ -1,0 +1,180 @@
+--- a/src/services/PermissionService.ts
++++ b/src/services/PermissionService.ts
+@@ -404,6 +404,45 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, b
+   HEAD_TELLER: {
+     cash_management: true, cash: true, operations: true,
+     attendance: true, planning: true, leave: true, documents: true, employeespace: true
+   },
++  MASTER_HEAD_TELLER: {
++    platform: false,
++    tenants: false,
++    plans: false,
++    licences: false,
++    security: false,
++    bi: false,
++    personnel: false,
++    performance: true,
++    organization: false,
++    planning: true,
++    leave: true,
++    attendance: true,
++    payroll: false,
++    ledger: false,
++    accounting: false,
++    crm: false,
++    leads: false,
++    prospects: false,
++    proformas: false,
++    invoices: false,
++    invoice_template: false,
++    invoiceTemplate: false,
++    documents: true,
++    forensic: false,
++    health: false,
++    system_health: false,
++    reliability: false,
++    resilience_dlq: false,
++    dlq: false,
++    recovery: false,
++    disaster_recovery: false,
++    aicfo: false,
++    employeespace: true,
++    settings: false,
++    cash_management: true,
++    cash: true,
++    operations: true
++  },
+   SENIOR_TELLER: {
+     cash_management: true, cash: true, operations: true,
+     attendance: true, planning: true, documents: true, employeespace: true
+@@ -415,6 +454,45 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, b
+   TELLER: {
+     cash_management: true, cash: true, operations: true,
+     attendance: true, planning: true, documents: true, employeespace: true
+   },
++  ACCOUNTANT: {
++    platform: false,
++    tenants: false,
++    plans: false,
++    licences: false,
++    security: false,
++    bi: true,
++    personnel: false,
++    performance: false,
++    organization: false,
++    planning: false,
++    leave: false,
++    attendance: false,
++    payroll: true,
++    ledger: true,
++    accounting: true,
++    crm: true,
++    leads: false,
++    prospects: false,
++    proformas: false,
++    invoices: true,
++    invoice_template: false,
++    invoiceTemplate: false,
++    documents: true,
++    forensic: false,
++    health: false,
++    system_health: false,
++    reliability: false,
++    resilience_dlq: false,
++    dlq: false,
++    recovery: false,
++    disaster_recovery: false,
++    aicfo: true,
++    employeespace: true,
++    settings: false,
++    cash_management: false,
++    cash: false,
++    operations: false
++  },
+   AUDITOR: {
+     accounting: true, ledger: true, bi: true, aicfo: true,
+     cash_management: true, cash: true, operations: true, documents: true, employeespace: true
+@@ -529,7 +607,7 @@ export class PermissionServiceClass {
+     businessId?: string | null,
+     roleModuleMatrix?: Record<string, Record<string, boolean>>
+   ) {
+-    this.activeRole = (role || "EMPLOYEE").toUpperCase();
++    this.activeRole = (role && typeof role === "string" && role.trim()) ? role.trim().toUpperCase() : "UNASSIGNED";
+     this.permissions = (permissions || []).map(p => p.toLowerCase());
+     this.features = features || {};
+     this.subscriptionPlan = subscriptionPlan || "STARTER";
+@@ -787,13 +865,13 @@ export class PermissionServiceClass {
+ 
+         // Cash & Till Operations
+         case "cash.view":
+-          result = this.permissions.includes("cash.view") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "cash_management");
++          result = this.permissions.includes("cash.view") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "cash_management");
+           break;
+         case "cash.operate":
+-          result = (this.permissions.includes("cash.operate") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
++          result = (this.permissions.includes("cash.operate") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+           break;
+         case "cash.transfer":
+-          result = (this.permissions.includes("cash.transfer") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
++          result = (this.permissions.includes("cash.transfer") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+           break;
+ 
+         default:
+@@ -890,7 +968,7 @@ export class PermissionServiceClass {
+   public hasRoleModuleAccess(roleOrCurrent?: string, moduleId?: string): boolean {
+     if (!moduleId) return false;
+     const modLower = moduleId.toLowerCase();
+-    const effectiveRole = (roleOrCurrent || this.activeRole || "EMPLOYEE").toUpperCase();
++    const effectiveRole = (roleOrCurrent && typeof roleOrCurrent === "string" && roleOrCurrent.trim() ? roleOrCurrent.trim() : this.activeRole || "UNASSIGNED").toUpperCase();
+
+     // 1. Super Admin possesses universal platform bypass
+     if (effectiveRole === "SUPER_ADMIN") return true;
+@@ -930,24 +1008,24 @@ export class PermissionServiceClass {
+
+     // 7. Canonical ERP Role Defaults
+     const defaultAllowedRoles: Record<string, string[]> = {
+-      bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "AUDITOR"],
++      bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+       personnel: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
+-      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
++      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "MASTER_HEAD_TELLER", "HR_MANAGER"],
+       organization: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER"],
+-      planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "TEAM_LEADER", "HR_MANAGER", "EMPLOYEE"],
+-      leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+-      attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
++      planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "TEAM_LEADER", "HR_MANAGER", "EMPLOYEE"],
++      leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
++      attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+       payroll: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER"],
+       ledger: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+       accounting: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+-      crm: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
++      crm: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT"],
+       leads: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+       prospects: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+       proformas: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+-      invoices: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
++      invoices: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT"],
+       invoice_template: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+       invoiceTemplate: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+-      documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
++      documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+       forensic: ["SUPER_ADMIN"],
+       health: ["SUPER_ADMIN"],
+       system_health: ["SUPER_ADMIN"],
+@@ -955,12 +1033,12 @@ export class PermissionServiceClass {
+       dlq: ["SUPER_ADMIN"],
+       recovery: ["SUPER_ADMIN"],
+       disaster_recovery: ["SUPER_ADMIN"],
+-      aicfo: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "AUDITOR"],
+-      employeespace: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
++      aicfo: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
++      employeespace: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+       settings: ["SUPER_ADMIN", "OWNER", "ADMIN"],
+-      cash_management: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
+-      cash: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
+-      operations: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"]
++      cash_management: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
++      cash: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
++      operations: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"]
+     };

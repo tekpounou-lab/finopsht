@@ -13,6 +13,10 @@ import {
 import { Invitation, Employee } from "../../types";
 import { EmployeeRepository } from "../../repositories/EmployeeRepository";
 import { EmployeeAuditService } from "../audit/EmployeeAuditService";
+import {
+  extractRawOperationalProfileFromRecord,
+  validateRoleOperationalProfileCompatibility
+} from "../../domains/rbac/operationalProfilePolicy";
 
 export const InvitationLifecycleService = {
   /**
@@ -24,6 +28,8 @@ export const InvitationLifecycleService = {
       email: string;
       name: string;
       role: Employee["role"];
+      operational_profile?: Employee["operational_profile"];
+      operationalProfile?: Employee["operational_profile"];
       branchId: string;
       departmentId: string;
       position?: string;
@@ -36,6 +42,26 @@ export const InvitationLifecycleService = {
     const token = `tok_${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // Expires in 7 days
+
+    const profileInfo = extractRawOperationalProfileFromRecord(params);
+    if (profileInfo.conflict) {
+      throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence entre operational_profile et operationalProfile.");
+    }
+
+    const compat = validateRoleOperationalProfileCompatibility(params.role, profileInfo.rawValue, {
+      allowLegacyBarberAlias: false,
+      allowMissingForExecutiveOrOversight: true
+    });
+    if (!compat.valid) {
+      throw new Error(`${compat.code}: ${compat.reason}`);
+    }
+
+    const normalizedProfileFields = compat.normalizedProfile
+      ? {
+          operational_profile: compat.normalizedProfile,
+          operationalProfile: compat.normalizedProfile
+        }
+      : {};
 
     let employeeId = "";
     let employee: Employee;
@@ -57,6 +83,7 @@ export const InvitationLifecycleService = {
         {
           status: "INVITED",
           role: params.role,
+          ...normalizedProfileFields,
           branchId: params.branchId,
           departmentId: params.departmentId,
           position: params.position || existingEmp.position
@@ -73,6 +100,7 @@ export const InvitationLifecycleService = {
         email: cleanEmail,
         normalizedEmail: cleanEmail,
         role: params.role,
+        ...normalizedProfileFields,
         branchId: params.branchId,
         departmentId: params.departmentId,
         position: params.position || "",
@@ -94,6 +122,7 @@ export const InvitationLifecycleService = {
       normalizedEmail: cleanEmail,
       name: params.name,
       role: params.role,
+      ...normalizedProfileFields,
       branchId: params.branchId,
       departmentId: params.departmentId,
       status: "PENDING",
@@ -250,12 +279,36 @@ export const InvitationLifecycleService = {
 
       const empData = empSnap.data() as Employee;
 
+      const invProfileInfo = extractRawOperationalProfileFromRecord(inviteData);
+      const empProfileInfo = extractRawOperationalProfileFromRecord(empData);
+      if (invProfileInfo.conflict || empProfileInfo.conflict) {
+        throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence de profil opérationnel sur l'invitation ou l'employé.");
+      }
+
+      const rawProfile = invProfileInfo.hasValue ? invProfileInfo.rawValue : empProfileInfo.rawValue;
+      const effectiveRole = inviteData.role || empData.role;
+      const compat = validateRoleOperationalProfileCompatibility(effectiveRole, rawProfile, {
+        allowLegacyBarberAlias: true,
+        allowMissingForExecutiveOrOversight: true
+      });
+      if (!compat.valid) {
+        throw new Error(`${compat.code}: ${compat.reason}`);
+      }
+
+      const profileFields = compat.normalizedProfile
+        ? {
+            operational_profile: compat.normalizedProfile,
+            operationalProfile: compat.normalizedProfile
+          }
+        : {};
+
       // Update Employee status to ACTIVE, bind firebase_uid
       const empUpdates: Partial<Employee> = {
         status: "ACTIVE",
         isActive: true,
         uid: firebaseUid,
         firebase_uid: firebaseUid,
+        ...profileFields,
         updatedAt: new Date().toISOString()
       };
       transaction.update(empRef, empUpdates);
@@ -267,7 +320,8 @@ export const InvitationLifecycleService = {
         id: firebaseUid,
         email: inviteData.email.toLowerCase().trim(),
         name: inviteData.name || empData.name,
-        role: inviteData.role,
+        role: effectiveRole,
+        ...profileFields,
         business_id: inviteData.business_id,
         branchId: inviteData.branchId,
         departmentId: inviteData.departmentId,

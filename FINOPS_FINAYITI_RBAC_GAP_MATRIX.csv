@@ -1,0 +1,24 @@
+role,module,action,current_status,target_status,enforcement_layer,scope,source_file,evidence_classification,gap,severity
+SUPER_ADMIN,platform,manage,FULL,FULL,server_middleware,global,src/modules/workflow/approval/serverAuthMiddleware.ts,PROVEN_RUNTIME,None,LOW
+SUPER_ADMIN,tenants,provision_and_delete,FULL,FULL,server_middleware,global,src/services/business/ServerProvisioningService.ts,PROVEN_RUNTIME,None,LOW
+SUPER_ADMIN,rules,bypass_tenant_rules,FULL,FULL,firestore_rules,global,firestore.rules:20-60,PROVEN_STATIC,None,LOW
+OWNER,tenant,full_administrative_authority,FULL,FULL,server_middleware,tenant,src/services/PermissionService.ts:239,PROVEN_RUNTIME,None,LOW
+OWNER,financials,approve_unlimited,FULL,FULL,server_middleware,tenant,src/services/payroll/EmployeeReceivableService.ts:193,PROVEN_RUNTIME,Maker-checker prevents self-approval,LOW
+MASTER_HEAD_TELLER,cash_management,multi_branch_supervision,PARTIAL,FULL,client_ui_only,multi_branch,src/types.ts:14,PROVEN_STATIC,Omitted from PermissionService module matrix,HIGH
+MASTER_HEAD_TELLER,transfers,approve_inter_branch,PARTIAL,FULL,server_middleware,multi_branch,src/services/cash/ServerInternalTransferEngine.ts:289,PROVEN_RUNTIME,Role missing in PermissionService matrix,HIGH
+HEAD_TELLER,cash_management,branch_supervision,FULL,FULL,server_middleware,branch,src/services/PermissionService.ts:404,PROVEN_RUNTIME,Branch scope enforcement needs tightening,MEDIUM
+HEAD_TELLER,transfers,approve_till_transfers,FULL,FULL,server_middleware,branch,src/services/cash/ServerInternalTransferEngine.ts:289,PROVEN_RUNTIME,Maker-checker enforced,LOW
+MANAGER,operations,manage_company_hr_payroll_prep,FULL,FULL,server_middleware,tenant,src/services/PermissionService.ts:311,PROVEN_RUNTIME,Currently holds implicit ACCOUNTANT authority,MEDIUM
+MANAGER,payroll,submit_payroll_for_checker,FULL,FULL,server_middleware,tenant,src/services/payroll/PayrollService.ts:1012,PROVEN_RUNTIME,Cannot self-approve or self-pay,LOW
+ACCOUNTANT,accounting,manage_gl_chart_of_accounts,PARTIAL,FULL,client_ui_only,tenant,src/types.ts:14,PROVEN_STATIC,Omitted from PermissionService module matrix,HIGH
+ACCOUNTANT,reconciliation,bank_and_cash_reconciliation,PARTIAL,FULL,client_ui_only,tenant,src/types.ts:14,PROVEN_STATIC,Omitted from PermissionService module matrix,HIGH
+ACCOUNTANT,payroll,execute_payment_checker,PARTIAL,FULL,server_middleware,tenant,server.ts:1469,PROVEN_RUNTIME,Role missing in PermissionService matrix,HIGH
+ACCOUNTANT,cash_management,operate_physical_till,PROHIBITED,PROHIBITED,firestore_rules,tenant,firestore.rules:473,PROVEN_STATIC,Physical till operation prohibited for ACCOUNTANT,LOW
+SENIOR_TELLER,cash_management,operate_assigned_till_and_fx,FULL,FULL,server_middleware,till,src/services/PermissionService.ts:408,PROVEN_RUNTIME,None,LOW
+JUNIOR_TELLER,cash_management,operate_assigned_till,FULL,FULL,server_middleware,till,src/services/PermissionService.ts:412,PROVEN_RUNTIME,Transaction limit checks require strict UI/backend sync,MEDIUM
+AUDITOR,audit,read_only_access,FULL,FULL,firestore_rules,tenant,src/services/PermissionService.ts:420,PROVEN_STATIC,Must explicitly block write endpoints,LOW
+AUDITOR,financials,write_transactions,PROHIBITED,PROHIBITED,firestore_rules,tenant,firestore.rules:1200,PROVEN_STATIC,Read-only strictly enforced in rules,LOW
+vendeur,transactions,sales_and_services,FULL,FULL,client_ui_only,operational_profile,src/services/cash/transactionMappingEngine.ts:268,PROVEN_STATIC,Profile filtering not enforced on server endpoints,MEDIUM
+teller,transactions,money_transfer_and_fx,FULL,FULL,client_ui_only,operational_profile,src/services/cash/transactionMappingEngine.ts:258,PROVEN_STATIC,Profile filtering not enforced on server endpoints,MEDIUM
+head_teller,transactions,branch_cash_and_opex,FULL,FULL,client_ui_only,operational_profile,src/services/cash/transactionMappingEngine.ts:250,PROVEN_STATIC,Profile filtering not enforced on server endpoints,MEDIUM
+polyvalent,transactions,full_operational_cash,FULL,FULL,client_ui_only,operational_profile,src/services/cash/transactionMappingEngine.ts:240,PROVEN_STATIC,Profile filtering not enforced on server endpoints,MEDIUM

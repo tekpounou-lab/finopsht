@@ -4,6 +4,10 @@ import { LedgerTransaction } from "../../../types";
 import { CashAccountMapping } from "../validation/cashAccountMapping";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
 import crypto from "crypto";
+import {
+  ServerProfileVerificationError,
+  verifyServerEmployeeOperationalProfile
+} from "../../rbac/serverEmployeeProfileVerifier";
 
 export interface ServerInboundTransferParams {
   businessId: string;
@@ -33,6 +37,7 @@ export const AUTHORIZED_CASH_OPERATOR_ROLES = new Set([
   "JUNIOR_TELLER",
   "SENIOR_TELLER",
   "HEAD_TELLER",
+  "MASTER_HEAD_TELLER",
   "TELLER",
   "MANAGER",
   "OWNER",
@@ -87,13 +92,30 @@ export class ServerTransferIntakeEngine {
       );
     }
 
-    // Cash RBAC Validation
+    // Cash RBAC & Operational Profile Validation
     const normalizedRole = (operatorContext.role || "").trim().toUpperCase();
     if (!AUTHORIZED_CASH_OPERATOR_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
         `Le rôle (${operatorContext.role || "UNKNOWN"}) n'est pas habilité à exécuter des opérations d'encaissement.`
       );
+    }
+
+    try {
+      await verifyServerEmployeeOperationalProfile({
+        adminDb: firestore,
+        uid: operatorContext.uid,
+        email: operatorContext.email,
+        businessId,
+        actorRole: normalizedRole,
+        isSuperAdmin: normalizedRole === "SUPER_ADMIN",
+        capability: "cash"
+      });
+    } catch (err: any) {
+      if (err instanceof ServerProfileVerificationError) {
+        throw new FinopsException(err.code, err.message);
+      }
+      throw err;
     }
 
     if (!amountCents || amountCents <= 0) {

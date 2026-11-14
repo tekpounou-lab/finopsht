@@ -271,9 +271,8 @@ export const TransactionTypesManagement: React.FC<TransactionTypesManagementProp
           >
             <option value="ALL">Tous Profils RH</option>
             <option value="vendeur">Vendeur</option>
-            <option value="teller">Caissier / Teller</option>
             <option value="polyvalent">Polyvalent</option>
-            <option value="head_teller">Chef Caissier</option>
+            <option value="teller">Caissier / Teller</option>
           </select>
 
           <button

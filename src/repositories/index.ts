@@ -302,13 +302,13 @@ export const PermissionRepository = {
         "view_dashboard", "read_bi", "manage_settings", "manage_employees", "invite_employees",
         "manage_payroll", "lock_payroll", "view_ledger", "write_ledger", "view_documents",
         "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs",
-        "cash.view", "cash.operate", "cash.transfer"
+        "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve"
       ],
       ADMIN: [
         "view_dashboard", "read_bi", "manage_settings", "manage_employees", "invite_employees",
         "manage_payroll", "view_ledger", "write_ledger", "view_documents",
         "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs",
-        "cash.view", "cash.operate", "cash.transfer"
+        "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve"
       ],
       DIRECTOR: [
         "view_dashboard", "read_bi", "manage_employees", "manage_payroll", "view_ledger",
@@ -317,7 +317,7 @@ export const PermissionRepository = {
       MANAGER: [
         "view_dashboard", "manage_employees", "invite_employees", "manage_payroll", "view_ledger",
         "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "use_aicfo",
-        "cash.view", "cash.operate", "cash.transfer"
+        "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve"
       ],
       SUPERVISOR: [
         "view_dashboard", "manage_employees", "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "cash.view"
@@ -334,8 +334,13 @@ export const PermissionRepository = {
       TEAM_LEADER: [
         "view_dashboard", "manage_leaves", "override_attendance", "view_employee_space"
       ],
+      MASTER_HEAD_TELLER: [
+        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "cash.supervise",
+        "view_documents", "view_employee_space", "override_attendance"
+      ],
       HEAD_TELLER: [
-        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "view_documents", "view_employee_space", "override_attendance"
+        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve",
+        "view_documents", "view_employee_space", "override_attendance"
       ],
       SENIOR_TELLER: [
         "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "view_documents", "view_employee_space"

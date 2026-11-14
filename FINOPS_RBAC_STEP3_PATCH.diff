@@ -1,0 +1,98 @@
+# FINOPS RBAC STEP 3 PATCH SUMMARY
+
+*** Modified Files:
+- src/domains/cash/services/ServerTransferIntakeEngine.ts
+- src/domains/cash/services/ServerInternalTransferEngine.ts
+- src/domains/cash/services/TillSessionEngine.ts
+- src/services/business/ServerTillProvisioningService.ts
+- src/domains/cash/services/CashTransferEngine.ts
+- src/domains/cash/services/EmployeeCashEligibilityService.ts
+- src/tests/unit/security/RbacStep3MasterHeadTellerSecurity.test.ts
+
+*** Patch Details:
+
+diff --git a/src/domains/cash/services/ServerTransferIntakeEngine.ts b/src/domains/cash/services/ServerTransferIntakeEngine.ts
+index b49122f..e8f731a 100644
+--- a/src/domains/cash/services/ServerTransferIntakeEngine.ts
++++ b/src/domains/cash/services/ServerTransferIntakeEngine.ts
+@@ -34,6 +34,7 @@ export const AUTHORIZED_CASH_OPERATOR_ROLES = new Set([
+   "JUNIOR_TELLER",
+   "SENIOR_TELLER",
+   "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
+   "TELLER",
+   "MANAGER",
+   "OWNER",
+
+diff --git a/src/domains/cash/services/ServerInternalTransferEngine.ts b/src/domains/cash/services/ServerInternalTransferEngine.ts
+index c4d211b..f921ab3 100644
+--- a/src/domains/cash/services/ServerInternalTransferEngine.ts
++++ b/src/domains/cash/services/ServerInternalTransferEngine.ts
+@@ -73,6 +73,7 @@ export const SUPERVISOR_TRANSFER_ROLES = new Set([
+   "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
+   "MANAGER",
+   "OWNER",
+   "ADMIN",
+
+diff --git a/src/domains/cash/services/TillSessionEngine.ts b/src/domains/cash/services/TillSessionEngine.ts
+index a192311..b81e220 100644
+--- a/src/domains/cash/services/TillSessionEngine.ts
++++ b/src/domains/cash/services/TillSessionEngine.ts
+@@ -79,6 +79,7 @@ const ALLOWED_CLOSURE_ROLES = new Set<string>([
+   "SENIOR_TELLER",
+   "CASHIER",
+   "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
+   "MANAGER",
+   "OWNER",
+   "ADMIN",
+@@ -87,6 +88,7 @@ const ALLOWED_CLOSURE_ROLES = new Set<string>([
+ const SUPERVISOR_CLOSURE_ROLES = new Set<string>([
+   "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
+   "MANAGER",
+   "OWNER",
+   "ADMIN",
+@@ -95,6 +97,7 @@ const SUPERVISOR_CLOSURE_ROLES = new Set<string>([
+ const AUTHORIZED_REOPEN_ROLES = new Set<string>([
+   "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
+   "MANAGER",
+   "OWNER",
+   "SUPER_ADMIN"
+
+diff --git a/src/services/business/ServerTillProvisioningService.ts b/src/services/business/ServerTillProvisioningService.ts
+index 7a12cc9..8f31201 100644
+--- a/src/services/business/ServerTillProvisioningService.ts
++++ b/src/services/business/ServerTillProvisioningService.ts
+@@ -11,6 +11,7 @@ export const TILL_PROVISIONING_AUTHORIZED_ROLES = new Set<string>([
+   "ADMIN",
+   "MANAGER",
+   "HEAD_TELLER",
++  "MASTER_HEAD_TELLER",
+   "SUPER_ADMIN"
+ ]);
+
+diff --git a/src/domains/cash/services/CashTransferEngine.ts b/src/domains/cash/services/CashTransferEngine.ts
+index 4b9122f..e8f731a 100644
+--- a/src/domains/cash/services/CashTransferEngine.ts
++++ b/src/domains/cash/services/CashTransferEngine.ts
+@@ -341,7 +341,7 @@ export class CashTransferEngine {
+     // 2. Role Permission Check
+-    const allowedRoles = ["MANAGER", "HEAD_TELLER", "OWNER", "SUPER_ADMIN"];
++    const allowedRoles = ["MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "OWNER", "SUPER_ADMIN"];
+     if (!allowedRoles.includes(approver.role)) {
+
+diff --git a/src/domains/cash/services/EmployeeCashEligibilityService.ts b/src/domains/cash/services/EmployeeCashEligibilityService.ts
+index f192311..a81e220 100644
+--- a/src/domains/cash/services/EmployeeCashEligibilityService.ts
++++ b/src/domains/cash/services/EmployeeCashEligibilityService.ts
+@@ -42,6 +42,7 @@ export class EmployeeCashEligibilityService {
+     "JUNIOR_TELLER",
+     "SENIOR_TELLER",
+     "HEAD_TELLER",
++    "MASTER_HEAD_TELLER",
+     "POLYVALENT",
+     "VENDEUR",
+     "CASHIER",

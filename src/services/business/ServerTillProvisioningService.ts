@@ -4,14 +4,10 @@ import { CashTill, BranchSafe, CurrencyCode } from "../../types/cashManagement";
 import { Employee } from "../../types";
 import { CashAccountMapping } from "../../domains/cash/validation/cashAccountMapping";
 import { EmployeeCashEligibilityService } from "../../domains/cash/services/EmployeeCashEligibilityService";
+import { verifyServerEmployeeOperationalProfile } from "../../domains/rbac/serverEmployeeProfileVerifier";
+import { TILL_SUPERVISOR_ROLES } from "../../domains/rbac/operationalProfilePolicy";
 
-export const TILL_PROVISIONING_AUTHORIZED_ROLES = new Set<string>([
-  "OWNER",
-  "ADMIN",
-  "MANAGER",
-  "HEAD_TELLER",
-  "SUPER_ADMIN"
-]);
+export const TILL_PROVISIONING_AUTHORIZED_ROLES = TILL_SUPERVISOR_ROLES;
 
 export interface TillProvisioningActor {
   uid: string;
@@ -27,6 +23,8 @@ export interface AutoProvisionTillsOptions {
   initialEmployees?: any[];
   requestedTillIds?: string[];
   requestedSafeIds?: string[];
+  claimedRole?: unknown;
+  claimedProfile?: unknown;
 }
 
 export interface AutoProvisionTillsResult {
@@ -188,6 +186,12 @@ export class ServerTillProvisioningService {
         if (rawEmp.role !== undefined && typeof rawEmp.role !== "string") {
           throw new Error("INVALID_PROVISIONING_PARAMS");
         }
+        if (rawEmp.operational_profile !== undefined && typeof rawEmp.operational_profile !== "string") {
+          throw new Error("INVALID_PROVISIONING_PARAMS");
+        }
+        if (rawEmp.operationalProfile !== undefined && typeof rawEmp.operationalProfile !== "string") {
+          throw new Error("INVALID_PROVISIONING_PARAMS");
+        }
         if (rawEmp.status !== undefined && typeof rawEmp.status !== "string") {
           throw new Error("INVALID_PROVISIONING_PARAMS");
         }
@@ -233,6 +237,18 @@ export class ServerTillProvisioningService {
     }
 
     const db = customAdminDb || getAdminFirestore();
+
+    await verifyServerEmployeeOperationalProfile({
+      adminDb: db,
+      uid: actor.uid,
+      email: actor.email,
+      businessId,
+      actorRole: normalizedRole,
+      isSuperAdmin: actor.isSuperAdmin,
+      claimedRole: options.claimedRole,
+      claimedProfile: options.claimedProfile,
+      capability: "till_supervise"
+    });
 
     return withTenantProvisioningLock(businessId, async () => {
       // Discover persisted tenant employees, tills, and safes prior to transaction

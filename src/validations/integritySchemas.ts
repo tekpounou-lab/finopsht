@@ -206,7 +206,24 @@ export const CostCenterIntegritySchema = z.object({
 // 3. WORKFORCE & HR SCHEMAS
 // ============================================================================
 
-export const EmployeeRoleSchema = z.enum(["OWNER", "MANAGER", "SUPERVISOR", "EMPLOYEE", "SUPER_ADMIN", "UNASSIGNED"]);
+export const EmployeeRoleSchema = z.enum([
+  "OWNER",
+  "ADMIN",
+  "MANAGER",
+  "SUPERVISOR",
+  "EMPLOYEE",
+  "SUPER_ADMIN",
+  "UNASSIGNED",
+  "TELLER",
+  "JUNIOR_TELLER",
+  "SENIOR_TELLER",
+  "HEAD_TELLER",
+  "MASTER_HEAD_TELLER",
+  "ACCOUNTANT",
+  "AUDITOR"
+]);
+
+export const OperationalProfileSchema = z.enum(["vendeur", "polyvalent", "teller"]);
 
 export const EmployeeIntegritySchema = z.object({
   id: z.string().min(1, "Employee ID is required"),
@@ -220,6 +237,8 @@ export const EmployeeIntegritySchema = z.object({
   normalizedEmail: z.string().optional(),
   emailHistory: z.array(z.string()).optional(),
   role: EmployeeRoleSchema.default("EMPLOYEE"),
+  operational_profile: OperationalProfileSchema.optional(),
+  operationalProfile: OperationalProfileSchema.optional(),
   baseSalary: z.number().min(0, "Base salary cannot be negative"),
   paymentModel: z.enum(["FIXED", "COMMISSION", "HYBRID"]).default("FIXED"),
   phone: z.string().optional(),
@@ -239,7 +258,45 @@ export const EmployeeIntegritySchema = z.object({
   primaryDepartmentId: z.string().optional(),
   createdAt: z.any().optional(),
   updatedAt: z.any().optional()
-}).strict();
+}).strict().superRefine((data, ctx) => {
+  const rawProfile = data.operational_profile ?? data.operationalProfile;
+  if (
+    data.operational_profile &&
+    data.operationalProfile &&
+    data.operational_profile !== data.operationalProfile
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["operational_profile"],
+      message: "Conflicting operational_profile and operationalProfile values"
+    });
+    return;
+  }
+  const tellerRoles = new Set(["TELLER", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER"]);
+  if (data.role === "EMPLOYEE") {
+    if (rawProfile === "teller") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["operational_profile"],
+        message: "EMPLOYEE cannot carry 'teller' operational_profile"
+      });
+    }
+  } else if (tellerRoles.has(data.role)) {
+    if (rawProfile && rawProfile !== "teller") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["operational_profile"],
+        message: `${data.role} must only use 'teller' operational_profile`
+      });
+    }
+  } else if (rawProfile !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["operational_profile"],
+      message: `Role ${data.role} cannot carry operational_profile '${rawProfile}'`
+    });
+  }
+});
 
 export const AttendanceRecordIntegritySchema = z.object({
   id: z.string().min(1, "Attendance record ID is required"),

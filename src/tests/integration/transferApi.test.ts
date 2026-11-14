@@ -119,6 +119,26 @@ describe("TRUSTED SERVER API — TRANSFER INTAKE, PAYOUT & FORENSIC SUITE", () =
   beforeEach(() => {
     mockAdminStore.clear();
 
+    mockAdminStore.set(`users/${AUTH_TELLER.uid}`, {
+      id: AUTH_TELLER.uid,
+      uid: AUTH_TELLER.uid,
+      business_id: BUSINESS_ID,
+      role: "TELLER",
+      operational_profile: "teller",
+      status: "ACTIVE"
+    });
+    mockAdminStore.set(`employees/${AUTH_TELLER.uid}`, {
+      id: AUTH_TELLER.uid,
+      business_id: BUSINESS_ID,
+      branchId: BRANCH_ID,
+      name: AUTH_TELLER.name,
+      email: AUTH_TELLER.email,
+      role: "TELLER",
+      operational_profile: "teller",
+      status: "ACTIVE",
+      isActive: true
+    });
+
     // Setup Till and Session in mock Admin Firestore
     const till: CashTill = {
       id: TILL_ID,

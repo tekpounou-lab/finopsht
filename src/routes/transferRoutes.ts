@@ -15,6 +15,12 @@ import {
   ServerActorContext
 } from "../domains/cash/services/ServerInternalTransferEngine";
 import { FinopsException } from "../modules/runtime/FinopsException";
+import { getAdminFirestore } from "../lib/firebaseAdmin";
+import {
+  ServerProfileVerificationError,
+  verifyServerEmployeeOperationalProfile
+} from "../domains/rbac/serverEmployeeProfileVerifier";
+import { canApproveInternalTransferRole } from "../domains/rbac/operationalProfilePolicy";
 
 export const transferRouter = Router();
 
@@ -25,7 +31,20 @@ function mapFinopsExceptionStatus(code: string): number {
     code === "SESSION_TILL_MISMATCH" ||
     code === "FORBIDDEN_ROLE" ||
     code === "FORBIDDEN_TENANT_ACCESS" ||
-    code === "MAKER_CHECKER_VIOLATION"
+    code === "MAKER_CHECKER_VIOLATION" ||
+    code === "FORBIDDEN_OPERATIONAL_PROFILE" ||
+    code === "CONFLICTING_OPERATIONAL_PROFILE_FIELDS" ||
+    code === "RETIRED_OPERATIONAL_PROFILE" ||
+    code === "MISSING_OPERATIONAL_PROFILE" ||
+    code === "INVALID_OPERATIONAL_PROFILE" ||
+    code === "FORBIDDEN_BARBER_ALIAS" ||
+    code === "FORBIDDEN_ROLE_PROFILE_COMBINATION" ||
+    code === "ROLE_SPOOFING_DETECTED" ||
+    code === "OPERATIONAL_PROFILE_SPOOFING_DETECTED" ||
+    code === "INACTIVE_ACTOR" ||
+    code === "INVALID_OR_MISSING_ROLE" ||
+    code === "OVERSIGHT_ROLE_OPERATIONAL_DENY" ||
+    code === "FORBIDDEN_EMPLOYEE_CASH_ACCESS"
   ) {
     return 403;
   }
@@ -116,6 +135,17 @@ transferRouter.post("/intake", authenticateToken, async (req: AuthenticatedReque
     }
 
     const params = req.body || {};
+    await verifyServerEmployeeOperationalProfile({
+      adminDb: getAdminFirestore(),
+      uid: req.user.uid,
+      email: req.user.email,
+      businessId,
+      actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      isSuperAdmin: req.user.isSuperAdmin,
+      claimedRole: params.operatorRole,
+      claimedProfile: params.operational_profile ?? params.operationalProfile,
+      capability: "cash"
+    });
     const operatorContext = {
       uid: req.user.uid,
       name: req.user.email || req.user.uid,
@@ -140,6 +170,12 @@ transferRouter.post("/intake", authenticateToken, async (req: AuthenticatedReque
     });
   } catch (error: any) {
     console.error("[Server Transfer API] Intake Error:", error);
+    if (error instanceof ServerProfileVerificationError) {
+      return res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message
+      });
+    }
     if (error instanceof FinopsException) {
       const statusCode = mapFinopsExceptionStatus(error.code);
       return res.status(statusCode).json({
@@ -173,6 +209,17 @@ transferRouter.post("/payout", authenticateToken, async (req: AuthenticatedReque
     }
 
     const params = req.body || {};
+    await verifyServerEmployeeOperationalProfile({
+      adminDb: getAdminFirestore(),
+      uid: req.user.uid,
+      email: req.user.email,
+      businessId,
+      actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      isSuperAdmin: req.user.isSuperAdmin,
+      claimedRole: params.operatorRole,
+      claimedProfile: params.operational_profile ?? params.operationalProfile,
+      capability: "cash"
+    });
     const operatorContext = {
       uid: req.user.uid,
       name: req.user.email || req.user.uid,
@@ -196,6 +243,12 @@ transferRouter.post("/payout", authenticateToken, async (req: AuthenticatedReque
     });
   } catch (error: any) {
     console.error("[Server Transfer API] Payout Error:", error);
+    if (error instanceof ServerProfileVerificationError) {
+      return res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message
+      });
+    }
     if (error instanceof FinopsException) {
       const statusCode = mapFinopsExceptionStatus(error.code);
       return res.status(statusCode).json({
@@ -295,6 +348,18 @@ transferRouter.post("/internal/request", authenticateToken, async (req: Authenti
     if (!businessId) return;
 
     const normalizedRole = (req.user.role || "").trim().toUpperCase();
+    await verifyServerEmployeeOperationalProfile({
+      adminDb: getAdminFirestore(),
+      uid: req.user.uid,
+      email: req.user.email,
+      businessId,
+      actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      isSuperAdmin: req.user.isSuperAdmin,
+      claimedRole: req.body?.initiatorRole ?? req.body?.operatorRole,
+      claimedProfile: req.body?.operational_profile ?? req.body?.operationalProfile,
+      capability: "transfer_initiate"
+    });
+
     const actor: ServerActorContext = {
       uid: req.user.uid,
       business_id: businessId,
@@ -324,6 +389,12 @@ transferRouter.post("/internal/request", authenticateToken, async (req: Authenti
     });
   } catch (error: any) {
     console.error("[Server Internal Transfer API] Request Error:", error);
+    if (error instanceof ServerProfileVerificationError) {
+      return res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message
+      });
+    }
     if (error instanceof FinopsException) {
       const statusCode = mapFinopsExceptionStatus(error.code);
       return res.status(statusCode).json({
@@ -354,6 +425,25 @@ transferRouter.post("/internal/:transferId/approve", authenticateToken, async (r
     }
 
     const normalizedRole = (req.user.role || "").trim().toUpperCase();
+    if (!req.user.isSuperAdmin && (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole))) {
+      return res.status(403).json({
+        error: "FORBIDDEN_ROLE",
+        message: `Role '${req.user.role}' is not authorized to approve internal transfers.`
+      });
+    }
+
+    await verifyServerEmployeeOperationalProfile({
+      adminDb: getAdminFirestore(),
+      uid: req.user.uid,
+      email: req.user.email,
+      businessId,
+      actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      isSuperAdmin: req.user.isSuperAdmin,
+      claimedRole: req.body?.approverRole,
+      claimedProfile: req.body?.operational_profile ?? req.body?.operationalProfile,
+      capability: "transfer_approve"
+    });
+
     const actor: ServerActorContext = {
       uid: req.user.uid,
       business_id: businessId,
@@ -384,6 +474,12 @@ transferRouter.post("/internal/:transferId/approve", authenticateToken, async (r
     });
   } catch (error: any) {
     console.error("[Server Internal Transfer API] Approve Error:", error);
+    if (error instanceof ServerProfileVerificationError) {
+      return res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message
+      });
+    }
     if (error instanceof FinopsException) {
       const statusCode = mapFinopsExceptionStatus(error.code);
       return res.status(statusCode).json({
@@ -422,6 +518,25 @@ transferRouter.post("/internal/:transferId/reject", authenticateToken, async (re
     }
 
     const normalizedRole = (req.user.role || "").trim().toUpperCase();
+    if (!req.user.isSuperAdmin && (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole))) {
+      return res.status(403).json({
+        error: "FORBIDDEN_ROLE",
+        message: `Role '${req.user.role}' is not authorized to reject internal transfers.`
+      });
+    }
+
+    await verifyServerEmployeeOperationalProfile({
+      adminDb: getAdminFirestore(),
+      uid: req.user.uid,
+      email: req.user.email,
+      businessId,
+      actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      isSuperAdmin: req.user.isSuperAdmin,
+      claimedRole: req.body?.approverRole,
+      claimedProfile: req.body?.operational_profile ?? req.body?.operationalProfile,
+      capability: "transfer_approve"
+    });
+
     const actor: ServerActorContext = {
       uid: req.user.uid,
       business_id: businessId,
@@ -453,6 +568,12 @@ transferRouter.post("/internal/:transferId/reject", authenticateToken, async (re
     });
   } catch (error: any) {
     console.error("[Server Internal Transfer API] Reject Error:", error);
+    if (error instanceof ServerProfileVerificationError) {
+      return res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message
+      });
+    }
     if (error instanceof FinopsException) {
       const statusCode = mapFinopsExceptionStatus(error.code);
       return res.status(statusCode).json({

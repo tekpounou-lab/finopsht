@@ -110,7 +110,7 @@ export function resolveTargetRoute(params: {
 
     case "EMPLOYEE_ACTIVE":
       const upperRole = (role || "").toUpperCase();
-      if (["HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(upperRole)) {
+      if (["MASTER_HEAD_TELLER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(upperRole)) {
         return {
           targetPath: "/dashboard",
           reason: "Active Teller operational workspace",

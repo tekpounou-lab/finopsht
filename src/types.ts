@@ -11,7 +11,24 @@ import type {
   EmployeeDepartmentLink 
 } from "./types/organization";
 
-export type Role = "OWNER" | "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "SUPER_ADMIN" | "UNASSIGNED" | "TELLER" | "JUNIOR_TELLER" | "SENIOR_TELLER" | "HEAD_TELLER" | "ACCOUNTANT" | "AUDITOR";
+import type { OperationalProfile } from "./types/transactionTypes";
+export type { OperationalProfile };
+
+export type Role =
+  | "OWNER"
+  | "ADMIN"
+  | "MANAGER"
+  | "SUPERVISOR"
+  | "EMPLOYEE"
+  | "SUPER_ADMIN"
+  | "UNASSIGNED"
+  | "TELLER"
+  | "JUNIOR_TELLER"
+  | "SENIOR_TELLER"
+  | "HEAD_TELLER"
+  | "MASTER_HEAD_TELLER"
+  | "ACCOUNTANT"
+  | "AUDITOR";
 export type UserRole = Role;
 
 export type { 
@@ -71,6 +88,8 @@ export interface UserProfile {
   phoneNumber?: string;
   phone?: string;
   role: Role;
+  operational_profile?: OperationalProfile;
+  operationalProfile?: OperationalProfile;
   requested_role?: "MEMBER" | "OWNER" | Role | string;
   requestedRole?: "MEMBER" | "OWNER" | Role | string;
   businessId?: string;
@@ -114,6 +133,8 @@ export interface Employee {
   displayName?: string;
   email: string;
   role: Role;
+  operational_profile?: OperationalProfile;
+  operationalProfile?: OperationalProfile;
   baseSalary: number; // Integer (Gourdes)
   salaryBaseHtg?: number;
   paymentModel: "FIXED" | "COMMISSION" | "HYBRID";
@@ -732,6 +753,8 @@ export interface Invitation {
   baseSalary?: number;
   commissionRate?: number;
   role: Role;
+  operational_profile?: OperationalProfile;
+  operationalProfile?: OperationalProfile;
   branchId: string;
   branch_name?: string;
   departmentId: string;

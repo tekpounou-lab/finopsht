@@ -1,0 +1,11 @@
+role,module,operation,read,create,submit,review,approve,execute,reverse,branch_scope,enforcement_layer,evidence_classification,gap,severity
+MASTER_HEAD_TELLER,cash_management,view_tills,YES,NO,NO,NO,NO,NO,NO,AUTHORIZED_BRANCHES,PermissionService & Firestore,VERIFIED_EXISTS,NONE,LOW
+MASTER_HEAD_TELLER,cash_management,remittance_intake,YES,YES,YES,NO,NO,YES,NO,ASSIGNED_BRANCH,ServerTransferIntakeEngine,VERIFIED_GAP,MISSING_ROLE_IN_SERVER_ENGINE,HIGH
+MASTER_HEAD_TELLER,cash_management,remittance_payout,YES,YES,YES,NO,NO,YES,NO,ASSIGNED_BRANCH,ServerTransferPayoutEngine,VERIFIED_GAP,MISSING_ROLE_IN_SERVER_ENGINE,HIGH
+MASTER_HEAD_TELLER,cash_management,internal_transfer_request,YES,YES,YES,NO,NO,NO,NO,AUTHORIZED_BRANCHES,ServerInternalTransferEngine,VERIFIED_EXISTS,NONE,LOW
+MASTER_HEAD_TELLER,cash_management,internal_transfer_approve,YES,NO,NO,YES,YES,YES,NO,AUTHORIZED_BRANCHES,ServerInternalTransferEngine,VERIFIED_GAP,MISSING_IN_SUPERVISOR_ROLES,HIGH
+MASTER_HEAD_TELLER,cash_management,till_reopen_review,YES,NO,NO,YES,YES,NO,NO,AUTHORIZED_BRANCHES,ServerTillService & API,VERIFIED_EXISTS,EXPLICIT_ROLES_NEEDED,MEDIUM
+MASTER_HEAD_TELLER,personnel,employee_create,NO,NO,NO,NO,NO,NO,NO,NONE,PermissionService,VERIFIED_EXISTS,NONE,LOW
+MASTER_HEAD_TELLER,payroll,payroll_approve,NO,NO,NO,NO,NO,NO,NO,NONE,PermissionService & PayrollService,VERIFIED_EXISTS,NONE,LOW
+MASTER_HEAD_TELLER,accounting,journal_post,NO,NO,NO,NO,NO,NO,NO,NONE,PermissionService & Firestore,VERIFIED_EXISTS,NONE,LOW
+MASTER_HEAD_TELLER,settings,manage_settings,NO,NO,NO,NO,NO,NO,NO,NONE,PermissionService & Firestore,VERIFIED_EXISTS,NONE,LOW

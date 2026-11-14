@@ -40,6 +40,25 @@ import firebaseConfig from "./firebase-applet-config.json";
 
 import crypto from "crypto";
 import { LogSanitizer } from "./src/services/security/LogSanitizer";
+import { ServerProfileVerificationError } from "./src/domains/rbac/serverEmployeeProfileVerifier";
+import {
+  extractRawOperationalProfileFromRecord,
+  validateRoleOperationalProfileCompatibility
+} from "./src/domains/rbac/operationalProfilePolicy";
+
+const PROFILE_SECURITY_ERROR_CODES = new Set<string>([
+  "FORBIDDEN_OPERATIONAL_PROFILE",
+  "MISSING_OPERATIONAL_PROFILE",
+  "INVALID_OPERATIONAL_PROFILE",
+  "RETIRED_OPERATIONAL_PROFILE",
+  "FORBIDDEN_BARBER_ALIAS",
+  "FORBIDDEN_ROLE_PROFILE_COMBINATION",
+  "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+  "INACTIVE_ACTOR",
+  "ROLE_SPOOFING_DETECTED",
+  "OPERATIONAL_PROFILE_SPOOFING_DETECTED",
+  "INVALID_OR_MISSING_ROLE"
+]);
 
 dotenv.config();
 
@@ -761,6 +780,16 @@ export async function createApp() {
         });
       }
 
+      const bodyProfileInfo = extractRawOperationalProfileFromRecord(body);
+      if (bodyProfileInfo.conflict) {
+        return res.status(403).json({
+          success: false,
+          error: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          code: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          message: "Conflicting operational_profile and operationalProfile fields."
+        });
+      }
+
       const actor = {
         uid: req.user.uid,
         email: req.user.email || "",
@@ -777,7 +806,13 @@ export async function createApp() {
           branchId: body.branchId,
           initialEmployees: body.initialEmployees,
           requestedTillIds: body.requestedTillIds,
-          requestedSafeIds: body.requestedSafeIds
+          requestedSafeIds: body.requestedSafeIds,
+          claimedRole: body.actorRole ?? body.claimedRole ?? body.actor?.role,
+          claimedProfile:
+            body.claimedProfile ??
+            body.actor?.operational_profile ??
+            body.actor?.operationalProfile ??
+            bodyProfileInfo.rawValue
         }
       );
 
@@ -801,6 +836,8 @@ export async function createApp() {
         });
       }
       if (
+        error instanceof ServerProfileVerificationError ||
+        PROFILE_SECURITY_ERROR_CODES.has(code) ||
         code === "FORBIDDEN_ROLE" ||
         code === "FORBIDDEN_TENANT_ACCESS" ||
         code === "TENANT_OVERWRITE_FORBIDDEN" ||
@@ -812,7 +849,9 @@ export async function createApp() {
           error: code,
           code,
           message:
-            code === "FORBIDDEN_ROLE"
+            PROFILE_SECURITY_ERROR_CODES.has(code) || error instanceof ServerProfileVerificationError
+              ? error?.message || "Operational profile security validation failed."
+              : code === "FORBIDDEN_ROLE"
               ? "Your role is not authorized to auto-provision tills."
               : code === "TENANT_OVERWRITE_FORBIDDEN"
               ? "Target till or safe identifier is already bound to another tenant."
@@ -900,6 +939,28 @@ export async function createApp() {
         });
       }
 
+      const closeProfileInfo = extractRawOperationalProfileFromRecord(body);
+      if (closeProfileInfo.conflict) {
+        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+          businessId,
+          actorId: req.user.uid,
+          actorName: req.user.email || req.user.uid,
+          actorRole: effectiveRole,
+          action: "TILL_SESSION_CLOSE_REFUSED",
+          sessionId: typeof body.sessionId === "string" ? body.sessionId : "UNKNOWN",
+          tillId: typeof body.tillId === "string" ? body.tillId : undefined,
+          result: "REFUSED",
+          errorCode: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          details: "Conflicting operational_profile and operationalProfile fields on /api/cash/sessions/close."
+        });
+        return res.status(403).json({
+          success: false,
+          error: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          code: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          message: "Conflicting operational_profile and operationalProfile fields."
+        });
+      }
+
       const operatorId = req.user.uid;
       const operatorName =
         typeof body.operatorName === "string" && body.operatorName.trim()
@@ -917,6 +978,8 @@ export async function createApp() {
         operatorId,
         operatorName,
         operatorRole: effectiveRole,
+        claimedOperatorRole: body.operatorRole ?? body.claimedRole,
+        claimedOperatorProfile: body.operatorProfile ?? body.claimedProfile ?? closeProfileInfo.rawValue,
         authenticatedUid: req.user.uid,
         notes: body.notes,
         idempotencyKey: body.idempotencyKey
@@ -932,7 +995,9 @@ export async function createApp() {
       const code = error?.code || "";
       if (
         req.user &&
-        (code === "TENANT_ISOLATION_VIOLATION" ||
+        (error instanceof ServerProfileVerificationError ||
+          PROFILE_SECURITY_ERROR_CODES.has(code) ||
+          code === "TENANT_ISOLATION_VIOLATION" ||
           code === "FORBIDDEN_TENANT_ACCESS" ||
           code === "FORBIDDEN_ROLE" ||
           code === "UNAUTHORIZED_SESSION_OPERATOR" ||
@@ -960,6 +1025,8 @@ export async function createApp() {
         });
       }
       if (
+        error instanceof ServerProfileVerificationError ||
+        PROFILE_SECURITY_ERROR_CODES.has(code) ||
         code === "TENANT_ISOLATION_VIOLATION" ||
         code === "FORBIDDEN_TENANT_ACCESS" ||
         code === "FORBIDDEN_ROLE" ||
@@ -970,7 +1037,7 @@ export async function createApp() {
           success: false,
           error: code,
           code,
-          message: "Forbidden session closure operation."
+          message: error?.message || "Forbidden session closure operation."
         });
       }
       if (
@@ -1082,6 +1149,28 @@ export async function createApp() {
         });
       }
 
+      const reopenProfileInfo = extractRawOperationalProfileFromRecord(body);
+      if (reopenProfileInfo.conflict) {
+        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+          businessId,
+          actorId: req.user.uid,
+          actorName: req.user.email || req.user.uid,
+          actorRole: effectiveRole,
+          action: "TILL_SESSION_REOPEN_REFUSED",
+          sessionId: typeof body.previousSessionId === "string" ? body.previousSessionId : "UNKNOWN",
+          tillId: typeof body.tillId === "string" ? body.tillId : undefined,
+          result: "REFUSED",
+          errorCode: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          details: "Conflicting operational_profile and operationalProfile fields on /api/cash/sessions/reopen."
+        });
+        return res.status(403).json({
+          success: false,
+          error: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          code: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          message: "Conflicting operational_profile and operationalProfile fields."
+        });
+      }
+
       const adminDb = getAdminFirestore();
       const result = await TillSessionEngine.reopenSessionWithAdmin(adminDb, {
         tillId: body.tillId,
@@ -1092,6 +1181,8 @@ export async function createApp() {
         approverId: req.user.uid,
         approverName: body.approverName || req.user.email || req.user.uid,
         approverRole: effectiveRole,
+        claimedApproverRole: body.approverRole ?? body.claimedRole,
+        claimedApproverProfile: body.approverProfile ?? body.claimedProfile ?? reopenProfileInfo.rawValue,
         authenticatedApproverUid: req.user.uid,
         reason: body.reason,
         idempotencyKey: body.idempotencyKey
@@ -1132,8 +1223,11 @@ export async function createApp() {
         });
       }
       if (
+        error instanceof ServerProfileVerificationError ||
+        PROFILE_SECURITY_ERROR_CODES.has(code) ||
         code === "TENANT_ISOLATION_VIOLATION" ||
         code === "FORBIDDEN_TENANT_ACCESS" ||
+        code === "FORBIDDEN_ROLE" ||
         code === "UNAUTHORIZED_APPROVER" ||
         code === "MAKER_CHECKER_VIOLATION" ||
         code === "IDENTITY_SPOOFING_DETECTED" ||
@@ -1144,7 +1238,7 @@ export async function createApp() {
           success: false,
           error: code,
           code,
-          message: "Forbidden session reopen operation."
+          message: error?.message || "Forbidden session reopen operation."
         });
       }
       if (
@@ -1355,6 +1449,27 @@ export async function createApp() {
         return res.status(400).json({ error: "MISSING_INVITATION_DETAILS", message: "Missing recipient email." });
       }
 
+      const inviteProfileInfo = extractRawOperationalProfileFromRecord(req.body || {});
+      if (inviteProfileInfo.conflict) {
+        return res.status(403).json({
+          error: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          code: "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+          message: "Conflicting operational_profile and operationalProfile fields."
+        });
+      }
+
+      const compat = validateRoleOperationalProfileCompatibility(targetRole, inviteProfileInfo.rawValue, {
+        allowLegacyBarberAlias: false,
+        allowMissingForExecutiveOrOversight: true
+      });
+      if (!compat.valid) {
+        return res.status(403).json({
+          error: compat.code,
+          code: compat.code,
+          message: compat.reason
+        });
+      }
+
       const verifiedSender = {
         uid: req.user.uid,
         name: sender?.name || req.user.email || req.user.uid,
@@ -1367,18 +1482,21 @@ export async function createApp() {
         businessId,
         String(email).trim(),
         targetRole,
-        verifiedSender
+        verifiedSender,
+        compat.normalizedProfile ?? undefined
       );
       res.json({ success: true, inviteId });
     } catch (error: any) {
       console.error("[Invitation API] Send Error:", error);
       const msg = error?.message || "";
       if (
+        error instanceof ServerProfileVerificationError ||
+        PROFILE_SECURITY_ERROR_CODES.has(msg) ||
         msg === "FORBIDDEN_TENANT_ACCESS" ||
         msg === "FORBIDDEN_ROLE" ||
         msg === "FORBIDDEN_ROLE_ASSIGNMENT"
       ) {
-        return res.status(403).json({ error: msg });
+        return res.status(403).json({ error: msg, code: msg });
       }
       if (msg === "MISSING_INVITATION_DETAILS") {
         return res.status(400).json({ error: msg });
@@ -1478,13 +1596,15 @@ export async function createApp() {
         });
       }
       if (
+        error instanceof ServerProfileVerificationError ||
+        PROFILE_SECURITY_ERROR_CODES.has(msg) ||
         msg === "INVITATION_RECIPIENT_MISMATCH" ||
         msg === "FORBIDDEN_ROLE_ASSIGNMENT" ||
         msg === "TENANT_CONFLICT_EXISTING_MEMBERSHIP" ||
         msg === "EMAIL_VERIFICATION_REQUIRED" ||
         msg === "INVALID_INVITATION_TENANT"
       ) {
-        return res.status(403).json({ error: msg });
+        return res.status(403).json({ error: msg, code: msg });
       }
       if (msg === "INVITATION_NOT_FOUND") {
         return res.status(404).json({ error: msg });

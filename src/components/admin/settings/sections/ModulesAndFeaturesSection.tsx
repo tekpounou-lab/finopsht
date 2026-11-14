@@ -174,6 +174,7 @@ const MODULES_CATALOG: ErpModuleConfig[] = [
 const CONFIGURABLE_ROLES = [
   { id: "OWNER", label: "Propriétaire", isFixed: true },
   { id: "MANAGER", label: "Manager / Dirigeant", isFixed: false },
+  { id: "MASTER_HEAD_TELLER", label: "Chef Caissier Principal", isFixed: false },
   { id: "HEAD_TELLER", label: "Chef Caissier", isFixed: false },
   { id: "SENIOR_TELLER", label: "Caissier Senior", isFixed: false },
   { id: "JUNIOR_TELLER", label: "Caissier Junior", isFixed: false },
@@ -244,7 +245,7 @@ export default function ModulesAndFeaturesSection() {
     const defaultEmployeeMods = ["attendance", "training_support"];
 
     if (roleId === "MANAGER") return defaultManagerMods.includes(moduleId);
-    if (roleId === "HEAD_TELLER") return defaultHeadTellerMods.includes(moduleId);
+    if (roleId === "HEAD_TELLER" || roleId === "MASTER_HEAD_TELLER") return defaultHeadTellerMods.includes(moduleId);
     if (roleId === "SENIOR_TELLER" || roleId === "JUNIOR_TELLER") return defaultTellerMods.includes(moduleId);
     if (roleId === "AUDITOR") return defaultAuditorMods.includes(moduleId);
     if (roleId === "EMPLOYEE") return defaultEmployeeMods.includes(moduleId);

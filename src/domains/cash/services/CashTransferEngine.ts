@@ -11,11 +11,19 @@ import { db } from "../../../lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { ForensicLogRepository } from "../../../repositories/ForensicLogRepository";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
+import {
+  canApproveInternalTransferRole,
+  EXECUTIVE_RBAC_ROLES,
+  TELLER_ROLES,
+  normalizeRole,
+  validateRoleOperationalProfileCompatibility
+} from "../../rbac/operationalProfilePolicy";
 
 export interface TransferUserContext {
   id: string;
   name: string;
-  role: string; // e.g. 'JUNIOR_TELLER', 'SENIOR_TELLER', 'HEAD_TELLER', 'MANAGER', 'OWNER'
+  role: string; // e.g. 'SENIOR_TELLER', 'HEAD_TELLER', 'MASTER_HEAD_TELLER', 'MANAGER', 'OWNER'
+  operational_profile?: string;
 }
 
 export interface FundSafeParams {
@@ -57,6 +65,27 @@ export class CashTransferEngine {
       fundingCategory?: "BANK_WITHDRAWAL" | "INTER_SAFE" | "OWNER_INJECTION" | "TILL_RELIEF";
     }
   ): Promise<InternalTransfer> {
+    const initiatorRole = normalizeRole(user?.role);
+    if (
+      !initiatorRole ||
+      initiatorRole === "JUNIOR_TELLER" ||
+      (!TELLER_ROLES.has(initiatorRole) && !EXECUTIVE_RBAC_ROLES.has(initiatorRole))
+    ) {
+      throw new FinopsException(
+        "FORBIDDEN_ROLE",
+        `Le rôle [${user?.role || "UNKNOWN"}] n'est pas autorisé à initier un transfert interne.`
+      );
+    }
+    if (user.operational_profile !== undefined) {
+      const compat = validateRoleOperationalProfileCompatibility(initiatorRole, user.operational_profile, {
+        allowLegacyBarberAlias: false,
+        allowMissingForExecutiveOrOversight: true
+      });
+      if (!compat.valid) {
+        throw new FinopsException(compat.code, compat.reason);
+      }
+    }
+
     if (amountCents <= 0) {
       throw new FinopsException(
         "INVALID_TRANSFER_AMOUNT",
@@ -337,12 +366,12 @@ export class CashTransferEngine {
       );
     }
 
-    // 2. Role Permission Check
-    const allowedRoles = ["MANAGER", "HEAD_TELLER", "OWNER", "SUPER_ADMIN"];
-    if (!allowedRoles.includes(approver.role)) {
+    // 2. Role Permission Check (Step 3 Mandatory Correction: MASTER_HEAD_TELLER strictly denied)
+    const normalizedApproverRole = normalizeRole(approver.role);
+    if (!normalizedApproverRole || normalizedApproverRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedApproverRole)) {
       throw new FinopsException(
-        "INSUFFICIENT_PERMISSIONS",
-        "Seuls les Managers, Chefs Caissiers et Propriétaires sont autorisés à approuver les transferts de fonds."
+        "FORBIDDEN_ROLE",
+        `Le rôle [${approver.role || "UNKNOWN"}] n'est pas autorisé à approuver les transferts de fonds.`
       );
     }
 
@@ -564,6 +593,21 @@ export class CashTransferEngine {
     rejector: TransferUserContext,
     reason: string
   ): Promise<InternalTransfer> {
+    const normalizedRejectorRole = normalizeRole(rejector?.role);
+    if (!normalizedRejectorRole || normalizedRejectorRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRejectorRole)) {
+      throw new FinopsException(
+        "FORBIDDEN_ROLE",
+        `Le rôle [${rejector?.role || "UNKNOWN"}] n'est pas autorisé à rejeter les transferts de fonds.`
+      );
+    }
+
+    if (transfer.initiator_id === rejector.id) {
+      throw new FinopsException(
+        "MAKER_CHECKER_VIOLATION",
+        "Séparation des tâches (Maker-Checker) : L'initiateur ne peut pas rejeter sa propre demande de transfert."
+      );
+    }
+
     if (!reason || reason.trim().length === 0) {
       throw new FinopsException(
         "REJECTION_REASON_REQUIRED",
@@ -678,6 +722,7 @@ export class CashTransferEngine {
     initiator_id: string;
     initiator_name: string;
     initiator_role?: string;
+    initiator_profile?: string;
     description: string;
     debit_account_code?: string;
     credit_account_code?: string;
@@ -707,7 +752,8 @@ export class CashTransferEngine {
       {
         id: params.initiator_id,
         name: params.initiator_name,
-        role: params.initiator_role || "TELLER"
+        role: params.initiator_role || "",
+        operational_profile: params.initiator_profile
       },
       {
         debitAccountCode: params.debit_account_code,

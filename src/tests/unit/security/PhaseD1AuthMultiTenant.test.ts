@@ -766,6 +766,21 @@ describe("Phase D1, D1.1 & D1.2: Authentication, Authorization, IDOR & Multi-Ten
 
   describe("4. Real Engine Cross-Tenant IDOR Protection via HTTP Router (No Engine Mocks)", () => {
     beforeEach(() => {
+      // Seed user_alpha_001 with authorized TELLER role and 'teller' operational profile
+      mockUserDocs.set("user_alpha_001", {
+        business_id: "biz_tenant_alpha",
+        role: "TELLER",
+        operational_profile: "teller",
+        accountStatus: "ACTIVE"
+      });
+      mockFirestoreStore.set("employees/user_alpha_001", {
+        id: "user_alpha_001",
+        business_id: "biz_tenant_alpha",
+        role: "TELLER",
+        operational_profile: "teller",
+        status: "ACTIVE"
+      });
+
       // Seed Tenant Alpha till & session owned by user_alpha_001
       mockFirestoreStore.set("cash_tills/till_alpha", {
         id: "till_alpha",

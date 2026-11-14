@@ -29,6 +29,11 @@ import { tenantQuery, realtimeManager } from "../../../services/firestore/realti
 import { Employee, LedgerTransaction, AttendanceRecord, EmployeeContract, PayrollRecord, PayrollInputSnapshot } from "../../../types";
 import { LedgerRepository } from "../../../repositories/LedgerRepository";
 import { CommissionEngine } from "../../../services/CommissionEngine";
+import {
+  canRecordCommercialSales,
+  canRecordCommercialServices,
+  extractRawOperationalProfileFromRecord
+} from "../../../domains/rbac/operationalProfilePolicy";
 
 interface MySalesAndExpensesSectionProps {
   employee: Employee;
@@ -74,6 +79,29 @@ export const MySalesAndExpensesSection: React.FC<MySalesAndExpensesSectionProps>
   const [expenseCategory, setExpenseCategory] = useState("Frais Déplacement");
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
   const [localLedgerTransactions, setLocalLedgerTransactions] = useState<LedgerTransaction[]>([]);
+
+  const rawProfileInfo = useMemo(
+    () => extractRawOperationalProfileFromRecord(employee as unknown as Record<string, unknown>),
+    [employee]
+  );
+  const profileInputForCheck = rawProfileInfo.conflict ? "__CONFLICT__" : rawProfileInfo.rawValue;
+  const salesDecision = useMemo(
+    () =>
+      canRecordCommercialSales(employee.role, profileInputForCheck, {
+        allowLegacyBarberAlias: true,
+        allowExecutiveRoleBypass: true
+      }),
+    [employee.role, profileInputForCheck]
+  );
+  const servicesDecision = useMemo(
+    () =>
+      canRecordCommercialServices(employee.role, profileInputForCheck, {
+        allowLegacyBarberAlias: true,
+        allowExecutiveRoleBypass: true
+      }),
+    [employee.role, profileInputForCheck]
+  );
+  const canCreateAnyCommercialEntry = salesDecision.allowed || servicesDecision.allowed;
 
   // Live SSOT Firestore subscription fallback for employee transactions
   useEffect(() => {
@@ -271,6 +299,13 @@ export const MySalesAndExpensesSection: React.FC<MySalesAndExpensesSectionProps>
   // Handle Log Sale
   const handleSaveSale = async (e: React.FormEvent) => {
     e.preventDefault();
+    const isServiceCategory = saleCategory !== "Vente Produits";
+    const activeDecision = isServiceCategory ? servicesDecision : salesDecision;
+    if (!activeDecision.allowed) {
+      toast.error(activeDecision.reason || "Opération commerciale non autorisée pour votre profil opérationnel.");
+      return;
+    }
+
     const parsedAmount = parseFloat(saleAmount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
       toast.error("Veuillez saisir un montant de vente valide.");
@@ -386,13 +421,30 @@ export const MySalesAndExpensesSection: React.FC<MySalesAndExpensesSectionProps>
         </div>
 
         <div className="flex flex-wrap gap-2.5">
-          <button
-            onClick={() => setIsLogSaleModalOpen(true)}
-            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition flex items-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Saisir une Vente
-          </button>
+          {canCreateAnyCommercialEntry ? (
+            <button
+              onClick={() => {
+                if (!salesDecision.allowed && servicesDecision.allowed) {
+                  setSaleCategory("Prestation Service");
+                } else {
+                  setSaleCategory("Vente Produits");
+                }
+                setIsLogSaleModalOpen(true);
+              }}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition flex items-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4" />
+              {servicesDecision.allowed ? "Saisir Vente / Service" : "Saisir une Vente"}
+            </button>
+          ) : (
+            <span
+              title={salesDecision.reason}
+              className="px-3.5 py-2 bg-slate-900 text-slate-500 border border-slate-800 font-bold text-xs rounded-xl flex items-center gap-2"
+            >
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              Ventes/Services verrouillés ({employee.role})
+            </span>
+          )}
           <button
             onClick={() => setIsLogExpenseModalOpen(true)}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition flex items-center gap-2 cursor-pointer"
@@ -794,11 +846,22 @@ export const MySalesAndExpensesSection: React.FC<MySalesAndExpensesSectionProps>
                     onChange={(e) => setSaleCategory(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 px-3 py-2 rounded-lg text-xs text-slate-200 outline-none font-mono"
                   >
-                    <option value="Vente Produits">Vente Produits & Marchandises</option>
-                    <option value="Prestation Service">Prestation de Service / Conseil</option>
-                    <option value="Abonnement SaaS">Abonnement SaaS ERP</option>
-                    <option value="Frais Audit">Audit & Accompagnement Financial</option>
+                    {salesDecision.allowed && (
+                      <option value="Vente Produits">Vente Produits & Marchandises</option>
+                    )}
+                    {servicesDecision.allowed && (
+                      <>
+                        <option value="Prestation Service">Prestation de Service / Conseil</option>
+                        <option value="Abonnement SaaS">Abonnement SaaS ERP</option>
+                        <option value="Frais Audit">Audit & Accompagnement Financial</option>
+                      </>
+                    )}
                   </select>
+                  {!servicesDecision.allowed && (
+                    <p className="text-[10px] text-amber-400 mt-1 font-mono">
+                      Profil vendeur : prestations de services restreintes au profil polyvalent.
+                    </p>
+                  )}
                 </div>
 
                 {saleAmount && !isNaN(parseFloat(saleAmount)) && parseFloat(saleAmount) > 0 && (

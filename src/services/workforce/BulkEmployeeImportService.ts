@@ -15,6 +15,11 @@ import { EventBus } from "../../modules/runtime/EventBus";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
 import { CacheInvalidationService } from "../performance/CacheInvalidationService";
 import { toDateOnly } from "../../utils/dateNormalization";
+import {
+  CanonicalOperationalProfile,
+  extractRawOperationalProfileFromRecord,
+  validateRoleOperationalProfileCompatibility
+} from "../../domains/rbac/operationalProfilePolicy";
 
 
 export interface ParsedEmployeeRow {
@@ -23,6 +28,8 @@ export interface ParsedEmployeeRow {
   phone: string;
   position: string;
   role: Role;
+  operational_profile?: CanonicalOperationalProfile | null;
+  operationalProfile?: CanonicalOperationalProfile | null;
   contractType: "cdi" | "cdd" | "freelance";
   payRegime: "fixe" | "commission" | "hybrid";
   baseSalary: number;
@@ -316,20 +323,75 @@ export class BulkEmployeeImportService {
       ]);
       const position = (rawPosition || "Agent").toString().trim();
 
-      // 2. Resolve Role
-      const rawRoleVal = (getRecordValue(record, [
-        "role", "profil", "profile", "user_role", "userrole", "role_type", "type_role"
-      ]) || "EMPLOYEE").toString().toUpperCase().trim();
+      // 2. Resolve Role & Operational Profile (strict separation, fail-closed)
+      const rawRoleInput = getRecordValue(record, [
+        "role", "user_role", "userrole", "role_type", "type_role", "rbac_role"
+      ]);
+      const rawRoleVal = (rawRoleInput ?? "EMPLOYEE").toString().toUpperCase().trim();
 
       let role: Role = "EMPLOYEE";
-      if (rawRoleVal === "PROPRIÉTAIRE" || rawRoleVal === "PROPRIETAIRE" || rawRoleVal === "OWNER") {
+      let roleValid = true;
+      if (!rawRoleVal || rawRoleVal === "EMPLOYEE" || rawRoleVal === "EMPLOYE" || rawRoleVal === "EMPLOYÉ") {
+        role = "EMPLOYEE";
+      } else if (rawRoleVal === "PROPRIÉTAIRE" || rawRoleVal === "PROPRIETAIRE" || rawRoleVal === "OWNER") {
         role = "OWNER";
+      } else if (rawRoleVal === "ADMIN" || rawRoleVal === "ADMINISTRATEUR") {
+        role = "ADMIN";
       } else if (rawRoleVal === "DIRECTEUR" || rawRoleVal === "GERANT" || rawRoleVal === "GÉRANT" || rawRoleVal === "MANAGER") {
         role = "MANAGER";
       } else if (rawRoleVal === "SUPERVISEUR" || rawRoleVal === "SUPERVISOR") {
         role = "SUPERVISOR";
+      } else if (rawRoleVal === "ACCOUNTANT" || rawRoleVal === "COMPTABLE") {
+        role = "ACCOUNTANT";
+      } else if (rawRoleVal === "AUDITOR" || rawRoleVal === "AUDITEUR") {
+        role = "AUDITOR";
+      } else if (rawRoleVal === "MASTER_HEAD_TELLER" || rawRoleVal === "MASTER HEAD TELLER") {
+        role = "MASTER_HEAD_TELLER";
+      } else if (rawRoleVal === "HEAD_TELLER" || rawRoleVal === "HEAD TELLER" || rawRoleVal === "CHEF CAISSIER" || rawRoleVal === "CHEF_CAISSIER") {
+        role = "HEAD_TELLER";
+      } else if (rawRoleVal === "SENIOR_TELLER" || rawRoleVal === "SENIOR TELLER" || rawRoleVal === "CAISSIER SENIOR" || rawRoleVal === "CAISSIER_SENIOR") {
+        role = "SENIOR_TELLER";
+      } else if (rawRoleVal === "JUNIOR_TELLER" || rawRoleVal === "JUNIOR TELLER" || rawRoleVal === "CAISSIER JUNIOR" || rawRoleVal === "CAISSIER_JUNIOR") {
+        role = "JUNIOR_TELLER";
+      } else if (rawRoleVal === "TELLER" || rawRoleVal === "CAISSIER") {
+        role = "TELLER";
       } else {
-        role = "EMPLOYEE";
+        roleValid = false;
+        rowErrors.push(`INVALID_OR_MISSING_ROLE: Rôle RBAC non autorisé ou inconnu "${rawRoleVal}"`);
+      }
+
+      const directProfileInfo = extractRawOperationalProfileFromRecord(record);
+      const aliasProfileVal = !directProfileInfo.hasValue
+        ? getRecordValue(record, [
+            "operational_profile",
+            "operationalProfile",
+            "profil_operationnel",
+            "profilOperationnel",
+            "profil_op",
+            "op_profile"
+          ])
+        : directProfileInfo.rawValue;
+
+      let resolvedOperationalProfile: CanonicalOperationalProfile | null = null;
+      if (directProfileInfo.conflict) {
+        rowErrors.push(
+          "CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence entre operational_profile et operationalProfile."
+        );
+      } else if (roleValid) {
+        const compat = validateRoleOperationalProfileCompatibility(role, aliasProfileVal, {
+          allowLegacyBarberAlias: true,
+          allowMissingForExecutiveOrOversight: true
+        });
+        if (!compat.valid) {
+          rowErrors.push(`${compat.code}: ${compat.reason}`);
+        } else {
+          resolvedOperationalProfile = compat.normalizedProfile;
+          if (compat.legacyAliasApplied) {
+            warnings.push(
+              `Ligne ${idx + 1} (${name}): Profil hérité 'barber' converti automatiquement en 'vendeur'.`
+            );
+          }
+        }
       }
 
       // 3. Resolve Contract, Pay Regime, Salary & Commission
@@ -627,6 +689,8 @@ export class BulkEmployeeImportService {
         phone,
         position,
         role,
+        operational_profile: resolvedOperationalProfile,
+        operationalProfile: resolvedOperationalProfile,
         contractType,
         payRegime,
         baseSalary,
@@ -719,6 +783,13 @@ export class BulkEmployeeImportService {
       const badgeId = row.registrationId ? `bad_${row.registrationId}` : `bad_${empId}`;
       const contractId = generateDeterministicImportId("con", plan.businessId, row.email);
 
+      const profileFields = row.operational_profile
+        ? {
+            operational_profile: row.operational_profile,
+            operationalProfile: row.operational_profile
+          }
+        : {};
+
       const newEmp: Employee = {
         id: empId,
         business_id: plan.businessId,
@@ -732,6 +803,7 @@ export class BulkEmployeeImportService {
         email: row.email,
         normalizedEmail: row.email.toLowerCase().trim(),
         role: row.role,
+        ...profileFields,
         baseSalary: row.baseSalary,
         salaryBaseHtg: row.baseSalary,
         paymentModel: row.paymentModel,
@@ -765,6 +837,7 @@ export class BulkEmployeeImportService {
         paymentModel: row.paymentModel,
         baseSalary: row.baseSalary,
         role: row.role,
+        ...profileFields,
         branchId: row.branchId,
         branch_name: row.branchName,
         departmentId: row.departmentId,

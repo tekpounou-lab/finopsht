@@ -5,7 +5,8 @@ import {
   Branch, 
   Department, 
   Role, 
-  Employee 
+  Employee,
+  OperationalProfile
 } from "../../types";
 import { 
   Mail, 
@@ -31,6 +32,12 @@ import {
 } from "lucide-react";
 import { InvitationRepository } from "../../repositories/InvitationRepository";
 import { ForensicLogRepository } from "../../repositories/ForensicLogRepository";
+import {
+  COMMERCIAL_EMPLOYEE_ROLES,
+  TELLER_ROLES,
+  normalizeRole,
+  validateRoleOperationalProfileCompatibility
+} from "../../domains/rbac/operationalProfilePolicy";
 import { toast } from "sonner";
 
 interface InvitationManagementProps {
@@ -71,6 +78,7 @@ export const InvitationManagement: React.FC<InvitationManagementProps> = ({
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState<Role>("EMPLOYEE");
+  const [newOperationalProfile, setNewOperationalProfile] = useState<string>("");
   const [newBranchId, setNewBranchId] = useState(branches[0]?.id || "");
   const [newDeptId, setNewDeptId] = useState(departments[0]?.id || "");
   const [newPosition, setNewPosition] = useState("");
@@ -215,14 +223,34 @@ export const InvitationManagement: React.FC<InvitationManagementProps> = ({
       return;
     }
 
+    const normRole = normalizeRole(newRole) || "EMPLOYEE";
+    const effectiveProfile = TELLER_ROLES.has(normRole)
+      ? "teller"
+      : COMMERCIAL_EMPLOYEE_ROLES.has(normRole)
+        ? newOperationalProfile || undefined
+        : undefined;
+
+    const compat = validateRoleOperationalProfileCompatibility(newRole, effectiveProfile, {
+      allowLegacyBarberAlias: false,
+      allowMissingForExecutiveOrOversight: true
+    });
+
+    if (!compat.valid) {
+      toast.error(compat.reason);
+      return;
+    }
+
     setIsSubmittingSend(true);
     try {
+      const normalizedProf = compat.normalizedProfile as OperationalProfile | null;
       const result = await InvitationRepository.createInvitation(
         {
           businessId: currentBusiness.id,
           email: newEmail,
           name: newName,
           role: newRole,
+          operational_profile: normalizedProf ?? undefined,
+          operationalProfile: normalizedProf ?? undefined,
           branchId: newBranchId || branches[0]?.id || "",
           departmentId: newDeptId || departments[0]?.id || "",
           position: newPosition,
@@ -244,6 +272,7 @@ export const InvitationManagement: React.FC<InvitationManagementProps> = ({
       setNewEmail("");
       setNewName("");
       setNewPosition("");
+      setNewOperationalProfile("");
       if (onRefresh) onRefresh();
     } catch (error: any) {
       console.error("[InvitationManagement] Send error:", error);
@@ -449,6 +478,8 @@ export const InvitationManagement: React.FC<InvitationManagementProps> = ({
               <option value="ALL" className="bg-slate-900 text-slate-200">Tous les rôles</option>
               <option value="OWNER" className="bg-slate-900 text-slate-200">Propriétaire (OWNER)</option>
               <option value="MANAGER" className="bg-slate-900 text-slate-200">Manager</option>
+              <option value="ACCOUNTANT" className="bg-slate-900 text-slate-200">Comptable (ACCOUNTANT)</option>
+              <option value="MASTER_HEAD_TELLER" className="bg-slate-900 text-slate-200">Chef Caissier Principal</option>
               <option value="HEAD_TELLER" className="bg-slate-900 text-slate-200">Chef Caissier</option>
               <option value="SENIOR_TELLER" className="bg-slate-900 text-slate-200">Caissier Senior</option>
               <option value="JUNIOR_TELLER" className="bg-slate-900 text-slate-200">Caissier Junior</option>
@@ -669,13 +700,26 @@ export const InvitationManagement: React.FC<InvitationManagementProps> = ({
                   <label className="block text-slate-300 font-medium mb-1">Rôle Rattaché (RBAC) *</label>
                   <select
                     value={newRole}
-                    onChange={(e) => setNewRole(e.target.value as Role)}
+                    onChange={(e) => {
+                      const next = e.target.value as Role;
+                      setNewRole(next);
+                      const normNext = normalizeRole(next) || "EMPLOYEE";
+                      if (TELLER_ROLES.has(normNext)) {
+                        setNewOperationalProfile("teller");
+                      } else if (COMMERCIAL_EMPLOYEE_ROLES.has(normNext)) {
+                        setNewOperationalProfile("");
+                      } else {
+                        setNewOperationalProfile("");
+                      }
+                    }}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="EMPLOYEE">Employé</option>
+                    <option value="EMPLOYEE">Employé Commercial (EMPLOYEE)</option>
                     <option value="JUNIOR_TELLER">Guichetier Junior</option>
                     <option value="SENIOR_TELLER">Guichetier Senior</option>
                     <option value="HEAD_TELLER">Chef Caissier</option>
+                    <option value="MASTER_HEAD_TELLER">Chef Caissier Principal</option>
+                    <option value="ACCOUNTANT">Comptable (ACCOUNTANT)</option>
                     <option value="MANAGER">Manager</option>
                     <option value="OWNER">Propriétaire</option>
                   </select>
@@ -691,6 +735,35 @@ export const InvitationManagement: React.FC<InvitationManagementProps> = ({
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">
+                  Profil Opérationnel *
+                </label>
+                {COMMERCIAL_EMPLOYEE_ROLES.has(normalizeRole(newRole) || "EMPLOYEE") ? (
+                  <select
+                    required
+                    value={newOperationalProfile}
+                    onChange={(e) => setNewOperationalProfile(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">-- Sélectionner un profil commercial --</option>
+                    <option value="vendeur">vendeur — Ventes uniquement (sans caisse)</option>
+                    <option value="polyvalent">polyvalent — Ventes & Services (sans caisse)</option>
+                  </select>
+                ) : TELLER_ROLES.has(normalizeRole(newRole) || "") ? (
+                  <input
+                    type="text"
+                    readOnly
+                    value="teller (Obligatoire pour les rôles caissiers)"
+                    className="w-full bg-slate-950/70 border border-emerald-500/30 rounded-xl px-3 py-2 text-emerald-300 font-mono"
+                  />
+                ) : (
+                  <div className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-slate-400">
+                    Aucun profil opérationnel (autorité dérivée du rôle RBAC)
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

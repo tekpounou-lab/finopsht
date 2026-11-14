@@ -56,6 +56,7 @@ export function resolveDefaultTabForRole(role: Role | string): AppTab {
     case "JUNIOR_TELLER":
     case "SENIOR_TELLER":
     case "HEAD_TELLER":
+    case "MASTER_HEAD_TELLER":
     case "ACCOUNTANT":
     case "AUDITOR":
       return "ledger";
@@ -186,6 +187,7 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         ...commonTabs,
       ];
     case "HEAD_TELLER":
+    case "MASTER_HEAD_TELLER":
       return [
         "bi",
         "ledger",

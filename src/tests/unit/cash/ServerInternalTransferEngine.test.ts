@@ -29,10 +29,21 @@ vi.mock("../../../lib/firebaseAdmin", () => {
   return {
     getAdminFirestore: vi.fn(() => ({
       collection: (collName: string) => ({
-        doc: (docId: string) => ({
-          path: `${collName}/${docId}`,
-          id: docId
-        })
+        doc: (docId: string) => {
+          const docPath = `${collName}/${docId}`;
+          return {
+            path: docPath,
+            id: docId,
+            get: async () => {
+              const data = mockStore.get(docPath);
+              return {
+                exists: !!data,
+                data: () => data,
+                id: docId
+              };
+            }
+          };
+        }
       }),
       runTransaction: async (updateFunction: (transaction: any) => Promise<any>) => {
         const transactionMock = {
@@ -182,6 +193,44 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
 
   beforeEach(() => {
     mockStore.clear();
+    mockStore.set(`users/${tellerActor.uid}`, {
+      id: tellerActor.uid,
+      uid: tellerActor.uid,
+      business_id: BIZ_ID,
+      role: "TELLER",
+      operational_profile: "teller",
+      status: "ACTIVE"
+    });
+    mockStore.set(`employees/${tellerActor.uid}`, {
+      id: tellerActor.uid,
+      business_id: BIZ_ID,
+      branchId: BRANCH_ID,
+      name: tellerActor.name,
+      email: tellerActor.email,
+      role: "TELLER",
+      operational_profile: "teller",
+      status: "ACTIVE",
+      isActive: true
+    });
+    mockStore.set(`users/${supervisorActor.uid}`, {
+      id: supervisorActor.uid,
+      uid: supervisorActor.uid,
+      business_id: BIZ_ID,
+      role: "HEAD_TELLER",
+      operational_profile: "teller",
+      status: "ACTIVE"
+    });
+    mockStore.set(`employees/${supervisorActor.uid}`, {
+      id: supervisorActor.uid,
+      business_id: BIZ_ID,
+      branchId: BRANCH_ID,
+      name: supervisorActor.name,
+      email: supervisorActor.email,
+      role: "HEAD_TELLER",
+      operational_profile: "teller",
+      status: "ACTIVE",
+      isActive: true
+    });
     mockStore.set(`cash_tills/${tillA.id}`, { ...tillA });
     mockStore.set(`cash_tills/${tillB.id}`, { ...tillB });
     mockStore.set(`branch_safes/${safeMain.id}`, { ...safeMain });

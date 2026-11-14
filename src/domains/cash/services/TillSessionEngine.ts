@@ -22,6 +22,16 @@ import { sanitizeAndEnrichLedgerTransaction } from "../../../services/Accounting
 import { validateLedgerForeignKeys } from "../../../validations/integritySchemas";
 import { RuntimeEvent } from "../../../modules/runtime/types";
 import { LedgerTransaction } from "../../../types";
+import {
+  TELLER_ROLES,
+  TILL_SUPERVISOR_ROLES,
+  canOperateCashTill,
+  canSuperviseTillLifecycleRole,
+  extractRawOperationalProfileFromRecord,
+  normalizeRole,
+  validateRoleOperationalProfileCompatibility
+} from "../../rbac/operationalProfilePolicy";
+import { verifyServerEmployeeOperationalProfile } from "../../rbac/serverEmployeeProfileVerifier";
 
 export interface OpenSessionParams {
   tillId: string;
@@ -29,6 +39,7 @@ export interface OpenSessionParams {
   operatorId: string;
   operatorName: string;
   operatorRole?: string;
+  operatorProfile?: string;
   openingBalanceCents: number;
   businessDate?: string;
 }
@@ -43,6 +54,9 @@ export interface CloseSessionParams {
   operatorId: string;
   operatorName: string;
   operatorRole?: string;
+  operatorProfile?: string;
+  claimedOperatorRole?: unknown;
+  claimedOperatorProfile?: unknown;
   authenticatedUid?: string;
   notes?: string;
   idempotencyKey?: string;
@@ -57,6 +71,9 @@ export interface ReopenSessionParams {
   approverId: string;
   approverName: string;
   approverRole: string;
+  approverProfile?: string;
+  claimedApproverRole?: unknown;
+  claimedApproverProfile?: unknown;
   authenticatedApproverUid?: string;
   reason: string;
   idempotencyKey?: string;
@@ -75,28 +92,17 @@ const ALLOWED_CLOSURE_ROLES = new Set<string>([
   "TELLER",
   "JUNIOR_TELLER",
   "SENIOR_TELLER",
-  "CASHIER",
   "HEAD_TELLER",
+  "MASTER_HEAD_TELLER",
   "MANAGER",
   "OWNER",
   "ADMIN",
   "SUPER_ADMIN"
 ]);
 
-const SUPERVISOR_CLOSURE_ROLES = new Set<string>([
-  "HEAD_TELLER",
-  "MANAGER",
-  "OWNER",
-  "ADMIN",
-  "SUPER_ADMIN"
-]);
+const SUPERVISOR_CLOSURE_ROLES = TILL_SUPERVISOR_ROLES;
 
-const AUTHORIZED_REOPEN_ROLES = new Set<string>([
-  "HEAD_TELLER",
-  "MANAGER",
-  "OWNER",
-  "SUPER_ADMIN"
-]);
+const AUTHORIZED_REOPEN_ROLES = TILL_SUPERVISOR_ROLES;
 
 const TERMINAL_INTERNAL_TRANSFER_STATUSES = new Set<string>([
   "EXECUTED",
@@ -495,21 +501,30 @@ export class TillSessionEngine {
       );
     }
 
-    // 6. Operator Identity & RBAC Enforcement (D3-B / D3.1-A)
-    const normalizedRole =
-      operatorRole !== undefined && operatorRole !== null && String(operatorRole).trim() !== ""
-        ? String(operatorRole).trim().toUpperCase()
-        : undefined;
+    // 6. Operator Identity & RBAC Enforcement (D3-B / D3.1-A / Step 4)
+    const normalizedRole = normalizeRole(operatorRole);
 
-    if (normalizedRole !== undefined && !ALLOWED_CLOSURE_ROLES.has(normalizedRole)) {
+    if (normalizedRole !== null && !ALLOWED_CLOSURE_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
-        `Le rôle [${operatorRole}] n'est pas autorisé à clôturer une session de caisse.`
+        `Le rôle [${operatorRole || "AUCUN"}] n'est pas autorisé à clôturer une session de caisse.`
       );
     }
 
+    if (normalizedRole !== null) {
+      const cashClosureDecision = canOperateCashTill(normalizedRole, params.operatorProfile, {
+        allowExecutiveRoleBypass: true
+      });
+      if (!cashClosureDecision.allowed) {
+        throw new FinopsException(
+          cashClosureDecision.code || "FORBIDDEN_OPERATIONAL_PROFILE",
+          cashClosureDecision.reason
+        );
+      }
+    }
+
     const isSessionTeller = operatorId.trim() === (currentSession.teller_id || "").trim();
-    const isSupervisor = normalizedRole !== undefined && SUPERVISOR_CLOSURE_ROLES.has(normalizedRole);
+    const isSupervisor = normalizedRole !== null && SUPERVISOR_CLOSURE_ROLES.has(normalizedRole);
 
     if (!isSessionTeller && !isSupervisor) {
       throw new FinopsException(
@@ -960,12 +975,23 @@ export class TillSessionEngine {
       );
     }
 
-    const normApproverRole = String(approverRole || "").trim().toUpperCase();
-    if (!AUTHORIZED_REOPEN_ROLES.has(normApproverRole)) {
+    const normApproverRole = normalizeRole(approverRole);
+    if (!normApproverRole || !canSuperviseTillLifecycleRole(normApproverRole)) {
       throw new FinopsException(
         "UNAUTHORIZED_APPROVER",
-        `Rôle [${approverRole}] non autorisé à rouvrir une session de caisse clôturée.`
+        `Rôle [${approverRole || "AUCUN"}] non autorisé à rouvrir une session de caisse clôturée.`
       );
+    }
+    if (TELLER_ROLES.has(normApproverRole)) {
+      const approverCashDecision = canOperateCashTill(normApproverRole, params.approverProfile, {
+        allowExecutiveRoleBypass: false
+      });
+      if (!approverCashDecision.allowed) {
+        throw new FinopsException(
+          approverCashDecision.code || "FORBIDDEN_OPERATIONAL_PROFILE",
+          approverCashDecision.reason
+        );
+      }
     }
 
     if (!till) {
@@ -1042,12 +1068,31 @@ export class TillSessionEngine {
         );
       }
 
-      const reqRole = String(requesterRecord.role || "").trim().toUpperCase();
+      const reqRole = normalizeRole(requesterRecord.role);
       if (reqRole && !ALLOWED_CLOSURE_ROLES.has(reqRole)) {
         throw new FinopsException(
           "UNAUTHORIZED_REQUESTER_ROLE",
           `Le rôle [${reqRole}] du demandeur [${cleanRequesterId}] n'est pas autorisé à opérer une session de caisse.`
         );
+      }
+      if (reqRole && TELLER_ROLES.has(reqRole)) {
+        const reqProfInfo = extractRawOperationalProfileFromRecord(requesterRecord);
+        if (reqProfInfo.conflict) {
+          throw new FinopsException(
+            "CONFLICTING_OPERATIONAL_PROFILE_FIELDS",
+            "Incohérence de profil opérationnel sur la fiche du demandeur."
+          );
+        }
+        const compat = validateRoleOperationalProfileCompatibility(reqRole, reqProfInfo.rawValue, {
+          allowLegacyBarberAlias: false,
+          allowMissingForExecutiveOrOversight: false
+        });
+        if (!compat.valid) {
+          throw new FinopsException(
+            "UNAUTHORIZED_REQUESTER_ROLE",
+            `Profil opérationnel invalide pour le demandeur [${cleanRequesterId}] : ${compat.reason}`
+          );
+        }
       }
     } else if (requireVerifiedRequesterRecord || !isPrevSessionTeller) {
       throw new FinopsException(
@@ -1133,6 +1178,20 @@ export class TillSessionEngine {
    */
   public static async openSession(params: OpenSessionParams): Promise<{ till: CashTill; session: TillSession }> {
     const { tillId, operatorId, operatorName, openingBalanceCents } = params;
+
+    const normalizedOpRole = normalizeRole(params.operatorRole);
+    if (!normalizedOpRole || !ALLOWED_CLOSURE_ROLES.has(normalizedOpRole)) {
+      throw new FinopsException(
+        "FORBIDDEN_ROLE",
+        `Le rôle [${params.operatorRole || "AUCUN"}] n'est pas autorisé à ouvrir une session de caisse.`
+      );
+    }
+    const openDecision = canOperateCashTill(normalizedOpRole, params.operatorProfile, {
+      allowExecutiveRoleBypass: true
+    });
+    if (!openDecision.allowed) {
+      throw new FinopsException(openDecision.code || "FORBIDDEN_OPERATIONAL_PROFILE", openDecision.reason);
+    }
 
     if (
       typeof openingBalanceCents !== "number" ||
@@ -1626,6 +1685,23 @@ export class TillSessionEngine {
       }
 
       const now = new Date().toISOString();
+      const targetBizId = params.businessId || preSession?.business_id;
+      const actorRoleNorm = normalizeRole(params.operatorRole);
+      const needsSupervisorCap = Boolean(actorRoleNorm && SUPERVISOR_CLOSURE_ROLES.has(actorRoleNorm));
+      const verifiedActor = await verifyServerEmployeeOperationalProfile({
+        adminDb,
+        uid: params.operatorId,
+        businessId: targetBizId,
+        actorRole: params.operatorRole,
+        claimedRole: params.claimedOperatorRole,
+        claimedProfile: params.claimedOperatorProfile,
+        capability: needsSupervisorCap ? "till_supervise" : "cash"
+      });
+      const verifiedParams: CloseSessionParams = {
+        ...params,
+        operatorRole: verifiedActor.role,
+        operatorProfile: verifiedActor.operationalProfile ?? undefined
+      };
 
       const result = await adminDb.runTransaction(async (tx: any) => {
         // 1. All Transactional Reads First (D3.1-D)
@@ -1688,7 +1764,7 @@ export class TillSessionEngine {
 
         // 2. Pure Validation & Variance / Balance Calculation
         const evaluated = this.evaluateClosure({
-          params,
+          params: verifiedParams,
           currentSession,
           till,
           tellerTxs,
@@ -1922,6 +1998,29 @@ export class TillSessionEngine {
       const reqEmpRef = adminDb.doc(`employees/${cleanReqId}`);
       const reqUserRef = adminDb.doc(`users/${cleanReqId}`);
 
+      const approverRoleNorm = normalizeRole(params.approverRole);
+      if (!approverRoleNorm || !canSuperviseTillLifecycleRole(approverRoleNorm)) {
+        throw new FinopsException(
+          "UNAUTHORIZED_APPROVER",
+          `Rôle [${params.approverRole || "AUCUN"}] non autorisé à rouvrir une session de caisse clôturée.`
+        );
+      }
+
+      const verifiedApprover = await verifyServerEmployeeOperationalProfile({
+        adminDb,
+        uid: params.approverId,
+        businessId: params.businessId,
+        actorRole: params.approverRole,
+        claimedRole: params.claimedApproverRole,
+        claimedProfile: params.claimedApproverProfile,
+        capability: "till_supervise"
+      });
+      const verifiedReopenParams: ReopenSessionParams = {
+        ...params,
+        approverRole: verifiedApprover.role,
+        approverProfile: verifiedApprover.operationalProfile ?? undefined
+      };
+
       const result = await adminDb.runTransaction(async (tx: any) => {
         const tillSnap = await tx.get(tillRef);
         const till = tillSnap.exists
@@ -1945,7 +2044,7 @@ export class TillSessionEngine {
           : null;
 
         const { updatedPrevSession, newSession, reopenedTill } = this.evaluateReopen({
-          params,
+          params: verifiedReopenParams,
           till,
           prevSession,
           existingReopenedSessionExists,

@@ -194,7 +194,9 @@ describe("TRANSFER PAYOUT ENGINE — CONCURRENCY & INTEGRITY HARDENING", () => {
         },
         {
           id: AUTH_OPERATOR_ID, // Legitimate authenticated ID
-          name: AUTH_OPERATOR_NAME
+          name: AUTH_OPERATOR_NAME,
+          role: "TELLER",
+          operational_profile: "teller"
         }
       )
     ).rejects.toThrow("Usurpation d'identité détectée");
@@ -227,7 +229,12 @@ describe("TRANSFER PAYOUT ENGINE — CONCURRENCY & INTEGRITY HARDENING", () => {
       idDocument: "CIN-CONCURRENT-01"
     };
 
-    const authContext = { id: AUTH_OPERATOR_ID, name: AUTH_OPERATOR_NAME };
+    const authContext = {
+      id: AUTH_OPERATOR_ID,
+      name: AUTH_OPERATOR_NAME,
+      role: "TELLER",
+      operational_profile: "teller"
+    };
 
     // Fire 2 simultaneous payout requests concurrently
     const results = await Promise.allSettled([
@@ -294,7 +301,12 @@ describe("TRANSFER PAYOUT ENGINE — CONCURRENCY & INTEGRITY HARDENING", () => {
     mockStore.set(`customer_transfers/${transferA.id}`, transferA);
     mockStore.set(`customer_transfers/${transferB.id}`, transferB);
 
-    const authContext = { id: AUTH_OPERATOR_ID, name: AUTH_OPERATOR_NAME };
+    const authContext = {
+      id: AUTH_OPERATOR_ID,
+      name: AUTH_OPERATOR_NAME,
+      role: "TELLER",
+      operational_profile: "teller"
+    };
 
     // Execute sequentially or concurrently
     const resA = await TransferPayoutEngine.executePayout(
@@ -363,7 +375,12 @@ describe("TRANSFER PAYOUT ENGINE — CONCURRENCY & INTEGRITY HARDENING", () => {
         operatorName: AUTH_OPERATOR_NAME,
         idDocument: "CIN-HMAC"
       },
-      { id: AUTH_OPERATOR_ID, name: AUTH_OPERATOR_NAME }
+      {
+        id: AUTH_OPERATOR_ID,
+        name: AUTH_OPERATOR_NAME,
+        role: "TELLER",
+        operational_profile: "teller"
+      }
     );
 
     // Retrieve written ForensicLog

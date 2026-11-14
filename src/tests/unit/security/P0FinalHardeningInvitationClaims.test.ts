@@ -223,6 +223,8 @@ describe("P0 Final Hardening — Invitation Lookup & Custom Claims Reconciliatio
         businessId: "biz_acme",
         email: "alice@company.com",
         role: "EMPLOYEE",
+        operational_profile: "vendeur",
+        operationalProfile: "vendeur",
         status: "PENDING",
         expiresAt: new Date(Date.now() + 86400000).toISOString()
       });

@@ -177,6 +177,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         tillId: till.id,
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         openingBalanceCents: 500000
       });
 
@@ -190,6 +192,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: openResult.session.id,
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionType: "COLLECTION_CLIENT",
         currency: "HTG",
         amountCents: 1200000,
@@ -210,6 +214,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: openResult.session.id,
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionType: "DISBURSEMENT_OPERATION",
         currency: "HTG",
         amountCents: 200000,
@@ -228,6 +234,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         actualClosingCents: 1500000,
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         denominationBreakdown: { "1000": 15 }
       });
 
@@ -274,6 +282,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         tillId: usdTill.id,
         operatorId: "emp_marie_02",
         operatorName: "Marie Teller",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         openingBalanceCents: 10000
       });
       expect(openUsd.till.balance_cents).toBe(10000);
@@ -284,6 +294,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: openUsd.session.id,
         operatorId: "emp_marie_02",
         operatorName: "Marie Teller",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionType: "COLLECTION_CLIENT",
         currency: "USD",
         amountCents: 50000,
@@ -348,6 +360,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         initiator_id: "user_teller_01",
         initiator_name: "Teller Jean",
         initiator_role: "TELLER",
+        initiator_profile: "teller",
         description: "Demande de fonds pour guichet"
       });
 
@@ -416,6 +429,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         currency: "HTG",
         initiator_id: "emp_teller_03",
         initiator_name: "Teller Claire",
+        initiator_role: "SENIOR_TELLER",
+        initiator_profile: "teller",
         description: "Remise excédent de recettes"
       });
 
@@ -472,6 +487,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: session.id,
         operatorId: "emp_fx_op",
         operatorName: "FX Operator",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionType: "FX_EXCHANGE",
         currency: "HTG",
         amountCents: 1325000,
@@ -528,6 +545,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         baseSalary: 35000,
         name: "Active Sans Compte Utilisateur",
         role: "JUNIOR_TELLER" as Role,
+        operational_profile: "teller",
         status: "ACTIVE",
         isActive: true
         // user_id is deliberately undefined
@@ -543,6 +561,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         name: "Active Avec Compte",
         userId: "usr_active_01",
         role: "SENIOR_TELLER" as Role,
+        operational_profile: "teller",
         status: "ACTIVE",
         isActive: true
       },
@@ -556,6 +575,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         baseSalary: 30000,
         name: "Employé Licencié",
         role: "JUNIOR_TELLER" as Role,
+        operational_profile: "teller",
         status: "TERMINATED",
         isActive: false
       },
@@ -569,6 +589,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         baseSalary: 30000,
         name: "Employé Autre Entreprise",
         role: "JUNIOR_TELLER" as Role,
+        operational_profile: "teller",
         status: "ACTIVE",
         isActive: true
       }
@@ -675,6 +696,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
           actualClosingCents: 9950000,
           operatorId: "emp_var_teller",
           operatorName: "Teller Discrepancy",
+          operatorRole: "TELLER",
+          operatorProfile: "teller",
           denominationBreakdown: { "1000": 99, "500": 1 },
           notes: ""
         })
@@ -686,6 +709,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         actualClosingCents: 9950000,
         operatorId: "emp_var_teller",
         operatorName: "Teller Discrepancy",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         denominationBreakdown: { "1000": 99, "500": 1 },
         notes: "Erreur de rendu de monnaie constatée en fin de journée"
       });
@@ -817,6 +842,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: session.id,
         operatorId: "emp_idemp",
         operatorName: "Idemp Operator",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionType: "DISBURSEMENT_OPERATION",
         currency: "HTG",
         amountCents: 1000000, // 10,000 HTG
@@ -833,6 +860,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: session.id,
         operatorId: "emp_idemp",
         operatorName: "Idemp Operator",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionType: "DISBURSEMENT_OPERATION",
         currency: "HTG",
         amountCents: 1000000,
@@ -897,6 +926,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: "sess_fx_01",
         operatorId: "op_01",
         operatorName: "Operator",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionTypeCode: "FX_BUY",
         transactionTypeName: "Achat USD",
         flowBehavior: -1, // HTG Outflow
@@ -958,6 +989,8 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         sessionId: "sess_fx_02",
         operatorId: "op_01",
         operatorName: "Operator",
+        operatorRole: "TELLER",
+        operatorProfile: "teller",
         transactionTypeCode: "FX_SELL",
         transactionTypeName: "Vente USD",
         flowBehavior: 1, // HTG Inflow

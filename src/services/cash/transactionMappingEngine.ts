@@ -4,6 +4,15 @@ import {
   RecommendationResult,
   FlowBehavior
 } from "../../types/transactionTypes";
+import {
+  CanonicalOperationalProfile,
+  EXECUTIVE_RBAC_ROLES,
+  RETIRED_OPERATIONAL_PROFILES,
+  TELLER_ROLES,
+  normalizeOperationalProfile,
+  normalizeRole,
+  validateRoleOperationalProfileCompatibility
+} from "../../domains/rbac/operationalProfilePolicy";
 
 export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "business_id">[] = [
   {
@@ -13,7 +22,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Money Transfer",
     behavior: 1,
     currency: "ALL",
-    allowedProfiles: ["teller", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -32,7 +41,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Money Transfer",
     behavior: -1,
     currency: "ALL",
-    allowedProfiles: ["teller", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -51,7 +60,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Sales",
     behavior: 1,
     currency: "ALL",
-    allowedProfiles: ["vendeur", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["vendeur", "polyvalent"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -70,7 +79,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Services",
     behavior: 1,
     currency: "ALL",
-    allowedProfiles: ["vendeur", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["polyvalent"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -89,7 +98,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Money Transfer",
     behavior: 1,
     currency: "ALL",
-    allowedProfiles: ["teller", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -108,7 +117,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Money Transfer",
     behavior: -1,
     currency: "ALL",
-    allowedProfiles: ["teller", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -127,7 +136,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Mobile Transfer",
     behavior: 1,
     currency: "ALL",
-    allowedProfiles: ["teller", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -146,7 +155,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Operating Expenses",
     behavior: -1,
     currency: "ALL",
-    allowedProfiles: ["head_teller", "manager", "owner"],
+    allowedProfiles: [],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -165,7 +174,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Currency Exchange",
     behavior: 1,
     currency: "ALL",
-    allowedProfiles: ["teller", "polyvalent", "head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: false,
     isActive: true,
@@ -184,7 +193,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Internal Transfers",
     behavior: 0,
     currency: "ALL",
-    allowedProfiles: ["head_teller", "manager", "owner"],
+    allowedProfiles: ["teller"],
     isSystemDefault: true,
     isProtected: true, // System reserved
     isActive: true,
@@ -203,7 +212,7 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
     category: "Clearing",
     behavior: 0,
     currency: "ALL",
-    allowedProfiles: ["manager", "owner"],
+    allowedProfiles: [],
     isSystemDefault: true,
     isProtected: true, // System reserved
     isActive: true,
@@ -219,123 +228,143 @@ export const DEFAULT_SYSTEM_TRANSACTION_TYPES: Omit<TransactionTypeItem, "busine
 
 export class TransactionMappingEngine {
   /**
-   * Filters transaction types by the RH Operational Profile of the employee.
-   * Rules:
-   * - vendedor: Sales, Services
-   * - teller: Money Transfer, Mobile Transfer, Currency Exchange
-   * - polyvalent: Sales, Services, Money Transfer, Mobile Transfer, Currency Exchange
-   * - head_teller: All operational categories + Operating Expenses + Internal Transfers
-   * - manager / owner: Full access
-   */
-  /**
-   * Resolves an operational profile from an organizational role or position title.
+   * Resolves canonical operational profile strictly from explicit profile + RBAC role.
+   * Fail-closed: returns null when missing, incompatible, executive/oversight, or unknown.
    */
   public static resolveOperationalProfile(
     role?: string,
-    position?: string
-  ): OperationalProfile {
-    const roleUpper = (role || "").toUpperCase();
-    const posLower = (position || "").toLowerCase();
+    _position?: string,
+    explicitProfile?: unknown
+  ): CanonicalOperationalProfile | null {
+    const normRole = normalizeRole(role);
+    if (!normRole) return null;
 
-    if (
-      roleUpper === "OWNER" ||
-      roleUpper === "ADMIN" ||
-      roleUpper === "SUPER_ADMIN" ||
-      roleUpper === "MANAGER"
-    ) {
-      return "polyvalent";
+    if (explicitProfile !== undefined && explicitProfile !== null && String(explicitProfile).trim() !== "") {
+      const compat = validateRoleOperationalProfileCompatibility(normRole, explicitProfile, {
+        allowLegacyBarberAlias: true,
+        allowMissingForExecutiveOrOversight: false
+      });
+      return compat.valid ? compat.normalizedProfile : null;
     }
 
-    if (
-      roleUpper === "HEAD_TELLER" ||
-      posLower.includes("chef caissier") ||
-      posLower.includes("head teller") ||
-      posLower.includes("responsable guichet")
-    ) {
-      return "head_teller";
-    }
-
-    if (
-      roleUpper === "JUNIOR_TELLER" ||
-      roleUpper === "SENIOR_TELLER" ||
-      posLower.includes("guichetier") ||
-      posLower.includes("caissier") ||
-      posLower.includes("teller")
-    ) {
+    if (TELLER_ROLES.has(normRole)) {
       return "teller";
     }
 
-    if (
-      posLower.includes("vendeur") ||
-      posLower.includes("commercial") ||
-      posLower.includes("sales") ||
-      posLower.includes("représentant")
-    ) {
-      return "vendeur";
-    }
-
-    // Default least-privilege profile for general staff
-    return "vendeur";
+    // Executive RBAC roles, oversight roles, and EMPLOYEE without explicit operational_profile return null (fail-closed)
+    return null;
   }
 
   /**
-   * Checks whether the current role is authorized to switch operational profile tabs in the UI.
-   * Only supervisors, managers, owners, and head tellers can switch context.
+   * Checks whether the current RBAC role is authorized to switch context tabs in executive UI views.
+   * Only executive RBAC roles can inspect different operational views.
    */
   public static canSwitchProfile(currentRole?: string): boolean {
-    const roleUpper = (currentRole || "").toUpperCase();
-    return ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "HEAD_TELLER"].includes(roleUpper);
+    const roleUpper = normalizeRole(currentRole);
+    return roleUpper !== null && EXECUTIVE_RBAC_ROLES.has(roleUpper);
   }
 
   /**
-   * Checks whether a specific operational profile can switch to a target profile.
+   * Checks whether a specific RBAC role can switch to a target canonical operational profile.
    */
   public static isProfileSwitchAllowed(
     currentRole: string | undefined,
-    targetProfile: OperationalProfile
+    targetProfile: OperationalProfile | string,
+    assignedProfile?: OperationalProfile | string | null
   ): boolean {
-    const roleUpper = (currentRole || "").toUpperCase();
-    if (["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER"].includes(roleUpper)) {
+    const roleUpper = normalizeRole(currentRole);
+    const cleanTarget = typeof targetProfile === "string" ? targetProfile.trim().toLowerCase() : "";
+    if (!roleUpper || !cleanTarget || RETIRED_OPERATIONAL_PROFILES.has(cleanTarget)) {
+      return false;
+    }
+    const canonicalTarget = normalizeOperationalProfile(cleanTarget, { allowLegacyBarberAlias: false });
+    if (!canonicalTarget) return false;
+
+    if (EXECUTIVE_RBAC_ROLES.has(roleUpper)) {
       return true;
     }
-    if (roleUpper === "HEAD_TELLER") {
-      return ["vendeur", "teller", "head_teller"].includes(targetProfile);
+    if (TELLER_ROLES.has(roleUpper)) {
+      return canonicalTarget === "teller";
     }
-    const assigned = this.resolveOperationalProfile(currentRole);
-    return assigned === targetProfile;
+    const resolvedAssigned = assignedProfile
+      ? normalizeOperationalProfile(assignedProfile, { role: roleUpper, allowLegacyBarberAlias: true })
+      : null;
+    return resolvedAssigned !== null && resolvedAssigned === canonicalTarget;
   }
 
   /**
-   * Validates whether a transaction type and category are strictly permitted for an operational profile.
+   * Validates whether a transaction type and category are strictly permitted for an operational profile & RBAC role.
+   * Fail-closed on missing, retired, or unknown profiles.
    */
   public static isOperationAllowedForProfile(
     typeItem: Partial<TransactionTypeItem> | undefined,
-    profile: OperationalProfile | string
+    profile: OperationalProfile | string | null | undefined,
+    role?: string
   ): { isAllowed: boolean; reason?: string } {
     if (!typeItem) {
       return { isAllowed: false, reason: "Aucune opération métier sélectionnée." };
     }
 
-    const normProfile = (profile || "vendeur").toLowerCase().trim() as OperationalProfile;
-
-    if (normProfile === "owner" || normProfile === "manager") {
-      return { isAllowed: true };
-    }
-
-    if (typeItem.allowedProfiles && typeItem.allowedProfiles.includes(normProfile)) {
-      return { isAllowed: true };
-    }
-
+    const normRole = normalizeRole(role);
     const category = typeItem.category;
+
+    if (profile !== undefined && profile !== null && typeof profile === "string") {
+      const trimmed = profile.trim().toLowerCase();
+      if (RETIRED_OPERATIONAL_PROFILES.has(trimmed)) {
+        return {
+          isAllowed: false,
+          reason: `Le pseudo-profil obsolète '${trimmed}' est interdit.`
+        };
+      }
+    }
+
+    if (normRole && EXECUTIVE_RBAC_ROLES.has(normRole)) {
+      return { isAllowed: true };
+    }
+
+    const normProfile = normalizeOperationalProfile(profile, {
+      role: normRole ?? "EMPLOYEE",
+      allowLegacyBarberAlias: normRole === "EMPLOYEE"
+    });
+
+    if (!normProfile) {
+      return {
+        isAllowed: false,
+        reason: "Profil opérationnel manquant, invalide ou non reconnu (accès refusé par défaut)."
+      };
+    }
+
+    if (normRole && TELLER_ROLES.has(normRole) && normProfile !== "teller") {
+      return {
+        isAllowed: false,
+        reason: `Un rôle caissier [${normRole}] ne peut utiliser que le profil 'teller'.`
+      };
+    }
+
+    if (normRole === "EMPLOYEE" && normProfile === "teller") {
+      return {
+        isAllowed: false,
+        reason: "Un collaborateur EMPLOYEE ne peut jamais exécuter d'opérations avec le profil 'teller'."
+      };
+    }
 
     switch (normProfile) {
       case "vendeur":
+        if (category === "Sales") {
+          return { isAllowed: true };
+        }
+        return {
+          isAllowed: false,
+          reason: `Le profil Vendeur est strictement limité aux Ventes. L'opération "${typeItem.name || typeItem.code || "Inconnue"}" (${category}) est interdite.`
+        };
+
+      case "polyvalent":
         if (category === "Sales" || category === "Services") {
           return { isAllowed: true };
         }
         return {
           isAllowed: false,
-          reason: `Le profil Vendeur est strictement limité aux Ventes et Prestations de Services. L'opération "${typeItem.name || typeItem.code || 'Inconnue'}" (${category}) est interdite.`
+          reason: `Le profil Polyvalent (EMPLOYEE) est strictement limité aux Ventes et Services. Les opérations de caisse (${category}) sont interdites.`
         };
 
       case "teller":
@@ -346,33 +375,15 @@ export class TransactionMappingEngine {
         ) {
           return { isAllowed: true };
         }
-        return {
-          isAllowed: false,
-          reason: `Le profil Caissier / Guichetier est limité aux transferts et changes de devises. Les Ventes, Services et Dépenses d'exploitation sont interdits pour ce profil.`
-        };
-
-      case "polyvalent":
         if (
-          category === "Sales" ||
-          category === "Services" ||
-          category === "Money Transfer" ||
-          category === "Mobile Transfer" ||
-          category === "Currency Exchange"
+          (category === "Operating Expenses" || category === "Internal Transfers") &&
+          (normRole === "HEAD_TELLER" || normRole === "MASTER_HEAD_TELLER")
         ) {
           return { isAllowed: true };
         }
         return {
           isAllowed: false,
-          reason: `Le profil Polyvalent n'est pas autorisé à exécuter des opérations de la catégorie "${category}".`
-        };
-
-      case "head_teller":
-        if (category !== "Clearing") {
-          return { isAllowed: true };
-        }
-        return {
-          isAllowed: false,
-          reason: `Le profil Chef Caissier ne peut pas exécuter d'opérations de Clearing / Compensation générale (réservé à la direction).`
+          reason: `Le profil Caissier / Guichetier est réservé aux opérations de caisse (transferts et change de devises). La catégorie "${category}" est interdite.`
         };
 
       default:
@@ -381,58 +392,39 @@ export class TransactionMappingEngine {
   }
 
   /**
-   * Filters transaction types by the RH Operational Profile of the employee.
-   * Rules:
-   * - vendedor: Sales, Services
-   * - teller: Money Transfer, Mobile Transfer, Currency Exchange
-   * - polyvalent: Sales, Services, Money Transfer, Mobile Transfer, Currency Exchange
-   * - head_teller: All operational categories + Operating Expenses + Internal Transfers
-   * - manager / owner: Full access
+   * Filters transaction types strictly by canonical RH Operational Profile and RBAC role.
+   * Fails closed (returns []) when profile is missing, retired, or unknown (unless explicit executive RBAC role).
    */
   public static filterTypesByProfile<T extends Partial<TransactionTypeItem>>(
     types: T[],
-    profile?: OperationalProfile | string
+    profile?: OperationalProfile | string | null,
+    role?: string
   ): T[] {
-    if (!profile) return types.filter((t) => t.isActive);
+    const normRole = normalizeRole(role);
 
-    const normProfile = profile.toLowerCase().trim() as OperationalProfile;
+    if (profile !== undefined && profile !== null && typeof profile === "string") {
+      const trimmed = profile.trim().toLowerCase();
+      if (RETIRED_OPERATIONAL_PROFILES.has(trimmed)) {
+        return [];
+      }
+    }
 
-    if (normProfile === "owner" || normProfile === "manager") {
+    if (normRole && EXECUTIVE_RBAC_ROLES.has(normRole)) {
       return types.filter((t) => t.isActive);
+    }
+
+    const normProfile = normalizeOperationalProfile(profile, {
+      role: normRole ?? "EMPLOYEE",
+      allowLegacyBarberAlias: normRole === "EMPLOYEE"
+    });
+
+    if (!normProfile) {
+      return [];
     }
 
     return types.filter((type) => {
       if (!type.isActive) return false;
-
-      if (type.allowedProfiles && type.allowedProfiles.includes(normProfile)) {
-        return true;
-      }
-
-      switch (normProfile) {
-        case "vendeur":
-          return type.category === "Sales" || type.category === "Services";
-        case "teller":
-          return (
-            type.category === "Money Transfer" ||
-            type.category === "Mobile Transfer" ||
-            type.category === "Currency Exchange"
-          );
-        case "polyvalent":
-          return (
-            type.category === "Sales" ||
-            type.category === "Services" ||
-            type.category === "Money Transfer" ||
-            type.category === "Mobile Transfer" ||
-            type.category === "Currency Exchange"
-          );
-        case "head_teller":
-          return (
-            type.category !== "Clearing" ||
-            type.allowedProfiles?.includes("head_teller")
-          );
-        default:
-          return true;
-      }
+      return this.isOperationAllowedForProfile(type, normProfile, normRole ?? undefined).isAllowed;
     });
   }
 

@@ -1,0 +1,8 @@
+profile,operation_category,frontend_enforcement,backend_enforcement,gap_identified,severity,remediation_plan
+teller,money_transfer,YES,PARTIAL,Backend relies on role rather than profile for intake/payout,MEDIUM,Bind employee operational_profile to intake/payout server engines
+teller,sales,YES,YES,Frontend filters out sales types; server rejects invalid category,LOW,Ensure strict TransactionMappingEngine validation on server
+vendeur,sales,YES,PARTIAL,Backend allows intake if role is authorized,MEDIUM,Enforce profile-based transaction category restriction on server write
+vendeur,money_transfer,YES,YES,Denied by frontend filter and category mapping,LOW,Verify server-side rejection of teller categories for vendeur
+polyvalent,all_operations,YES,PARTIAL,Full access granted by profile and role,LOW,Maintain correct profile resolution in token context
+missing_profile,cash_operations,YES,PARTIAL,Falls back to default vendeur profile in mapping engine,MEDIUM,Explicitly reject unassigned/missing profile on critical cash actions
+unknown_profile,cash_operations,YES,PARTIAL,Maps to default fallback,MEDIUM,Reject unrecognized profile strings explicitly

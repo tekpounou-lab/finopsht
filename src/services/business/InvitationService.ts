@@ -1,13 +1,19 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore, getAdminAuth } from "../../lib/firebaseAdmin";
 import { isInvalidTenantId } from "../../modules/workflow/approval/serverAuthMiddleware";
+import {
+  extractRawOperationalProfileFromRecord,
+  validateRoleOperationalProfileCompatibility
+} from "../../domains/rbac/operationalProfilePolicy";
 
 export const ASSIGNABLE_INVITE_ROLES = new Set([
   "EMPLOYEE",
   "JUNIOR_TELLER",
   "SENIOR_TELLER",
   "HEAD_TELLER",
+  "MASTER_HEAD_TELLER",
   "TELLER",
+  "ACCOUNTANT",
   "AUDITOR",
   "MANAGER",
   "ADMIN",
@@ -42,7 +48,8 @@ export class InvitationService {
       role?: string;
       business_id?: string;
       isSuperAdmin?: boolean;
-    }
+    },
+    operationalProfile?: string
   ): Promise<string> {
     if (!businessId || !email || !sender?.uid) {
       throw new Error("MISSING_INVITATION_DETAILS");
@@ -70,19 +77,33 @@ export class InvitationService {
       throw new Error("FORBIDDEN_ROLE_ASSIGNMENT");
     }
 
+    const compat = validateRoleOperationalProfileCompatibility(targetRole, operationalProfile, {
+      allowLegacyBarberAlias: false,
+      allowMissingForExecutiveOrOversight: true
+    });
+    if (!compat.valid) {
+      throw new Error(compat.code);
+    }
+
     const db = this.getDb();
     const inviteId = `inv_${Math.random().toString(36).substring(2, 11)}`;
     const now = FieldValue.serverTimestamp();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const normalizedEmail = email.toLowerCase().trim();
 
-    const invitation = {
+    const invitation: Record<string, any> = {
       id: inviteId,
       business_id: businessId,
       businessId: businessId,
       email: normalizedEmail,
       normalizedEmail,
       role: targetRole,
+      ...(compat.normalizedProfile
+        ? {
+            operational_profile: compat.normalizedProfile,
+            operationalProfile: compat.normalizedProfile
+          }
+        : {}),
       status: "PENDING",
       senderId: sender.uid,
       senderName: sender.name,
@@ -100,7 +121,13 @@ export class InvitationService {
         userId: sender.uid,
         userName: sender.name,
         action: "INVITATION_SENT",
-        payload: { inviteId, invitedEmail: normalizedEmail, role: targetRole, expiresAt },
+        payload: {
+          inviteId,
+          invitedEmail: normalizedEmail,
+          role: targetRole,
+          operationalProfile: compat.normalizedProfile,
+          expiresAt
+        },
         timestamp: now,
         severity: "info"
       });
@@ -306,6 +333,29 @@ export class InvitationService {
         acceptedBusinessId = businessId;
         acceptedRole = targetRole;
 
+        const inviteProfileInfo = extractRawOperationalProfileFromRecord(inviteData);
+        if (inviteProfileInfo.conflict) {
+          throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS");
+        }
+        const profileCompat = validateRoleOperationalProfileCompatibility(
+          targetRole,
+          inviteProfileInfo.rawValue,
+          {
+            allowLegacyBarberAlias: true,
+            allowMissingForExecutiveOrOversight: true
+          }
+        );
+        if (!profileCompat.valid) {
+          throw new Error(profileCompat.code);
+        }
+
+        const profileFields = profileCompat.normalizedProfile
+          ? {
+              operational_profile: profileCompat.normalizedProfile,
+              operationalProfile: profileCompat.normalizedProfile
+            }
+          : {};
+
         const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
         const membershipId = `${businessId}_${user.uid}`;
         acceptedMembershipId = membershipId;
@@ -329,6 +379,7 @@ export class InvitationService {
           normalizedEmail: normalizedUserEmail,
           name: user.name,
           role: targetRole,
+          ...profileFields,
           status: "ACTIVE",
           isActive: true,
           createdAt: now,
@@ -343,6 +394,7 @@ export class InvitationService {
           business_id: businessId,
           businessId: businessId,
           role: targetRole,
+          ...profileFields,
           status: "ACTIVE",
           joinedAt: now,
           updatedAt: now,
@@ -360,6 +412,7 @@ export class InvitationService {
             employee_id: employeeId,
             employeeId: employeeId,
             role: targetRole,
+            ...profileFields,
             account_status: "ACTIVE",
             accountStatus: "ACTIVE",
             onboarding_completed: true,
@@ -377,7 +430,12 @@ export class InvitationService {
           userId: user.uid,
           userName: user.name,
           action: "INVITATION_ACCEPTED",
-          payload: { inviteId, employeeId, role: targetRole },
+          payload: {
+            inviteId,
+            employeeId,
+            role: targetRole,
+            operationalProfile: profileCompat.normalizedProfile
+          },
           timestamp: now,
           severity: "success"
         });
@@ -413,6 +471,29 @@ export class InvitationService {
           acceptedBusinessId = businessId;
           acceptedRole = targetRole;
 
+          const fallbackProfileInfo = extractRawOperationalProfileFromRecord(inviteData);
+          if (fallbackProfileInfo.conflict) {
+            throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS");
+          }
+          const fallbackCompat = validateRoleOperationalProfileCompatibility(
+            targetRole,
+            fallbackProfileInfo.rawValue,
+            {
+              allowLegacyBarberAlias: true,
+              allowMissingForExecutiveOrOversight: true
+            }
+          );
+          if (!fallbackCompat.valid) {
+            throw new Error(fallbackCompat.code);
+          }
+
+          const fallbackProfileFields = fallbackCompat.normalizedProfile
+            ? {
+                operational_profile: fallbackCompat.normalizedProfile,
+                operationalProfile: fallbackCompat.normalizedProfile
+              }
+            : {};
+
           const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
           const membershipId = `${businessId}_${user.uid}`;
           acceptedMembershipId = membershipId;
@@ -434,6 +515,7 @@ export class InvitationService {
             normalizedEmail: normalizedUserEmail,
             name: user.name,
             role: targetRole,
+            ...fallbackProfileFields,
             status: "ACTIVE",
             isActive: true,
             createdAt: clientServerTimestamp(),
@@ -447,6 +529,7 @@ export class InvitationService {
             business_id: businessId,
             businessId: businessId,
             role: targetRole,
+            ...fallbackProfileFields,
             status: "ACTIVE",
             joinedAt: clientServerTimestamp(),
             updatedAt: clientServerTimestamp(),
@@ -463,6 +546,7 @@ export class InvitationService {
               employee_id: employeeId,
               employeeId: employeeId,
               role: targetRole,
+              ...fallbackProfileFields,
               account_status: "ACTIVE",
               accountStatus: "ACTIVE",
               onboarding_completed: true,

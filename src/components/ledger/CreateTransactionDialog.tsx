@@ -17,6 +17,7 @@ interface CreateTransactionDialogProps {
   current_business_id: string;
   onSave: (tx: Partial<LedgerTransaction>) => Promise<void>;
   currentRole?: string;
+  currentOperationalProfile?: string | null;
 }
 
 const accountOptions = [
@@ -54,13 +55,16 @@ export default function CreateTransactionDialog({
   employees,
   current_business_id,
   onSave,
-  currentRole = 'MANAGER'
+  currentRole = 'MANAGER',
+  currentOperationalProfile
 }: CreateTransactionDialogProps) {
   const [transactionTypes, setTransactionTypes] = useState<TransactionTypeItem[]>([]);
   const [selectedTypeId, setSelectedTypeId] = useState<string>('');
-  const [operationalProfile, setOperationalProfile] = useState<OperationalProfile>(() =>
-    TransactionMappingEngine.resolveOperationalProfile(currentRole)
-  );
+  const [operationalProfile, setOperationalProfile] = useState<OperationalProfile | null>(() => {
+    const resolved = TransactionMappingEngine.resolveOperationalProfile(currentRole, undefined, currentOperationalProfile);
+    if (resolved) return resolved;
+    return TransactionMappingEngine.canSwitchProfile(currentRole) ? 'vendeur' : null;
+  });
   const [showAdvancedAccounting, setShowAdvancedAccounting] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -88,10 +92,11 @@ export default function CreateTransactionDialog({
       .catch((err) => console.warn("[CreateTransactionDialog] Error loading transaction types:", err));
   }, [isOpen, current_business_id]);
 
-  // Synchronize initial operational profile with currentRole and reset form on open
+  // Synchronize initial operational profile with currentRole & explicit profile, reset form on open
   useEffect(() => {
     if (!isOpen) return;
-    const defaultProfile = TransactionMappingEngine.resolveOperationalProfile(currentRole);
+    const resolved = TransactionMappingEngine.resolveOperationalProfile(currentRole, undefined, currentOperationalProfile);
+    const defaultProfile = resolved ?? (TransactionMappingEngine.canSwitchProfile(currentRole) ? 'vendeur' : null);
     setOperationalProfile(defaultProfile);
     setSelectedTypeId('');
     setFormData({
@@ -108,16 +113,16 @@ export default function CreateTransactionDialog({
       transaction_type_code: ''
     });
     setErrors({});
-  }, [isOpen, currentRole]);
+  }, [isOpen, currentRole, currentOperationalProfile]);
 
-  // Filter transaction types strictly by active operational RH profile
+  // Filter transaction types strictly by active operational RH profile and RBAC role
   const filteredTypes = useMemo(() => {
-    return TransactionMappingEngine.filterTypesByProfile(transactionTypes, operationalProfile);
-  }, [transactionTypes, operationalProfile]);
+    return TransactionMappingEngine.filterTypesByProfile(transactionTypes, operationalProfile, currentRole);
+  }, [transactionTypes, operationalProfile, currentRole]);
 
   // Handle Profile Switch by authorized users
   const handleProfileSwitch = (targetProfile: OperationalProfile) => {
-    if (!TransactionMappingEngine.isProfileSwitchAllowed(currentRole, targetProfile)) {
+    if (!TransactionMappingEngine.isProfileSwitchAllowed(currentRole, targetProfile, currentOperationalProfile)) {
       toast.error(`Accès refusé : Votre rôle (${currentRole}) ne permet pas de basculer vers le profil ${targetProfile.toUpperCase()}.`);
       return;
     }
@@ -127,7 +132,7 @@ export default function CreateTransactionDialog({
     // If currently selected operation is not allowed for the new profile, clean it up
     if (selectedTypeId) {
       const currentOp = transactionTypes.find((t) => t.id === selectedTypeId);
-      const check = TransactionMappingEngine.isOperationAllowedForProfile(currentOp, targetProfile);
+      const check = TransactionMappingEngine.isOperationAllowedForProfile(currentOp, targetProfile, currentRole);
       if (!check.isAllowed) {
         setSelectedTypeId('');
         setFormData((prev) => ({
@@ -164,7 +169,7 @@ export default function CreateTransactionDialog({
     if (!found) return;
 
     // Strict profile boundary validation
-    const check = TransactionMappingEngine.isOperationAllowedForProfile(found, operationalProfile);
+    const check = TransactionMappingEngine.isOperationAllowedForProfile(found, operationalProfile, currentRole);
     if (!check.isAllowed) {
       toast.error(check.reason || "Cette opération n'est pas autorisée pour le profil actif.");
       setSelectedTypeId('');
@@ -223,7 +228,7 @@ export default function CreateTransactionDialog({
     }
 
     const selectedOp = transactionTypes.find((t) => t.id === selectedTypeId);
-    const profileCheck = TransactionMappingEngine.isOperationAllowedForProfile(selectedOp, operationalProfile);
+    const profileCheck = TransactionMappingEngine.isOperationAllowedForProfile(selectedOp, operationalProfile, currentRole);
     if (!profileCheck.isAllowed) {
       setErrors({ transaction_type: profileCheck.reason || "Opération non autorisée" });
       toast.error(profileCheck.reason || "Opération non autorisée pour ce profil RH.");
@@ -349,8 +354,8 @@ export default function CreateTransactionDialog({
               {/* Profile Switcher */}
               <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800 text-[10px]">
                 <span className="text-slate-500 font-medium px-1">Profil RH:</span>
-                {(['vendeur', 'teller', 'polyvalent', 'head_teller'] as OperationalProfile[]).map((p) => {
-                  const isAllowed = TransactionMappingEngine.isProfileSwitchAllowed(currentRole, p);
+                {(['vendeur', 'polyvalent', 'teller'] as OperationalProfile[]).map((p) => {
+                  const isAllowed = TransactionMappingEngine.isProfileSwitchAllowed(currentRole, p, currentOperationalProfile);
                   const isSelected = operationalProfile === p;
                   return (
                     <button
@@ -368,7 +373,7 @@ export default function CreateTransactionDialog({
                       }`}
                     >
                       {!isAllowed && <Lock className="w-2.5 h-2.5" />}
-                      {p === 'head_teller' ? 'head' : p}
+                      {p}
                     </button>
                   );
                 })}
@@ -382,8 +387,8 @@ export default function CreateTransactionDialog({
             >
               <option value="">
                 {filteredTypes.length > 0 
-                  ? `-- Sélectionner une opération autorisée (${operationalProfile.toUpperCase()} • ${filteredTypes.length} disponibles) --`
-                  : `-- Aucune opération disponible pour le profil ${operationalProfile.toUpperCase()} --`
+                  ? `-- Sélectionner une opération autorisée (${(operationalProfile || 'RBAC').toUpperCase()} • ${filteredTypes.length} disponibles) --`
+                  : `-- Aucune opération disponible pour le profil ${(operationalProfile || 'NON_ASSIGNE').toUpperCase()} --`
                 }
               </option>
               {filteredTypes.map((t) => (

@@ -829,6 +829,15 @@ export const PayrollService = {
       );
     }
 
+    const initiatorId = cycle.generated_by || (cycle as any).createdBy || (cycle as any).calculatedBy;
+    const actorId = options.currentUser?.id;
+    if (actorId && initiatorId && actorId === initiatorId && options.currentUser?.role !== "SYSTEM" && !(options as any).skipMakerChecker) {
+      throw new FinopsException(
+        "MAKER_CHECKER_VIOLATION",
+        "Séparation des pouvoirs : la personne ayant initié ou calculé le cycle de paie ne peut pas effectuer son scellement ou son paiement."
+      );
+    }
+
     console.debug(`[Payroll] Sealing cycle ${cycle.id} cryptographically...`);
 
     const totalGross = records.reduce((acc, r) => acc + (r.grossSalary || (r.gross_salary_cents ? r.gross_salary_cents / 100 : 0)), 0);
@@ -1016,7 +1025,7 @@ export const PayrollService = {
       initiatorId &&
       actorId === initiatorId &&
       actorRole &&
-      ["SENIOR_TELLER", "HEAD_TELLER", "MANAGER"].includes(actorRole)
+      ["SENIOR_TELLER", "HEAD_TELLER", "MANAGER", "ACCOUNTANT"].includes(actorRole)
     ) {
       throw new FinopsException(
         "SEGREGATION_OF_DUTIES_VIOLATION",

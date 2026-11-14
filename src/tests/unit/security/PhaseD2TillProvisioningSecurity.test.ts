@@ -287,6 +287,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
       name: "Marie Dupont (Alpha)",
       email: "marie@alpha.com",
       role: "SENIOR_TELLER",
+      operational_profile: "teller",
+      operationalProfile: "teller",
       status: "ACTIVE",
       isActive: true
     });
@@ -299,6 +301,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
       name: "Paul Rival (Beta)",
       email: "paul@beta.com",
       role: "SENIOR_TELLER",
+      operational_profile: "teller",
+      operationalProfile: "teller",
       status: "ACTIVE",
       isActive: true
     });
@@ -324,6 +328,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
       uid: "uid_head_teller_alpha",
       email: "headteller@alpha.com",
       role: "HEAD_TELLER",
+      operational_profile: "teller",
+      operationalProfile: "teller",
       business_id: "biz_tenant_alpha",
       businessId: "biz_tenant_alpha",
       status: "ACTIVE"
@@ -332,6 +338,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
       uid: "uid_teller_alpha",
       email: "teller@alpha.com",
       role: "JUNIOR_TELLER",
+      operational_profile: "teller",
+      operationalProfile: "teller",
       business_id: "biz_tenant_alpha",
       businessId: "biz_tenant_alpha",
       status: "ACTIVE"
@@ -775,6 +783,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
             business_id: "biz_tenant_alpha",
             name: "Marie Dupont (Alpha)",
             role: "SENIOR_TELLER",
+            operational_profile: "teller",
+            operationalProfile: "teller",
             status: "ACTIVE",
             htgTillId: "till_shared_victim_001"
           }

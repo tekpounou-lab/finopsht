@@ -196,7 +196,9 @@ export const TENANT_ERP_CAPABILITIES = new Set([
   // Cash & Till Operations
   "cash.view",
   "cash.operate",
-  "cash.transfer"
+  "cash.transfer",
+  "cash.supervise",
+  "transfer.approve"
 ]);
 
 export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, boolean>> = {
@@ -405,6 +407,45 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     cash_management: true, cash: true, operations: true,
     attendance: true, planning: true, leave: true, documents: true, employeespace: true
   },
+  MASTER_HEAD_TELLER: {
+    platform: false,
+    tenants: false,
+    plans: false,
+    licences: false,
+    security: false,
+    bi: false,
+    personnel: false,
+    performance: true,
+    organization: false,
+    planning: true,
+    leave: true,
+    attendance: true,
+    payroll: false,
+    ledger: false,
+    accounting: false,
+    crm: false,
+    leads: false,
+    prospects: false,
+    proformas: false,
+    invoices: false,
+    invoice_template: false,
+    invoiceTemplate: false,
+    documents: true,
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: false,
+    employeespace: true,
+    settings: false,
+    cash_management: true,
+    cash: true,
+    operations: true
+  },
   SENIOR_TELLER: {
     cash_management: true, cash: true, operations: true,
     attendance: true, planning: true, documents: true, employeespace: true
@@ -416,6 +457,45 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
   TELLER: {
     cash_management: true, cash: true, operations: true,
     attendance: true, planning: true, documents: true, employeespace: true
+  },
+  ACCOUNTANT: {
+    platform: false,
+    tenants: false,
+    plans: false,
+    licences: false,
+    security: false,
+    bi: true,
+    personnel: false,
+    performance: false,
+    organization: false,
+    planning: false,
+    leave: false,
+    attendance: false,
+    payroll: true,
+    ledger: true,
+    accounting: true,
+    crm: true,
+    leads: false,
+    prospects: false,
+    proformas: false,
+    invoices: true,
+    invoice_template: false,
+    invoiceTemplate: false,
+    documents: true,
+    forensic: false,
+    health: false,
+    system_health: false,
+    reliability: false,
+    resilience_dlq: false,
+    dlq: false,
+    recovery: false,
+    disaster_recovery: false,
+    aicfo: true,
+    employeespace: true,
+    settings: false,
+    cash_management: false,
+    cash: false,
+    operations: false
   },
   AUDITOR: {
     accounting: true, ledger: true, bi: true, aicfo: true,
@@ -451,7 +531,7 @@ class PermissionServiceClass {
     businessId?: string | null,
     roleModuleMatrix?: Record<string, Record<string, boolean>>
   ) {
-    this.activeRole = (role || "EMPLOYEE").toUpperCase();
+    this.activeRole = (role && typeof role === "string" && role.trim()) ? role.trim().toUpperCase() : "UNASSIGNED";
     this.permissions = (permissions || []).map(p => p.toLowerCase());
     this.features = features || {};
     this.subscriptionPlan = subscriptionPlan || "STARTER";
@@ -572,6 +652,12 @@ class PermissionServiceClass {
 
     let result = false;
 
+    // Mandatory Step 3 Correction: MASTER_HEAD_TELLER must NEVER approve or reject internal transfers
+    if (actionLower === "transfer.approve" && this.activeRole === "MASTER_HEAD_TELLER") {
+      this.capabilityCache[actionLower] = false;
+      return false;
+    }
+
     // Standard static actions / exact matching
     if (this.permissions.includes(actionLower)) {
       result = true;
@@ -621,7 +707,7 @@ class PermissionServiceClass {
           break;
         case "payroll.approve":
         case "payroll.lock":
-          result = this.permissions.includes("lock_payroll") || this.permissions.includes("validate_payroll");
+          result = this.permissions.includes("lock_payroll") || this.permissions.includes("validate_payroll") || PermissionServiceClass.isPayrollChecker(this.activeRole || "");
           break;
 
         // Attendance Operations
@@ -709,13 +795,23 @@ class PermissionServiceClass {
 
         // Cash & Till Operations
         case "cash.view":
-          result = this.permissions.includes("cash.view") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "cash_management");
+          result = this.permissions.includes("cash.view") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "cash_management");
           break;
         case "cash.operate":
-          result = (this.permissions.includes("cash.operate") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+          result = (this.permissions.includes("cash.operate") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
           break;
         case "cash.transfer":
-          result = (this.permissions.includes("cash.transfer") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "SENIOR_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+          result = (this.permissions.includes("cash.transfer") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+          break;
+        case "cash.supervise":
+          result = (this.permissions.includes("cash.supervise") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
+          break;
+        case "transfer.approve":
+          result =
+            this.activeRole !== "MASTER_HEAD_TELLER" &&
+            this.activeRole !== "AUDITOR" &&
+            (this.permissions.includes("transfer.approve") ||
+              ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER"].includes(this.activeRole || ""));
           break;
 
         default:
@@ -812,7 +908,7 @@ class PermissionServiceClass {
   public hasRoleModuleAccess(roleOrCurrent?: string, moduleId?: string): boolean {
     if (!moduleId) return false;
     const modLower = moduleId.toLowerCase();
-    const effectiveRole = (roleOrCurrent || this.activeRole || "EMPLOYEE").toUpperCase();
+    const effectiveRole = (roleOrCurrent && typeof roleOrCurrent === "string" && roleOrCurrent.trim() ? roleOrCurrent.trim() : this.activeRole || "UNASSIGNED").toUpperCase();
 
     // 1. Super Admin possesses universal platform bypass
     if (effectiveRole === "SUPER_ADMIN") return true;
@@ -853,24 +949,24 @@ class PermissionServiceClass {
 
     // 7. Canonical ERP Role Defaults
     const defaultAllowedRoles: Record<string, string[]> = {
-      bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "AUDITOR"],
+      bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
       personnel: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
-      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
+      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "MASTER_HEAD_TELLER", "HR_MANAGER"],
       organization: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER"],
-      planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "TEAM_LEADER", "HR_MANAGER", "EMPLOYEE"],
-      leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
-      attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "TEAM_LEADER", "HR_MANAGER", "EMPLOYEE"],
+      leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
       payroll: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER"],
       ledger: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
       accounting: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
-      crm: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+      crm: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT"],
       leads: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
       prospects: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
       proformas: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
-      invoices: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
+      invoices: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT"],
       invoice_template: ["SUPER_ADMIN", "OWNER", "ADMIN"],
       invoiceTemplate: ["SUPER_ADMIN", "OWNER", "ADMIN"],
-      documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      documents: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
       forensic: ["SUPER_ADMIN"],
       health: ["SUPER_ADMIN"],
       system_health: ["SUPER_ADMIN"],
@@ -879,12 +975,12 @@ class PermissionServiceClass {
       dlq: ["SUPER_ADMIN"],
       recovery: ["SUPER_ADMIN"],
       disaster_recovery: ["SUPER_ADMIN"],
-      aicfo: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "AUDITOR"],
-      employeespace: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
+      aicfo: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+      employeespace: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "AUDITOR", "HR_MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
       settings: ["SUPER_ADMIN", "OWNER", "ADMIN"],
-      cash_management: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
-      cash: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
-      operations: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"]
+      cash_management: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
+      cash: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"],
+      operations: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"]
     };
 
     const allowed = defaultAllowedRoles[modLower] || ["SUPER_ADMIN", "OWNER", "ADMIN"];
@@ -893,11 +989,20 @@ class PermissionServiceClass {
 
   public static canValidateOrSealPayroll(role: string): boolean {
     const r = (role || "").toUpperCase();
-    return ["SUPER_ADMIN", "OWNER", "ADMIN", "OWNER_ADMIN"].includes(r);
+    return ["SUPER_ADMIN", "OWNER", "ADMIN", "ACCOUNTANT", "OWNER_ADMIN"].includes(r);
   }
 
   public canValidateOrSealPayroll(role: string): boolean {
     return PermissionServiceClass.canValidateOrSealPayroll(role);
+  }
+
+  public static isPayrollChecker(role: string): boolean {
+    const r = (role || "").toUpperCase();
+    return ["SUPER_ADMIN", "OWNER", "ADMIN", "ACCOUNTANT"].includes(r);
+  }
+
+  public isPayrollChecker(role: string): boolean {
+    return PermissionServiceClass.isPayrollChecker(role);
   }
 
   /**

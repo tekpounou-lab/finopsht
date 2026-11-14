@@ -44,13 +44,12 @@ const CATEGORIES: TransactionTypeCategory[] = [
 ];
 
 const PROFILES: { id: OperationalProfile; label: string }[] = [
-  { id: "vendeur", label: "Vendeur (Sales/Services)" },
-  { id: "teller", label: "Caissier / Teller (Money/Mobile/Exchange)" },
-  { id: "polyvalent", label: "Polyvalent (Guichet Général)" },
-  { id: "head_teller", label: "Chef Caissier (Supervision/Dépenses)" },
-  { id: "manager", label: "Directeur / Manager" },
-  { id: "owner", label: "Propriétaire / Owner" }
+  { id: "vendeur", label: "Vendeur (Ventes uniquement)" },
+  { id: "polyvalent", label: "Polyvalent (Ventes & Services)" },
+  { id: "teller", label: "Caissier / Teller (Opérations de Caisse)" }
 ];
+
+const CANONICAL_PROFILE_SET = new Set<OperationalProfile>(["vendeur", "polyvalent", "teller"]);
 
 const COMMON_ACCOUNTS = [
   { code: "1111", name: "Caisse Physique Monnaie Nationale (HTG)", class: "1" },
@@ -87,10 +86,7 @@ export const TransactionTypeEditorDialog: React.FC<TransactionTypeEditorDialogPr
   const [description, setDescription] = useState("");
   const [allowedProfiles, setAllowedProfiles] = useState<OperationalProfile[]>([
     "vendeur",
-    "polyvalent",
-    "head_teller",
-    "manager",
-    "owner"
+    "polyvalent"
   ]);
   const [isActive, setIsActive] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -115,7 +111,11 @@ export const TransactionTypeEditorDialog: React.FC<TransactionTypeEditorDialogPr
       setCreditCode(initialData.credit_account_code || "4000");
       setCreditName(initialData.credit_account_name || "");
       setDescription(initialData.description || "");
-      setAllowedProfiles(initialData.allowedProfiles || ["vendeur", "polyvalent", "head_teller", "manager", "owner"]);
+      setAllowedProfiles(
+        (initialData.allowedProfiles || ["vendeur", "polyvalent"]).filter((p) =>
+          CANONICAL_PROFILE_SET.has(p as OperationalProfile)
+        ) as OperationalProfile[]
+      );
       setIsActive(initialData.isActive !== false);
     } else {
       setCode("");
@@ -127,7 +127,7 @@ export const TransactionTypeEditorDialog: React.FC<TransactionTypeEditorDialogPr
       setCreditCode("4000");
       setCreditName("Produits de Ventes de Marchandises");
       setDescription("");
-      setAllowedProfiles(["vendeur", "polyvalent", "head_teller", "manager", "owner"]);
+      setAllowedProfiles(["vendeur", "polyvalent"]);
       setIsActive(true);
     }
   }, [initialData, isOpen]);

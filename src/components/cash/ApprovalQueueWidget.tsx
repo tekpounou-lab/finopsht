@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { InternalTransfer } from "../../types/cashManagement";
 import { TransferUserContext } from "../../domains/cash/services/CashTransferEngine";
 import { auth } from "../../lib/firebase";
+import { canApproveInternalTransferRole } from "../../domains/rbac/operationalProfilePolicy";
+import { PermissionService } from "../../services/PermissionService";
 import { Check, X, ShieldAlert, Clock, UserCheck } from "lucide-react";
 
 interface ApprovalQueueWidgetProps {
@@ -22,7 +24,23 @@ export const ApprovalQueueWidget: React.FC<ApprovalQueueWidgetProps> = ({
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const normalizedActorRole = (currentUser?.role || "").trim().toUpperCase();
+  const permissionServiceAllows =
+    PermissionService.getRole() === normalizedActorRole
+      ? PermissionService.can("transfer.approve")
+      : true;
+  const canApproveTransfers =
+    canApproveInternalTransferRole(normalizedActorRole) && permissionServiceAllows;
+
   const handleApprove = async (transfer: InternalTransfer) => {
+    if (!canApproveTransfers) {
+      setErrorMessage(
+        "Accès refusé : votre rôle (" +
+          (normalizedActorRole || "INCONNU") +
+          ") n'est pas autorisé à approuver des transferts internes."
+      );
+      return;
+    }
     setProcessingId(transfer.id);
     setErrorMessage(null);
     try {
@@ -75,6 +93,14 @@ export const ApprovalQueueWidget: React.FC<ApprovalQueueWidgetProps> = ({
   };
 
   const handleConfirmReject = async (transfer: InternalTransfer) => {
+    if (!canApproveTransfers) {
+      setErrorMessage(
+        "Accès refusé : votre rôle (" +
+          (normalizedActorRole || "INCONNU") +
+          ") n'est pas autorisé à rejeter des transferts internes."
+      );
+      return;
+    }
     if (!rejectionReason || rejectionReason.trim().length < 5) {
       setErrorMessage("Le motif de refus doit comporter au moins 5 caractères.");
       return;
@@ -190,7 +216,16 @@ export const ApprovalQueueWidget: React.FC<ApprovalQueueWidgetProps> = ({
               {isSelfInitiated ? (
                 <div className="p-2 bg-slate-900 border border-slate-800 rounded-md text-[11px] text-slate-400 flex items-center justify-between">
                   <span>🔒 Maker-Checker : Vous ne pouvez pas approuver votre propre virement</span>
-                  <span className="text-[10px] text-slate-500 font-mono">En attente Manager</span>
+                  <span className="text-[10px] text-slate-500 font-mono">En attente Approbateur</span>
+                </div>
+              ) : !canApproveTransfers ? (
+                <div className="p-2 bg-slate-900 border border-slate-800 rounded-md text-[11px] text-amber-300 flex items-center justify-between gap-2">
+                  <span>
+                    {normalizedActorRole === "MASTER_HEAD_TELLER"
+                      ? "👁️ Supervision uniquement — MASTER_HEAD_TELLER ne peut pas approuver ni rejeter de transferts internes"
+                      : "🔒 Rôle non autorisé à approuver ou rejeter les transferts internes"}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono shrink-0">Approbation Manager/Head Teller</span>
                 </div>
               ) : (
                 <div className="pt-2 border-t border-slate-900 flex items-center justify-end gap-2">

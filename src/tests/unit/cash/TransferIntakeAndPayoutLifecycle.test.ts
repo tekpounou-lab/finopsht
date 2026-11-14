@@ -194,7 +194,7 @@ describe("TRANSFER INTAKE & PAYOUT — 2-LEG ACCOUNTING & INTEGRITY LIFECYCLE", 
         operatorName: TELLER_INTAKE_NAME,
         notes: "Dépôt transfert entrant 20,000 HTG"
       },
-      { id: TELLER_INTAKE_ID, name: TELLER_INTAKE_NAME }
+      { id: TELLER_INTAKE_ID, name: TELLER_INTAKE_NAME, role: "TELLER", operational_profile: "teller" }
     );
 
     const transferId = intakeResult.transfer.id;
@@ -224,7 +224,7 @@ describe("TRANSFER INTAKE & PAYOUT — 2-LEG ACCOUNTING & INTEGRITY LIFECYCLE", 
         operatorName: TELLER_PAYOUT_NAME,
         idDocument: "CIN-2233445566"
       },
-      { id: TELLER_PAYOUT_ID, name: TELLER_PAYOUT_NAME }
+      { id: TELLER_PAYOUT_ID, name: TELLER_PAYOUT_NAME, role: "TELLER", operational_profile: "teller" }
     );
 
     expect(payoutResult.status).toBe("PAID");
@@ -269,7 +269,7 @@ describe("TRANSFER INTAKE & PAYOUT — 2-LEG ACCOUNTING & INTEGRITY LIFECYCLE", 
         operatorId: TELLER_INTAKE_ID,
         operatorName: TELLER_INTAKE_NAME
       },
-      { id: TELLER_INTAKE_ID, name: TELLER_INTAKE_NAME }
+      { id: TELLER_INTAKE_ID, name: TELLER_INTAKE_NAME, role: "TELLER", operational_profile: "teller" }
     );
 
     // Case A: Missing authenticatedUser context
@@ -299,7 +299,7 @@ describe("TRANSFER INTAKE & PAYOUT — 2-LEG ACCOUNTING & INTEGRITY LIFECYCLE", 
           operatorName: "Hacker",
           idDocument: "CIN-SPOOF"
         },
-        { id: TELLER_PAYOUT_ID, name: TELLER_PAYOUT_NAME }
+        { id: TELLER_PAYOUT_ID, name: TELLER_PAYOUT_NAME, role: "TELLER", operational_profile: "teller" }
       )
     ).rejects.toThrow("Usurpation d'identité détectée");
   });
@@ -320,7 +320,7 @@ describe("TRANSFER INTAKE & PAYOUT — 2-LEG ACCOUNTING & INTEGRITY LIFECYCLE", 
         operatorId: TELLER_INTAKE_ID,
         operatorName: TELLER_INTAKE_NAME
       },
-      { id: TELLER_INTAKE_ID, name: TELLER_INTAKE_NAME }
+      { id: TELLER_INTAKE_ID, name: TELLER_INTAKE_NAME, role: "TELLER", operational_profile: "teller" }
     );
 
     let intakeLog: any = null;

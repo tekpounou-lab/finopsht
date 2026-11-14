@@ -13,6 +13,10 @@ import { ForensicLogRepository } from "../../../repositories/ForensicLogReposito
 import { CashAccountMapping } from "../validation/cashAccountMapping";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
 import { LedgerTransaction } from "../../../types";
+import {
+  canOperateCashTill,
+  normalizeRole
+} from "../../rbac/operationalProfilePolicy";
 
 export interface PostTellerTransactionParams {
   businessId: string;
@@ -22,6 +26,7 @@ export interface PostTellerTransactionParams {
   operatorId: string;
   operatorName: string;
   operatorRole?: string;
+  operatorProfile?: string;
   transactionTypeCode: string;
   transactionTypeName: string;
   flowBehavior: 1 | -1 | 0; // 1 = Cash In, -1 = Cash Out
@@ -86,6 +91,20 @@ export class TellerTransactionEngine {
     params: PostTellerTransactionParams
   ): Promise<{ transaction: TellerTransaction; ledgerTransactions: LedgerTransaction[] }> {
     const { businessId, tillId, amountCents, currency, flowBehavior, operatorId, operatorName } = params;
+
+    const normalizedOpRole = normalizeRole(params.operatorRole);
+    if (!normalizedOpRole) {
+      throw new FinopsException(
+        "FORBIDDEN_ROLE",
+        "Le rôle de l'opérateur est obligatoire pour enregistrer une opération de caisse (fail-closed)."
+      );
+    }
+    const cashAccess = canOperateCashTill(normalizedOpRole, params.operatorProfile, {
+      allowExecutiveRoleBypass: true
+    });
+    if (!cashAccess.allowed) {
+      throw new FinopsException(cashAccess.code || "FORBIDDEN_OPERATIONAL_PROFILE", cashAccess.reason);
+    }
 
     if (amountCents <= 0) {
       throw new FinopsException(
@@ -507,6 +526,7 @@ export class TellerTransactionEngine {
       operatorId: params.operatorId,
       operatorName: params.operatorName,
       operatorRole: params.operatorRole,
+      operatorProfile: params.operatorProfile,
       transactionTypeCode:
         params.transactionTypeCode ||
         (params.transactionType === "COLLECTION_CLIENT"

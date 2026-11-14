@@ -23,6 +23,13 @@ export interface InvitationEligibilityResult {
     | "TERMINATED_OR_ARCHIVED";
 }
 
+import {
+  TELLER_ROLES,
+  canOperateCashTill,
+  extractRawOperationalProfileFromRecord,
+  normalizeRole
+} from "../../rbac/operationalProfilePolicy";
+
 /**
  * FINOPS ERP — Domain Service: Employee Cash & Till Eligibility Service
  * 
@@ -30,26 +37,15 @@ export interface InvitationEligibilityResult {
  * 1. INVITATION ELIGIBILITY (Needs onboarding invitation token to access the platform)
  * 2. TILL ASSIGNMENT ELIGIBILITY (Operational authorization to hold and operate a physical cash drawer)
  * 
- * Invariant: Never use `!user_id` as a generic requirement for teller assignment.
- * An active employee with an existing valid user account or HR record is assignable
- * if they meet active employment and role criteria.
+ * Step 4 Security Invariant:
+ * - Only TELLER roles (TELLER, JUNIOR_TELLER, SENIOR_TELLER, HEAD_TELLER, MASTER_HEAD_TELLER)
+ *   carrying explicit operational_profile === "teller" are eligible for till assignment.
+ * - EMPLOYEE (vendeur/polyvalent), retired pseudo-profiles, oversight roles, and missing/unknown
+ *   roles or profiles MUST fail closed.
+ * - Never use `!user_id` as a generic requirement for teller assignment.
  */
 export class EmployeeCashEligibilityService {
-  private static AUTHORIZED_TELLER_ROLES = new Set([
-    "TELLER",
-    "JUNIOR_TELLER",
-    "SENIOR_TELLER",
-    "HEAD_TELLER",
-    "POLYVALENT",
-    "VENDEUR",
-    "CASHIER",
-    "CAISSIER",
-    "MANAGER",
-    "OWNER",
-    "ADMIN",
-    "SUPER_ADMIN",
-    "EMPLOYEE"
-  ]);
+  private static AUTHORIZED_TELLER_ROLES = TELLER_ROLES;
 
   /**
    * Evaluates if an employee is eligible to receive an onboarding invitation.
@@ -110,7 +106,7 @@ export class EmployeeCashEligibilityService {
    * Strict Rules:
    * 1. Must belong to the specified tenant/business.
    * 2. Must be ACTIVE (not TERMINATED, ARCHIVED, or SUSPENDED).
-   * 3. Role/profile must permit cash operations.
+   * 3. Role MUST be a dedicated TELLER role AND operational_profile MUST strictly be "teller".
    * 4. 1-to-1 unicity: Cannot already be assigned another active till in the SAME currency!
    * 5. Does NOT depend on having or not having a user account (`!user_id` is NOT checked).
    */
@@ -183,12 +179,32 @@ export class EmployeeCashEligibilityService {
       };
     }
 
-    // 3. Authorized Role Check
-    const roleUpper = (employee.role || (employee as any).position || "EMPLOYEE").toUpperCase();
-    if (!this.AUTHORIZED_TELLER_ROLES.has(roleUpper)) {
+    // 3. Authorized Role & Operational Profile Check (Fail-Closed: strict TELLER + "teller" profile)
+    const roleUpper = normalizeRole(employee.role);
+    if (!roleUpper || !this.AUTHORIZED_TELLER_ROLES.has(roleUpper)) {
       return {
         isEligible: false,
-        reason: `Rôle non autorisé : Le rôle [${roleUpper}] n'est pas habilité aux opérations de caisse.`,
+        reason: `Rôle non autorisé : Seuls les rôles Caissier (TELLER) avec profil 'teller' sont habilités aux opérations de caisse (reçu : [${roleUpper || "AUCUN"}]).`,
+        code: "UNAUTHORIZED_ROLE"
+      };
+    }
+
+    const profileInfo = extractRawOperationalProfileFromRecord(employee);
+    if (profileInfo.conflict) {
+      return {
+        isEligible: false,
+        reason: "Incohérence entre les champs 'operational_profile' et 'operationalProfile'.",
+        code: "UNAUTHORIZED_ROLE"
+      };
+    }
+
+    const cashDecision = canOperateCashTill(roleUpper, profileInfo.rawValue, {
+      allowExecutiveRoleBypass: false
+    });
+    if (!cashDecision.allowed) {
+      return {
+        isEligible: false,
+        reason: cashDecision.reason,
         code: "UNAUTHORIZED_ROLE"
       };
     }
