@@ -3,6 +3,8 @@ import { motion } from "motion/react";
 import { TrendingUp, Clock, AlertTriangle, Download } from "lucide-react";
 import { PayrollAggregates } from "../types";
 import { useAnalyticsFilters } from "../../../contexts/AnalyticsFilterContext";
+import { useExecutiveFilters } from "../../../domains/analytics/context/ExecutiveFilterContext";
+import { NormalizedAmountResolver } from "../../../domains/analytics/utils/NormalizedAmountResolver";
 
 interface BIExecutiveKpisProps {
   tbi: Record<string, string>;
@@ -30,6 +32,7 @@ interface BIExecutiveKpisProps {
   accountingBasis?: "CASH" | "ACCRUAL";
   cashSnapshot?: any;
   accrualSnapshot?: any;
+  usdToHtgRate?: number;
 }
 
 export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
@@ -51,25 +54,41 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
   accountingBasis,
   cashSnapshot,
   accrualSnapshot,
+  usdToHtgRate,
 }) => {
   const { filters } = useAnalyticsFilters();
-  const selectedBranchId = selectedBranchIdProp !== undefined ? selectedBranchIdProp : filters.branchId;
+  const { filters: execFilters } = useExecutiveFilters();
+  const selectedBranchId = selectedBranchIdProp !== undefined ? selectedBranchIdProp : (execFilters.branchId || filters.branchId);
   const isCashBasis = accountingBasis ? accountingBasis === "CASH" : isSimplifiedMode;
 
-  const rev = totalRevenue;
-  const exp = totalExpenses;
+  const requestedCurrency = execFilters.currency || (filters as any).currency || (filters as any).selectedCurrency || "HTG";
+  const canConvertUsd =
+    requestedCurrency === "USD" &&
+    typeof usdToHtgRate === "number" &&
+    Number.isFinite(usdToHtgRate) &&
+    usdToHtgRate > 0;
+  const activeCurrency = canConvertUsd ? "USD" : "HTG";
+
+  const toDisplayAmount = (val: number | null | undefined): number | null | undefined => {
+    if (val === null || val === undefined) return val;
+    return canConvertUsd ? NormalizedAmountResolver.convertFromHTG(val, "USD", usdToHtgRate!) : val;
+  };
+
+  const rev = toDisplayAmount(totalRevenue);
+  const exp = toDisplayAmount(totalExpenses);
   
   // DEF-9B-02: Canonical Net Cash Flow vs Operating Result.
   // In Cash basis, "Variation de trésorerie" MUST strictly bind to canonical net cash flow (inflows - outflows),
   // NEVER falling back to Net Profit (Revenue - Expenses).
   const cashVariation = cashSnapshot?.netCashFlow !== undefined ? cashSnapshot.netCashFlow : (biSnapshot?.netCashFlow?.currentValue !== undefined ? biSnapshot.netCashFlow.currentValue : null);
   const operatingResult = netProfit;
-  const card3Value = isCashBasis ? cashVariation : operatingResult;
-  const payroll = isCashBasis
-    ? (cashSnapshot?.cashOut?.payrollPaid !== undefined ? cashSnapshot.cashOut.payrollPaid : (payrollAggregates?.payrollPaid ?? null))
-    : (accrualSnapshot?.payrollAccrued?.total !== undefined ? accrualSnapshot.payrollAccrued.total : (payrollAggregates?.totalEmploymentCost ?? null));
-
-  const activeCurrency = (filters as any).currency || (filters as any).selectedCurrency || "HTG";
+  const card3Value = toDisplayAmount(isCashBasis ? cashVariation : operatingResult);
+  const payroll = toDisplayAmount(
+    isCashBasis
+      ? (cashSnapshot?.cashOut?.payrollPaid !== undefined ? cashSnapshot.cashOut.payrollPaid : (payrollAggregates?.payrollPaid ?? null))
+      : (accrualSnapshot?.payrollAccrued?.total !== undefined ? accrualSnapshot.payrollAccrued.total : (payrollAggregates?.totalEmploymentCost ?? null))
+  );
+  const advancesPendingDisplay = toDisplayAmount(totalAdvancesPending);
 
   const formatAmount = (val: number | null | undefined, prefix = "") => {
     if (val === null || val === undefined) {
@@ -100,8 +119,8 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
     );
   };
 
-  const forecast7Days = biSnapshot?.forecast?.forecast7Days;
-  const burnRateVal = biSnapshot?.burnRate?.currentValue;
+  const forecast7Days = toDisplayAmount(biSnapshot?.forecast?.forecast7Days);
+  const burnRateVal = toDisplayAmount(biSnapshot?.burnRate?.currentValue);
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -297,8 +316,8 @@ export const BIExecutiveKpis: React.FC<BIExecutiveKpisProps> = ({
             className="glass p-4 rounded-xl border-l-2 border-l-purple-500 flex flex-col justify-between min-h-[6rem] shadow"
           >
             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider truncate">{tbi.debtExposure}</span>
-            <div className="font-mono text-lg sm:text-base font-black text-purple-400 mt-1 truncate" title={totalAdvancesPending !== null && totalAdvancesPending !== undefined ? `${totalAdvancesPending.toLocaleString()} ${activeCurrency}` : "N/D"}>
-              {formatAmount(totalAdvancesPending)}
+            <div className="font-mono text-lg sm:text-base font-black text-purple-400 mt-1 truncate" title={advancesPendingDisplay !== null && advancesPendingDisplay !== undefined ? `${advancesPendingDisplay.toLocaleString()} ${activeCurrency}` : "N/D"}>
+              {formatAmount(advancesPendingDisplay)}
             </div>
             <div className="text-[9.5px] text-purple-500 font-medium tracking-tight truncate">
               {tbi.glDeductions}

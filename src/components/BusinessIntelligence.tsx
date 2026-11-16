@@ -230,7 +230,11 @@ export default function BusinessIntelligence({
         attendanceRate: dataAgg.attendanceAggregates.attendanceRate,
         payrollCost: dataAgg.payrollAggregates.totalEmploymentCost,
         turnoverRate: 0,
-        cashFlow: dataAgg.totalRevenue - dataAgg.totalExpenses,
+        cashFlow:
+          dataAgg.biSnapshot?.netCashFlow?.currentValue ??
+          (dataAgg.totalRevenue !== null && dataAgg.totalExpenses !== null
+            ? dataAgg.totalRevenue - dataAgg.totalExpenses
+            : null),
         netProfit: dataAgg.netProfit,
         timestamp: new Date().toISOString(),
       };
@@ -394,15 +398,20 @@ export default function BusinessIntelligence({
             accountingBasis={uiState.accountingBasis}
             cashSnapshot={cashSnapshot}
             accrualSnapshot={accrualSnapshot}
+            usdToHtgRate={dataAgg.usdToHtgRate}
           />
 
           <div className="mb-8 mt-8">
-            <ExecutiveIntelligenceCenter />
+            <ExecutiveIntelligenceCenter usdToHtgRate={dataAgg.usdToHtgRate} />
           </div>
 
-          {(uiState.accountingBasis === "ACCRUAL" || !uiState.isSimplifiedMode) && (
+          {uiState.accountingBasis === "ACCRUAL" && (
             <div className="mt-8">
-              <ReconciliationBridge snapshot={accrualSnapshot} currency={execFilters.currency || "HTG"} />
+              <ReconciliationBridge
+                snapshot={accrualSnapshot}
+                currency={execFilters.currency || "HTG"}
+                usdToHtgRate={dataAgg.usdToHtgRate}
+              />
             </div>
           )}
 
@@ -446,6 +455,7 @@ export default function BusinessIntelligence({
             formatValueDirectly={dataAgg.formatValueDirectly}
             ledgerTransactions={dataAgg.filteredTx}
             isSimplifiedMode={uiState.isSimplifiedMode}
+            accountingBasis={uiState.accountingBasis}
             phase6cDataset={dataAgg.phase6cDataset}
             phase6dDataset={dataAgg.phase6dDataset}
             phase7Dataset={dataAgg.phase7Dataset}

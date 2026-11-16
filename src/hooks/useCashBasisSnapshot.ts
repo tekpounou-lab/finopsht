@@ -5,6 +5,9 @@ import { useBusinessContext } from "../contexts/BusinessContext";
 import { useAnalyticsFilters } from "../contexts/AnalyticsFilterContext";
 import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
 import { resolveAnalyticsTxDate, resolveAnalyticsPayrollDate } from "../utils/dateNormalization";
+import { CurrencyRateRepository } from "../repositories/CurrencyRateRepository";
+import { NormalizedAmountResolver, type NormalizationContext } from "../domains/analytics/utils/NormalizedAmountResolver";
+import { isEffectiveCashMovement } from "../domains/cash/types/NormalizedCashMovement";
 
 /**
  * @deprecated Legacy hook for CashBasisSnapshot.
@@ -123,8 +126,18 @@ export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
           if (!endDate) endDate = maxD || "2099-12-31";
         }
 
-        // Run canonical Cash Basis pipeline
-        const statement = CanonicalCashEngine.executePipeline(
+        // Fetch FX normalization grids across period for canonical multi-currency consolidation
+        let normalizationContext: NormalizationContext = {};
+        try {
+          const normStart = startDate || "2020-01-01";
+          const normEnd = endDate || new Date().toISOString().split("T")[0];
+          normalizationContext = await CurrencyRateRepository.getRatesForPeriod(businessId, normStart, normEnd);
+        } catch (fxErr) {
+          console.warn("[useCashBasisSnapshot] Failed to fetch rate grids:", fxErr);
+        }
+
+        // Run canonical multi-currency Cash Basis pipeline (prevents dropping USD or HTG movements)
+        const mcStatement = CanonicalCashEngine.executeMultiCurrencyPipeline(
           {
             invoices: filteredInvoices,
             payrollRecords: filteredPayroll,
@@ -135,57 +148,77 @@ export function useCashBasisSnapshot(overrideFilters?: Record<string, any>) {
             businessId,
             startDate,
             endDate,
-            currency,
             cashAccountId: resolvedFilters.cashAccountId,
           }
         );
 
+        const toHtg = (amount: number, mCurrency: string, moveDate: string, explicitRate?: number): number => {
+          const upper = (mCurrency || "HTG").toUpperCase();
+          if (upper === "HTG") return amount;
+          return NormalizedAmountResolver.resolveToHTG(amount, upper, moveDate, normalizationContext, "BRH", explicitRate);
+        };
+
+        let cashInTotal = 0;
+        let cashOutTotal = 0;
+        let beginningCash = 0;
         let payrollPaid = 0;
         let supplierPayments = 0;
         let rentPaid = 0;
         let otherExpenses = 0;
         let outgoingTransfers = 0;
 
-        for (const m of statement.periodMovements) {
-          if (m.direction === "OUTFLOW") {
-            if (m.sourceModule === "PAYROLL" || m.movementType === "PAYROLL" || m.movementType === "COMMISSION") {
-              payrollPaid += m.amount;
-            } else if (m.movementType === "RENT") {
-              rentPaid += m.amount;
-            } else if (m.movementType === "SUPPLIER_PAYMENT") {
-              supplierPayments += m.amount;
-            } else {
-              otherExpenses += m.amount;
-            }
-          } else if (m.direction === "TRANSFER") {
-            outgoingTransfers += m.amount;
-          }
-        }
-
-        const cashInTotal = statement.totalInflow;
-        const cashOutTotal = statement.totalOutflow;
-        const netCashFlow = statement.netCashFlow;
-        const beginningCash = statement.beginningCash;
-        const endingCash = statement.endingCash;
-
         const deptMap = new Map<string, { cashIn: number; cashOut: number }>();
         const empMap = new Map<string, { salaryPaid: number; commissionPaid: number; advancePaid: number }>();
 
-        for (const m of statement.periodMovements) {
-          if (m.departmentId) {
-            const cur = deptMap.get(m.departmentId) || { cashIn: 0, cashOut: 0 };
-            if (m.direction === "INFLOW") cur.cashIn += m.amount;
-            else if (m.direction === "OUTFLOW") cur.cashOut += m.amount;
-            deptMap.set(m.departmentId, cur);
+        for (const curr of mcStatement.currencies) {
+          const stmt = mcStatement.byCurrency[curr];
+          if (!stmt) continue;
+
+          if (stmt.beginningCash !== 0) {
+            beginningCash += toHtg(stmt.beginningCash, curr, startDate);
           }
-          if (m.employeeId) {
-            const cur = empMap.get(m.employeeId) || { salaryPaid: 0, commissionPaid: 0, advancePaid: 0 };
-            if (m.movementType === "PAYROLL") cur.salaryPaid += m.amount;
-            else if (m.movementType === "COMMISSION") cur.commissionPaid += m.amount;
-            else if (m.movementType === "ADVANCE") cur.advancePaid += m.amount;
-            empMap.set(m.employeeId, cur);
+
+          for (const m of stmt.periodMovements) {
+            if (!isEffectiveCashMovement(m)) continue;
+            const mCurrency = (m.currency || curr || "HTG").toUpperCase();
+            const explicitRate = m.metadata?.exchange_rate ?? m.metadata?.exchangeRate;
+            const amtHtg = toHtg(m.amount, mCurrency, m.movementDate, explicitRate);
+
+            if (m.direction === "INFLOW") {
+              cashInTotal += amtHtg;
+            } else if (m.direction === "OUTFLOW") {
+              cashOutTotal += amtHtg;
+              if (m.sourceModule === "PAYROLL" || m.movementType === "PAYROLL" || m.movementType === "COMMISSION") {
+                payrollPaid += amtHtg;
+              } else if (m.movementType === "RENT") {
+                rentPaid += amtHtg;
+              } else if (m.movementType === "SUPPLIER_PAYMENT") {
+                supplierPayments += amtHtg;
+              } else {
+                otherExpenses += amtHtg;
+              }
+            } else if (m.direction === "TRANSFER") {
+              outgoingTransfers += amtHtg;
+            }
+
+            if (m.departmentId) {
+              const cur = deptMap.get(m.departmentId) || { cashIn: 0, cashOut: 0 };
+              if (m.direction === "INFLOW") cur.cashIn += amtHtg;
+              else if (m.direction === "OUTFLOW") cur.cashOut += amtHtg;
+              deptMap.set(m.departmentId, cur);
+            }
+            if (m.employeeId) {
+              const cur = empMap.get(m.employeeId) || { salaryPaid: 0, commissionPaid: 0, advancePaid: 0 };
+              if (m.movementType === "PAYROLL") cur.salaryPaid += amtHtg;
+              else if (m.movementType === "COMMISSION") cur.commissionPaid += amtHtg;
+              else if (m.movementType === "ADVANCE") cur.advancePaid += amtHtg;
+              empMap.set(m.employeeId, cur);
+            }
           }
         }
+
+        const netCashFlow = cashInTotal - cashOutTotal;
+        const endingCash = beginningCash + netCashFlow;
 
         const byDepartment = Array.from(deptMap.entries()).map(([deptId, val]) => ({
           departmentId: deptId,

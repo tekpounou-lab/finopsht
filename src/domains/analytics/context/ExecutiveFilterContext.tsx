@@ -310,13 +310,14 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
     return (transactions: LedgerTransaction[]): LedgerTransaction[] => {
       const normBounds = normalizeDateFilter(filters.startDate, filters.endDate);
       return (transactions || []).filter((tx) => {
+        const txEmp = tx.employeeId || (tx as any).employee_id;
         const txBranch = tx.branchId || (tx as any).branch_id || (tx as any).cost_center_id;
         const txDept = tx.departmentId || (tx as any).department_id || (tx as any).department;
         if (filters.branchId !== "ALL" && (!txBranch || txBranch !== filters.branchId)) return false;
         if (filters.departmentId !== "ALL" && (!txDept || txDept !== filters.departmentId)) return false;
+        if (filters.employeeId !== "ALL" && (!txEmp || txEmp !== filters.employeeId)) return false;
         if (filters.transactionType !== "ALL" && tx.type !== filters.transactionType) return false;
         if (filters.status !== "ALL" && tx.status !== filters.status) return false;
-        if (filters.currency && filters.currency !== "ALL" && (tx.currency || "HTG") !== filters.currency) return false;
         
         // Date range filtering using SSOT date normalization
         const rawDate =
@@ -336,7 +337,7 @@ export const ExecutiveFilterProvider: React.FC<{ children: React.ReactNode }> = 
         return true;
       });
     };
-  }, [filters.branchId, filters.departmentId, filters.transactionType, filters.status, filters.currency, filters.startDate, filters.endDate]);
+  }, [filters.branchId, filters.departmentId, filters.employeeId, filters.transactionType, filters.status, filters.startDate, filters.endDate]);
 
   const filterAttendance = useMemo(() => {
     return (records: AttendanceRecord[]): AttendanceRecord[] => {

@@ -102,6 +102,9 @@ export class TaxPolicyEngine {
     if (source.isTaxesEnabled !== undefined) {
       return Boolean(source.isTaxesEnabled);
     }
+    if (source.taxesEnabled !== undefined) {
+      return Boolean(source.taxesEnabled);
+    }
 
     // 2. Settings.payroll or source.payroll
     const payroll = source.payroll || source.settings?.payroll;
@@ -124,10 +127,19 @@ export class TaxPolicyEngine {
       if (payroll.isTaxesEnabled !== undefined) {
         return Boolean(payroll.isTaxesEnabled);
       }
+      if (payroll.taxesEnabled !== undefined) {
+        return Boolean(payroll.taxesEnabled);
+      }
     }
 
-    // 3. Settings.payroll_policies or source.payroll_policies / payrollPolicies
-    const policies = source.payroll_policies || source.payrollPolicies || source.settings?.payroll_policies;
+    // 3. Settings.payroll_policies or source.payroll_policies / payrollPolicies / payrollPolicy
+    const policies =
+      source.payroll_policies ||
+      source.payrollPolicies ||
+      source.payrollPolicy ||
+      source.settings?.payroll_policies ||
+      source.settings?.payrollPolicies ||
+      source.settings?.payrollPolicy;
     if (policies) {
       if (policies.socialContributions?.enabled !== undefined) {
         return Boolean(policies.socialContributions.enabled);
@@ -135,16 +147,22 @@ export class TaxPolicyEngine {
       if (policies.enable_social_taxes !== undefined) {
         return Boolean(policies.enable_social_taxes);
       }
+      if (policies.enableSocialTaxes !== undefined) {
+        return Boolean(policies.enableSocialTaxes);
+      }
       if (policies.enableTaxes !== undefined) {
         return Boolean(policies.enableTaxes);
       }
       if (policies.isTaxesEnabled !== undefined) {
         return Boolean(policies.isTaxesEnabled);
       }
+      if (policies.taxesEnabled !== undefined) {
+        return Boolean(policies.taxesEnabled);
+      }
     }
 
     // 4. Tax Configuration
-    const taxConfig = source.tax_config || source.taxConfig || source.settings?.tax_config;
+    const taxConfig = source.tax_config || source.taxConfig || source.settings?.tax_config || source.settings?.taxConfig;
     if (taxConfig) {
       if (taxConfig.enableTaxes !== undefined) {
         return Boolean(taxConfig.enableTaxes);
@@ -154,6 +172,9 @@ export class TaxPolicyEngine {
       }
       if (taxConfig.enable_social_taxes !== undefined) {
         return Boolean(taxConfig.enable_social_taxes);
+      }
+      if (taxConfig.taxesEnabled !== undefined) {
+        return Boolean(taxConfig.taxesEnabled);
       }
     }
 

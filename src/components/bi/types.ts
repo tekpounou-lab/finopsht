@@ -100,6 +100,7 @@ export interface BIPayrollTabProps {
   formatValueDirectly?: (val: number) => string;
   ledgerTransactions?: LedgerTransaction[];
   isSimplifiedMode?: boolean;
+  accountingBasis?: "CASH" | "ACCRUAL";
   phase6cDataset?: any;
   phase6dDataset?: any;
   phase7Dataset?: any;

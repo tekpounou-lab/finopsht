@@ -18,6 +18,9 @@ import {
   EmployeeDepartmentActivity,
   PayrollCycle,
 } from "../../../types";
+import type { Invoice } from "../../../types/crm";
+import type { CashSettlement } from "../../../types/cash-basis";
+import { isEffectiveCashMovement } from "../../cash/types/NormalizedCashMovement";
 import { filterOperationalEmployees, isOperationalEmployee } from "../../../services/workforce/EmployeeEligibilityService";
 import { WorkforceProfitabilityEngine } from "./WorkforceProfitabilityEngine";
 import { TaxPolicyEngine } from "../../../services/payroll/TaxPolicyEngine";
@@ -841,13 +844,48 @@ export class AnalyticsEngine {
       }
 
       const typeUpper = (t.type || "").toUpperCase();
-      if (typeUpper === "INCOME" || typeUpper === "TRANSFER" || typeUpper === "EXCHANGE" || typeUpper === "ADVANCE" || typeUpper === "REVENUE" || typeUpper === "SALES" || typeUpper === "VENTE" || typeUpper === "VENTES") {
+      if (
+        typeUpper === "INCOME" ||
+        typeUpper === "TRANSFER" ||
+        typeUpper === "EXCHANGE" ||
+        typeUpper === "ADVANCE" ||
+        typeUpper === "REVENUE" ||
+        typeUpper === "SALES" ||
+        typeUpper === "VENTE" ||
+        typeUpper === "VENTES" ||
+        typeUpper === "CREDIT" ||
+        typeUpper === "REFUND" ||
+        typeUpper === "CORRECTION" ||
+        typeUpper === "ADJUSTMENT"
+      ) {
         return false;
       }
 
-      // Exclude till closure operational risk discrepancies (Zero P&L impact by design)
+      // Exclude till closure operational risk discrepancies and revenue credit classifications (ACC-01)
       const catUpper = (t.category || (t as any).category_name || "").toString().toUpperCase();
       const descUpper = (t.description || (t as any).memo || "").toString().toUpperCase();
+      const creditAcc = ((t as any).credit_account || (t as any).creditAccount || "").toString().trim().toUpperCase();
+      if (
+        creditAcc &&
+        /^(40\d*|410\d*|41[2-9]\d*|7\d*)/.test(creditAcc)
+      ) {
+        return false;
+      }
+      if (
+        !catUpper.includes("COST") &&
+        !catUpper.includes("COMMISSION") &&
+        !catUpper.includes("EXPENSE") &&
+        !catUpper.includes("TAX") &&
+        (catUpper.includes("INCOME") ||
+          catUpper.includes("REVENUE") ||
+          catUpper.includes("VENTE") ||
+          catUpper.includes("RECETTE") ||
+          catUpper === "SALES" ||
+          catUpper === "PRODUCT_SALES" ||
+          catUpper === "SERVICE_REVENUE")
+      ) {
+        return false;
+      }
       if (
         typeUpper.includes("TILL_DISCREPANCY") ||
         catUpper.includes("TILL_DISCREPANCY") ||
@@ -891,29 +929,26 @@ export class AnalyticsEngine {
         isAlreadyHtg = true;
       } else if (t.amount_cents !== undefined && t.amount_cents !== null && !isNaN(t.amount_cents) && t.amount_cents !== 0) {
         amt = t.amount_cents / 100;
-        isAlreadyHtg = true;
       } else if (t.amountCents !== undefined && t.amountCents !== null && !isNaN(t.amountCents) && t.amountCents !== 0) {
         amt = t.amountCents / 100;
-        isAlreadyHtg = true;
       } else if (t.total !== undefined && t.total !== null && !isNaN(t.total) && t.total !== 0) {
         amt = t.total;
       } else if (t.debit !== undefined && t.debit !== null && !isNaN(t.debit) && t.debit !== 0) {
         amt = t.debit;
-        isAlreadyHtg = true;
       } else if (t.credit !== undefined && t.credit !== null && !isNaN(t.credit) && t.credit !== 0) {
         amt = t.credit;
-        isAlreadyHtg = true;
       } else if (t.debit_cents !== undefined && t.debit_cents !== null && !isNaN(t.debit_cents) && t.debit_cents !== 0) {
         amt = t.debit_cents / 100;
-        isAlreadyHtg = true;
       } else if (t.credit_cents !== undefined && t.credit_cents !== null && !isNaN(t.credit_cents) && t.credit_cents !== 0) {
         amt = t.credit_cents / 100;
-        isAlreadyHtg = true;
       }
 
-      if (normalizationContext && amt !== 0) {
+      if (amt !== 0) {
         const currency = isAlreadyHtg ? "HTG" : (t.currency || t.currency_code || t.currencyCode || "HTG");
-        return NormalizedAmountResolver.resolveToHTG(amt, currency, txDate, normalizationContext);
+        const explicitRate = t.exchange_rate ?? t.exchangeRate;
+        if (currency.toUpperCase() !== "HTG") {
+          return NormalizedAmountResolver.resolveToHTG(amt, currency, txDate, normalizationContext, "BRH", explicitRate);
+        }
       }
       return amt;
     };
@@ -928,6 +963,24 @@ export class AnalyticsEngine {
     }, 0);
   }
 
+  static isPayrollCashDisbursed(pr: any, cycleMap?: Map<string, PayrollCycle>): boolean {
+    if (!pr) return false;
+    const statusUpper = String(pr.status || "").toUpperCase();
+    if (statusUpper === "PAID" || statusUpper === "SETTLED" || statusUpper === "DISBURSED" || statusUpper === "COMPLETED") {
+      return true;
+    }
+    const cycleId = pr.cycleId || pr.payroll_cycle_id;
+    const cycle = cycleId && cycleMap ? cycleMap.get(cycleId) : undefined;
+    const cStatusUpper = String(cycle?.status || "").toUpperCase();
+    if (statusUpper === "SEALED" && (pr.paidAt || pr.paymentDate || cycle?.disbursedAt || cStatusUpper === "PAID" || cStatusUpper === "SEALED")) {
+      return true;
+    }
+    if (cStatusUpper === "PAID" || Boolean(cycle?.disbursedAt)) {
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Computes total payroll cost exclusively from sealed / validated payroll_records with proration.
    * Total Employment Cost = Prorated Gross Salary + Prorated Employer Contributions.
@@ -938,11 +991,15 @@ export class AnalyticsEngine {
     range: DateRange,
     isSocialTaxEnabled: boolean = true,
     cycleMap?: Map<string, PayrollCycle>,
-    normalizationContext?: NormalizationContext
+    normalizationContext?: NormalizationContext,
+    cashOnly: boolean = false
   ): number {
     return (payrolls || []).reduce((sum, pr: any) => {
       const statusUpper = (pr.status || "").toUpperCase();
       if (statusUpper === "CANCELLED" || statusUpper === "VOID" || statusUpper === "REJECTED" || pr.isExcluded) {
+        return sum;
+      }
+      if (cashOnly && !AnalyticsEngine.isPayrollCashDisbursed(pr, cycleMap)) {
         return sum;
       }
 
@@ -959,11 +1016,12 @@ export class AnalyticsEngine {
         0;
 
       const currency = isAlreadyHtg ? "HTG" : (pr.currency || pr.currency_code || pr.currencyCode || "HTG");
-      const paymentDate = pr.paymentDate || pr.effectiveAccountingDate || pr.created_at || pr.createdAt;
+      const paymentDate = pr.paidAt || pr.paymentDate || pr.effectiveAccountingDate || pr.created_at || pr.createdAt;
       const normDate = toDateOnly(paymentDate);
+      const explicitRate = pr.exchange_rate ?? pr.exchangeRate;
 
-      const normalizedGross = normalizationContext && rawGross !== 0
-        ? NormalizedAmountResolver.resolveToHTG(rawGross, currency, normDate, normalizationContext)
+      const normalizedGross = rawGross !== 0 && currency.toUpperCase() !== "HTG"
+        ? NormalizedAmountResolver.resolveToHTG(rawGross, currency, normDate, normalizationContext, "BRH", explicitRate)
         : rawGross;
 
       // Employer taxes (ONA / OFATMA)
@@ -978,8 +1036,9 @@ export class AnalyticsEngine {
         }
       }
 
-      const normalizedEmployerTaxes = normalizationContext && employerTaxes !== 0
-        ? NormalizedAmountResolver.resolveToHTG(employerTaxes, "HTG", normDate, normalizationContext)
+      const taxCurrency = pr.employerContributionsHtg !== undefined ? "HTG" : (pr.currency || pr.currency_code || pr.currencyCode || "HTG");
+      const normalizedEmployerTaxes = employerTaxes !== 0 && taxCurrency.toUpperCase() !== "HTG"
+        ? NormalizedAmountResolver.resolveToHTG(employerTaxes, taxCurrency, normDate, normalizationContext, "BRH", explicitRate)
         : employerTaxes;
 
       return sum + (normalizedGross + normalizedEmployerTaxes) * factor;
@@ -1120,6 +1179,8 @@ export class AnalyticsEngine {
       referenceDate?: Date;
       accountingMode?: "CASH" | "ACCRUAL";
       normalizationContext?: NormalizationContext;
+      invoices?: Invoice[];
+      cashSettlements?: CashSettlement[];
     },
     customRange?: { startDate: string; endDate: string } | undefined,
     employees?: Employee[],
@@ -1153,6 +1214,8 @@ export class AnalyticsEngine {
     let actualCycles = payrollCycles;
     let actualRefDate = referenceDate;
     let actualAccountingMode: "CASH" | "ACCRUAL" = "ACCRUAL";
+    let actualInvoices: Invoice[] = [];
+    let actualCashSettlements: CashSettlement[] = [];
 
     if (typeof periodOrOptions === "object" && periodOrOptions !== null) {
       const opts = periodOrOptions;
@@ -1173,6 +1236,8 @@ export class AnalyticsEngine {
       actualRefDate = opts.referenceDate;
       actualAccountingMode = opts.accountingMode || "ACCRUAL";
       normalizationContext = opts.normalizationContext;
+      actualInvoices = opts.invoices || [];
+      actualCashSettlements = opts.cashSettlements || [];
     } else {
       period = periodOrOptions as AnalyticsPeriod;
     }
@@ -1239,7 +1304,10 @@ export class AnalyticsEngine {
       const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
 
       // 1. Check if explicit payment date falls in range
-      const paymentDate = (p as any).paymentDate || (p as any).effectiveAccountingDate;
+      const paymentDate =
+        actualAccountingMode === "CASH"
+          ? ((p as any).paidAt || (p as any).paymentDate || (p as any).effectiveAccountingDate || cycle?.disbursedAt)
+          : ((p as any).paymentDate || (p as any).effectiveAccountingDate);
       if (paymentDate) {
         const normPayment = normalizeDateStr(paymentDate);
         if (
@@ -1386,10 +1454,15 @@ export class AnalyticsEngine {
     const getTxAmount = (t: LedgerTransaction): number => {
       if (!t) return 0;
       let amt = 0;
+      let isAlreadyHtg = false;
       if (typeof t.amount === "number" && !isNaN(t.amount) && t.amount !== 0) amt = Math.abs(t.amount);
-      else if (typeof (t as any).amount_htg === "number" && !isNaN((t as any).amount_htg) && (t as any).amount_htg !== 0) amt = Math.abs((t as any).amount_htg);
-      else if (typeof (t as any).amountHtg === "number" && !isNaN((t as any).amountHtg) && (t as any).amountHtg !== 0) amt = Math.abs((t as any).amountHtg);
-      else if (typeof (t as any).amount_cents === "number" && !isNaN((t as any).amount_cents) && (t as any).amount_cents !== 0) amt = Math.abs((t as any).amount_cents) / 100;
+      else if (typeof (t as any).amount_htg === "number" && !isNaN((t as any).amount_htg) && (t as any).amount_htg !== 0) {
+        amt = Math.abs((t as any).amount_htg);
+        isAlreadyHtg = true;
+      } else if (typeof (t as any).amountHtg === "number" && !isNaN((t as any).amountHtg) && (t as any).amountHtg !== 0) {
+        amt = Math.abs((t as any).amountHtg);
+        isAlreadyHtg = true;
+      } else if (typeof (t as any).amount_cents === "number" && !isNaN((t as any).amount_cents) && (t as any).amount_cents !== 0) amt = Math.abs((t as any).amount_cents) / 100;
       else if (typeof (t as any).amountCents === "number" && !isNaN((t as any).amountCents) && (t as any).amountCents !== 0) amt = Math.abs((t as any).amountCents) / 100;
       else if (typeof (t as any).total === "number" && !isNaN((t as any).total) && (t as any).total !== 0) amt = Math.abs((t as any).total);
       else if (typeof (t as any).credit === "number" && (t as any).credit > 0) amt = (t as any).credit;
@@ -1397,10 +1470,13 @@ export class AnalyticsEngine {
       else if (typeof (t as any).credit_cents === "number" && (t as any).credit_cents > 0) amt = (t as any).credit_cents / 100;
       else if (typeof (t as any).debit_cents === "number" && (t as any).debit_cents > 0) amt = (t as any).debit_cents / 100;
 
-      if (normalizationContext && amt > 0) {
-        const currency = t.currency || (t as any).currency_code || (t as any).currencyCode || "HTG";
-        const date = resolveAnalyticsTxDate(t, actualAccountingMode === "CASH");
-        return NormalizedAmountResolver.resolveToHTG(amt, currency, date, normalizationContext);
+      if (amt > 0) {
+        const currency = isAlreadyHtg ? "HTG" : (t.currency || (t as any).currency_code || (t as any).currencyCode || "HTG");
+        if (currency.toUpperCase() !== "HTG") {
+          const date = resolveAnalyticsTxDate(t, actualAccountingMode === "CASH");
+          const explicitRate = (t as any).exchange_rate ?? (t as any).exchangeRate;
+          return NormalizedAmountResolver.resolveToHTG(amt, currency, date, normalizationContext, "BRH", explicitRate);
+        }
       }
       return amt;
     };
@@ -1447,6 +1523,7 @@ export class AnalyticsEngine {
       if (
         creditAcc &&
         (/^[256]\d*/.test(creditAcc) ||
+          /^411\d*/.test(creditAcc) ||
           /^4[2-9]\d*/.test(creditAcc) ||
           creditAcc.includes("PAYROLL") ||
           creditAcc.includes("SALAIRE") ||
@@ -1454,14 +1531,15 @@ export class AnalyticsEngine {
           creditAcc.includes("OFATMA") ||
           creditAcc.includes("CLEARING") ||
           creditAcc.includes("PAYABLE") ||
-          creditAcc.includes("TAX"))
+          creditAcc.includes("TAX") ||
+          creditAcc.includes("CLIENT"))
       ) {
         return false;
       }
 
       if (typeUpper === "INCOME" || typeUpper === "REVENUE" || typeUpper === "SALES" || typeUpper === "VENTE" || typeUpper === "VENTES" || typeUpper === "CREDIT") return true;
       if (catUpper.includes("INCOME") || catUpper.includes("REVENUE") || catUpper.includes("VENTE") || catUpper.includes("RECETTE") || catUpper.includes("SALES")) return true;
-      if (creditAcc && (/^4[01]\d*/.test(creditAcc) || creditAcc.startsWith("7"))) return true;
+      if (creditAcc && (/^(40\d*|410\d*|41[2-9]\d*|7\d*)/.test(creditAcc))) return true;
       if (typeof (t as any).credit === "number" && (t as any).credit > 0 && !(t as any).debit) return true;
       return false;
     };
@@ -1510,21 +1588,93 @@ export class AnalyticsEngine {
       return overlapDays / totalCycleDays;
     };
 
-    // Revenue Calculation & Instrumentation (Mode-Aware SSOT)
-    const calculateTotalRevenue = (payrolls: PayrollRecord[], txs: LedgerTransaction[], range: DateRange) => {
-      if (actualAccountingMode === "CASH") {
-        const cashStatement = CanonicalCashEngine.executePipeline(
-          {
-            payrollRecords: payrolls,
-            ledgerTransactions: txs,
-          },
-          {
-            businessId: actualBizId,
-            startDate: range.startDate,
-            endDate: range.endDate,
+    const scopedInvoices = (actualInvoices || []).filter((inv) => matchesBusiness(inv));
+
+    const executeNormalizedCashPipeline = (
+      payrolls: PayrollRecord[],
+      txs: LedgerTransaction[],
+      invs: Invoice[],
+      range: DateRange,
+      settlements: CashSettlement[] = []
+    ) => {
+      const startStr = range.startDate || "1900-01-01";
+      const endStr = range.endDate || "2099-12-31";
+      const mc = CanonicalCashEngine.executeMultiCurrencyPipeline(
+        {
+          payrollRecords: payrolls,
+          payrollCycles: actualCycles,
+          invoices: invs,
+          ledgerTransactions: txs,
+          cashSettlements: settlements,
+        },
+        {
+          businessId: actualBizId,
+          startDate: startStr,
+          endDate: endStr,
+        }
+      );
+
+      let totalInflowHtg = 0;
+      let totalOutflowHtg = 0;
+
+      for (const curr of mc.currencies) {
+        const stmt = mc.byCurrency[curr];
+        if (!stmt) continue;
+        for (const m of stmt.periodMovements) {
+          if (!isEffectiveCashMovement(m)) continue;
+          const mCurrency = (m.currency || curr || "HTG").toUpperCase();
+          const explicitRate = m.metadata?.exchange_rate ?? m.metadata?.exchangeRate;
+          const amtHtg = mCurrency !== "HTG"
+            ? NormalizedAmountResolver.resolveToHTG(m.amount, mCurrency, m.movementDate, normalizationContext, "BRH", explicitRate)
+            : m.amount;
+          if (m.direction === "INFLOW") {
+            totalInflowHtg += amtHtg;
+          } else if (m.direction === "OUTFLOW") {
+            totalOutflowHtg += amtHtg;
           }
-        );
-        return cashStatement.totalInflow;
+        }
+      }
+
+      return {
+        mc,
+        totalInflow: totalInflowHtg,
+        totalOutflow: totalOutflowHtg,
+        netCashFlow: totalInflowHtg - totalOutflowHtg,
+      };
+    };
+
+    const curCashResult = executeNormalizedCashPipeline(
+      curPayroll,
+      curTxs,
+      scopedInvoices,
+      effectiveCashRange,
+      actualCashSettlements
+    );
+
+    const prevCashResult = hasPreviousPeriod
+      ? executeNormalizedCashPipeline(
+          prevPayroll,
+          prevTxs,
+          scopedInvoices,
+          previous,
+          actualCashSettlements
+        )
+      : {
+          mc: null,
+          totalInflow: 0,
+          totalOutflow: 0,
+          netCashFlow: 0,
+        };
+
+    // Revenue Calculation & Instrumentation (Mode-Aware SSOT)
+    const calculateTotalRevenue = (
+      _payrolls: PayrollRecord[],
+      txs: LedgerTransaction[],
+      _range: DateRange,
+      cashInflowVal: number
+    ) => {
+      if (actualAccountingMode === "CASH") {
+        return cashInflowVal;
       }
 
       const glIncomeSum = txs
@@ -1532,10 +1682,6 @@ export class AnalyticsEngine {
         .reduce((sum, t) => sum + getTxAmount(t), 0);
 
       // DEF-9B-05: Strict Revenue Semantics.
-      // Accounting revenue MUST strictly originate from posted GL Income (or cash inflows in cash mode).
-      // Operational employee sales (sales_cents on payroll records) represent commercial attribution
-      // for commissions and workforce productivity, NOT general ledger recognized company revenue.
-      // Therefore, if glIncomeSum is 0, accounting revenue is 0.00 (NO FALLBACK to payroll sales).
       return glIncomeSum;
     };
 
@@ -1553,8 +1699,10 @@ export class AnalyticsEngine {
     const rawIncomeTxs = curTxs.filter((t) => t.type === "INCOME");
     const totalIncomeBeforeStatusFilter = rawIncomeTxs.reduce((sum, t) => sum + getTxAmount(t), 0);
 
-    const curRevVal = calculateTotalRevenue(curPayroll, curTxs, effectiveCashRange);
-    const prevRevVal = hasPreviousPeriod ? calculateTotalRevenue(prevPayroll, prevTxs, previous) : 0;
+    const curRevVal = calculateTotalRevenue(curPayroll, curTxs, effectiveCashRange, curCashResult.totalInflow);
+    const prevRevVal = hasPreviousPeriod
+      ? calculateTotalRevenue(prevPayroll, prevTxs, previous, prevCashResult.totalInflow)
+      : 0;
     const revenue = this.compareValues(curRevVal, prevRevVal);
 
     console.debug("[KPI:Revenue] Pipeline step breakdown:", {
@@ -1593,14 +1741,23 @@ export class AnalyticsEngine {
     const sumNonPayrollExpenses = (txs: LedgerTransaction[]) => AnalyticsEngine.computeOperationalExpenses(txs, current, actualBizId, false, normalizationContext);
 
     // Payroll cost: EXCLUSIVELY from sealed / validated payroll_records with proration (SSOT)
-    const curPayrollCost = AnalyticsEngine.computePayrollCost(curPayroll, effectiveTrendRange, isSocialTaxEnabled, cycleMap, normalizationContext);
+    // In CASH mode, unpaid DRAFT/APPROVED/PENDING payroll records must not leak into CASH payrollCost.
+    const isCashMode = actualAccountingMode === "CASH";
+    const curPayrollCost = AnalyticsEngine.computePayrollCost(curPayroll, effectiveTrendRange, isSocialTaxEnabled, cycleMap, normalizationContext, isCashMode);
     const prevPayrollCost = hasPreviousPeriod
-      ? AnalyticsEngine.computePayrollCost(prevPayroll, previous, isSocialTaxEnabled, cycleMap, normalizationContext)
+      ? AnalyticsEngine.computePayrollCost(prevPayroll, previous, isSocialTaxEnabled, cycleMap, normalizationContext, isCashMode)
       : 0;
     const payrollCost = this.compareValues(curPayrollCost, prevPayrollCost, true);
 
-    const sumPayrollDetails = (payrolls: PayrollRecord[], txs: LedgerTransaction[], range: DateRange) =>
-      AnalyticsEngine.computePayrollCost(payrolls, range, isSocialTaxEnabled, cycleMap, normalizationContext);
+    const sumPayrollDetails = (payrolls: PayrollRecord[], _txs: LedgerTransaction[], range: DateRange, cashOnlyOverride?: boolean) =>
+      AnalyticsEngine.computePayrollCost(
+        payrolls,
+        range,
+        isSocialTaxEnabled,
+        cycleMap,
+        normalizationContext,
+        cashOnlyOverride !== undefined ? cashOnlyOverride : isCashMode
+      );
 
     // Detailed instrumentation for Expenses & Payroll
     const cycleLogDetails: any[] = [];
@@ -1609,6 +1766,7 @@ export class AnalyticsEngine {
     let totalTaxesAmount = 0;
 
     curPayroll.forEach((pr: any) => {
+      if (isCashMode && !AnalyticsEngine.isPayrollCashDisbursed(pr, cycleMap)) return;
       const factor = AnalyticsEngine.getRecordProrationFactor(pr, effectiveTrendRange, cycleMap);
       const cycleId = pr.cycleId || pr.payroll_cycle_id;
       const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
@@ -1657,70 +1815,14 @@ export class AnalyticsEngine {
       ? "NO_PAYROLL"
       : (curPayrollVariance < 0.01 ? "RECONCILED" : "UNRECONCILED");
 
-    // Total operational expenses: Non-payroll GL expenses + GL payroll (if posted) or Payroll Subledger cost (if GL not posted)
-    const accrualCurExpenses = curNonPayrollExp + (curGlPayrollExp > 0 ? curGlPayrollExp : curPayrollCost);
-    const accrualPrevExpenses = prevNonPayrollExp + (prevGlPayrollExp > 0 ? prevGlPayrollExp : prevPayrollCost);
+    // ACC-05: Prefer Payroll Subledger SSOT whenever payroll records exist in scope so top-level totalExpenses
+    // matches payrollCost + branchPerformance + departmentPerformance without intra-snapshot discrepancy;
+    // fall back to GL payroll only when no subledger payroll records exist in period.
+    const accrualCurExpenses = curNonPayrollExp + (curPayroll.length > 0 ? curPayrollCost : curGlPayrollExp);
+    const accrualPrevExpenses = prevNonPayrollExp + (prevPayroll.length > 0 ? prevPayrollCost : prevGlPayrollExp);
 
-    const curCashStatement = CanonicalCashEngine.executePipeline(
-      {
-        payrollRecords: curPayroll,
-        ledgerTransactions: curTxs,
-      },
-      {
-        businessId: actualBizId,
-        startDate: effectiveCashRange.startDate,
-        endDate: effectiveCashRange.endDate,
-      }
-    );
-
-    const prevCashStatement = hasPreviousPeriod
-      ? CanonicalCashEngine.executePipeline(
-          {
-            payrollRecords: prevPayroll,
-            ledgerTransactions: prevTxs,
-          },
-          {
-            businessId: actualBizId,
-            startDate: previous.startDate,
-            endDate: previous.endDate,
-          }
-        )
-      : {
-          businessId: actualBizId,
-          startDate: "",
-          endDate: "",
-          totalInflow: 0,
-          totalOutflow: 0,
-          netCashFlow: 0,
-          inflowsBySource: {
-            OPERATING_REVENUE: 0,
-            RECEIVABLE_COLLECTION: 0,
-            OTHER_INFLOW: 0,
-          },
-          outflowsByCategory: {
-            PAYROLL_NET_DISBURSEMENT: 0,
-            STATUTORY_TAX_REMITTANCE: 0,
-            SUPPLIER_PAYMENT: 0,
-            OPERATING_EXPENSE: 0,
-            ADVANCE_DISBURSEMENT: 0,
-            OTHER_OUTFLOW: 0,
-          },
-          movements: [],
-          ignoredTransactions: [],
-          trace: {
-            payrollRecordsEvaluated: 0,
-            payrollRecordsSettledCount: 0,
-            payrollSettlementLedgerTxsMatched: 0,
-            payrollOutflowSource: "NONE" as const,
-            ledgerTransactionsEvaluated: 0,
-            ledgerCashInflowCount: 0,
-            ledgerCashOutflowCount: 0,
-            internalTransfersExcludedCount: 0,
-            nonCashExcludedCount: 0,
-            reversedExcludedCount: 0,
-            outOfPeriodExcludedCount: 0,
-          },
-        };
+    const curCashStatement = curCashResult;
+    const prevCashStatement = prevCashResult;
 
     const totalCurExpenses = actualAccountingMode === "CASH" ? curCashStatement.totalOutflow : accrualCurExpenses;
     const totalPrevExpenses = actualAccountingMode === "CASH" ? prevCashStatement.totalOutflow : accrualPrevExpenses;
@@ -1755,10 +1857,6 @@ export class AnalyticsEngine {
     });
 
     // DEF-9B-06: CashOnHand Lineage & Limitation.
-    // Lineage: Cumulative running sum of all cash-settled General Ledger transactions (INCOME - EXPENSE/PAYROLL - ADVANCE)
-    // up to the period end date.
-    // Limitation: This represents GL Cash Balance across all accounts. It does NOT perform automatic physical
-    // drawer reconciliation against individual till counts or branch safes (which reside in the operational Cash Management subledger).
     const allTxsUpToCurrent = actualTxs.filter((t) => {
       if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return false;
       if (actualBizId && t.business_id !== actualBizId && (t as any).businessId !== actualBizId) return false;
@@ -1777,26 +1875,43 @@ export class AnalyticsEngine {
         })
       : [];
 
-    const calculateTotalCash = (txs: LedgerTransaction[]) => {
+    const calculateTotalCash = (txs: LedgerTransaction[], cutoffEndDate?: string) => {
       let rev = 0;
       let exp = 0;
       let adv = 0;
+      const linkedInvoiceIds = new Set<string>();
       txs.forEach((t) => {
         if (t.status === "REVERSED" || (t.status as any) === "VOID" || (t.status as any) === "CANCELLED") return;
         // Only count actual cash movements
         if (t.payment_method === "NON_CASH" || (t as any).paymentMethod === "NON_CASH") return;
-        
+        if (isTreasuryTransferTransaction(t)) return;
+        const txSource = String((t as any).source || "").toUpperCase();
+        const linkedInv = (t as any).metadata?.linkedInvoiceId || (t as any).metadata?.invoiceId || (t as any).invoiceId || (txSource === "INVOICE" || txSource === "CRM_INVOICE" ? (t as any).referenceId : undefined);
+        if (linkedInv) linkedInvoiceIds.add(String(linkedInv));
+
         const amt = getTxAmount(t);
         if (isIncomeTx(t)) rev += amt;
         else if (t.type === "EXPENSE" || t.type === "PAYROLL") exp += amt;
         else if (t.type === "ADVANCE") adv += amt;
       });
+
+      // Include cash-settled CRM invoices up to cutoffEndDate if not already represented in GL txs
+      if (scopedInvoices.length > 0) {
+        const invCashRes = executeNormalizedCashPipeline(
+          [],
+          [],
+          scopedInvoices.filter((inv) => !linkedInvoiceIds.has(String(inv.id))),
+          { startDate: "1900-01-01", endDate: cutoffEndDate || "2099-12-31" }
+        );
+        rev += invCashRes.totalInflow;
+      }
+
       return rev - exp - adv;
     };
 
     const cashOnHand = this.compareValues(
-      calculateTotalCash(allTxsUpToCurrent),
-      calculateTotalCash(allTxsUpToPrevious)
+      calculateTotalCash(allTxsUpToCurrent, current.endDate),
+      calculateTotalCash(allTxsUpToPrevious, previous.endDate)
     );
 
     // DEF-9B-02: Canonical Net Cash Flow (Variation de Trésorerie)
@@ -2139,29 +2254,31 @@ export class AnalyticsEngine {
           return resolvedBranch === br.id;
         });
 
+        const brInvoices = scopedInvoices.filter((inv: any) => {
+          const invEmpId = inv.employeeId || inv.employee_id || inv.assignedTo;
+          const invBranch = inv.branchId || inv.branch_id || inv.cost_center_id || (invEmpId ? empBranchById.get(invEmpId) : undefined);
+          return invBranch === br.id;
+        });
+
         let brRev = 0;
+        let brPayrollCost = 0;
+        let brNonPayrollExp = 0;
+        let brExpenses = 0;
+
         if (actualAccountingMode === "CASH") {
-          const cashStatement = CanonicalCashEngine.executePipeline(
-            {
-              payrollRecords: brPayrolls,
-              ledgerTransactions: brTxs,
-            },
-            {
-              businessId: actualBizId,
-              startDate: effectiveCashRange.startDate,
-              endDate: effectiveCashRange.endDate,
-            }
-          );
-          brRev = cashStatement.totalInflow;
+          const cashRes = executeNormalizedCashPipeline(brPayrolls, brTxs, brInvoices, effectiveCashRange);
+          brRev = cashRes.totalInflow;
+          brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, effectiveTrendRange, true);
+          brExpenses = cashRes.totalOutflow;
+          brNonPayrollExp = Math.max(0, brExpenses - brPayrollCost);
         } else {
           brRev = brTxs
             .filter((t) => isIncomeTx(t))
             .reduce((sum, t) => sum + getTxAmount(t), 0);
+          brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, effectiveTrendRange, false);
+          brNonPayrollExp = sumNonPayrollExpenses(brTxs);
+          brExpenses = brPayrollCost + brNonPayrollExp;
         }
-        const brPayrollCost = sumPayrollDetails(brPayrolls, brTxs, effectiveTrendRange);
-        const brNonPayrollExp = sumNonPayrollExpenses(brTxs);
-
-        const brExpenses = brPayrollCost + brNonPayrollExp;
         const brProfit = brRev - brExpenses;
         const brMargin = brRev > 0 ? (brProfit / brRev) * 100 : 0;
 
@@ -2201,6 +2318,7 @@ export class AnalyticsEngine {
       nonPayrollExp: number; 
       glIncome: number;
       txs: LedgerTransaction[];
+      payrolls: PayrollRecord[];
       empCount: number; 
       employees: Employee[];
       attList: AttendanceRecord[];
@@ -2229,6 +2347,7 @@ export class AnalyticsEngine {
           nonPayrollExp: 0,
           glIncome: 0,
           txs: [],
+          payrolls: [],
           empCount: deptEmployees.length,
           employees: deptEmployees,
           attList: [],
@@ -2250,10 +2369,38 @@ export class AnalyticsEngine {
       const resolvedDept = resolveDeptObj(rawDeptStr);
       const deptId = resolvedDept ? resolvedDept.id : (rawDeptStr || "general");
 
+      if (!deptMap.has(deptId)) {
+        deptMap.set(deptId, {
+          name: resolvedDept?.name || (deptId === "general" ? "Administration Générale" : deptId),
+          payrollCost: 0,
+          nonPayrollExp: 0,
+          glIncome: 0,
+          txs: [],
+          payrolls: [],
+          empCount: 0,
+          employees: [],
+          attList: [],
+        });
+      }
+      const entry = deptMap.get(deptId)!;
+      entry.payrolls.push(p);
+
+      if (isCashMode && !AnalyticsEngine.isPayrollCashDisbursed(p, cycleMap)) {
+        return;
+      }
+
       const factor = AnalyticsEngine.getRecordProrationFactor(p, effectiveTrendRange, cycleMap);
       if (factor <= 0) return;
 
-      const rawGross = (p.gross_salary_cents !== undefined && p.gross_salary_cents !== null ? p.gross_salary_cents / 100 : undefined) ?? p.grossSalary ?? p.grossSalaryHtg ?? p.gross ?? p.baseSalary ?? 0;
+      const isGrossHtg = p.grossSalaryHtg !== undefined && p.grossSalaryHtg !== null;
+      const rawGross = p.grossSalaryHtg ?? (p.gross_salary_cents !== undefined && p.gross_salary_cents !== null ? p.gross_salary_cents / 100 : undefined) ?? p.grossSalary ?? p.gross ?? p.baseSalary ?? 0;
+      const pCurrency = isGrossHtg ? "HTG" : (p.currency || p.currency_code || p.currencyCode || "HTG");
+      const pDate = toDateOnly(p.paidAt || p.paymentDate || p.effectiveAccountingDate || p.created_at || p.createdAt);
+      const pExplicitRate = p.exchange_rate ?? p.exchangeRate;
+      const normGross = pCurrency.toUpperCase() !== "HTG" && rawGross !== 0
+        ? NormalizedAmountResolver.resolveToHTG(rawGross, pCurrency, pDate, normalizationContext, "BRH", pExplicitRate)
+        : rawGross;
+
       let erTaxes = 0;
       if (isSocialTaxEnabled) {
         if (p.employer_contributions_cents !== undefined && p.employer_contributions_cents !== null) {
@@ -2264,21 +2411,12 @@ export class AnalyticsEngine {
           erTaxes = erCnss + erOfatma;
         }
       }
-      const pCost = (rawGross + erTaxes) * factor;
+      const taxCurr = p.employerContributionsHtg !== undefined ? "HTG" : (p.currency || p.currency_code || p.currencyCode || "HTG");
+      const normTaxes = taxCurr.toUpperCase() !== "HTG" && erTaxes !== 0
+        ? NormalizedAmountResolver.resolveToHTG(erTaxes, taxCurr, pDate, normalizationContext, "BRH", pExplicitRate)
+        : erTaxes;
 
-      if (!deptMap.has(deptId)) {
-        deptMap.set(deptId, {
-          name: resolvedDept?.name || (deptId === "general" ? "Administration Générale" : deptId),
-          payrollCost: 0,
-          nonPayrollExp: 0,
-          glIncome: 0,
-          txs: [],
-          empCount: 0,
-          employees: [],
-          attList: [],
-        });
-      }
-      const entry = deptMap.get(deptId)!;
+      const pCost = (normGross + normTaxes) * factor;
       entry.payrollCost += pCost;
     });
 
@@ -2310,6 +2448,7 @@ export class AnalyticsEngine {
             nonPayrollExp: 0,
             glIncome: 0,
             txs: [],
+            payrolls: [],
             empCount: 0,
             employees: [],
             attList: [],
@@ -2321,12 +2460,17 @@ export class AnalyticsEngine {
         if (isIncomeTx(t)) {
           entry.glIncome += tAmount;
         } else if (!AnalyticsEngine.isPayrollRelatedTransaction(t)) {
-          // EXCLUSION STRICTE : Ne jamais mélanger les écritures de paie avec les dépenses d'exploitation
-          const typeUpper = (t.type || "").toUpperCase();
-          if (typeUpper === "EXPENSE" || typeUpper === "BONUS" || typeUpper === "COMPENSATION") {
-            entry.nonPayrollExp += tAmount;
-          } else if (typeUpper === "PENALTY") {
-            entry.nonPayrollExp -= tAmount;
+          const debitAcc = ((t as any).debit_account || (t as any).debitAccount || "").toString().trim().toUpperCase();
+          const creditAcc = ((t as any).credit_account || (t as any).creditAccount || "").toString().trim().toUpperCase();
+          const isBalanceSheetSettlement = debitAcc && (isLiabilityAccount(debitAcc) || isTreasuryAccount(debitAcc));
+          const isRevCredit = creditAcc && /^(40\d*|410\d*|41[2-9]\d*|7\d*)/.test(creditAcc);
+          if (!isBalanceSheetSettlement && !isRevCredit) {
+            const typeUpper = (t.type || "").toUpperCase();
+            if (typeUpper === "EXPENSE" || typeUpper === "BONUS" || typeUpper === "COMPENSATION") {
+              entry.nonPayrollExp += tAmount;
+            } else if (typeUpper === "PENALTY") {
+              entry.nonPayrollExp -= tAmount;
+            }
           }
         }
       });
@@ -2348,31 +2492,34 @@ export class AnalyticsEngine {
     const departmentPerformance: DepartmentPerformance[] = Array.from(deptMap.entries()).map(([deptId, data]) => {
       const attStats = computeAttendanceKPIs(data.attList, data.empCount || 1, curPayroll, effectiveAttendanceRange, data.employees);
       let rev = 0;
+      let exp = 0;
+      let deptPayrollCost = 0;
+      let deptNonPayrollExp = 0;
+
       if (actualAccountingMode === "CASH") {
-        const cashStatement = CanonicalCashEngine.executePipeline(
-          {
-            payrollRecords: [],
-            ledgerTransactions: data.txs,
-          },
-          {
-            businessId: actualBizId,
-            startDate: effectiveCashRange.startDate,
-            endDate: effectiveCashRange.endDate,
-          }
-        );
-        rev = cashStatement.totalInflow;
+        const deptInvoices = scopedInvoices.filter((inv: any) => {
+          const invDept = inv.departmentId || inv.department_id;
+          return invDept === deptId || (!invDept && deptId === "general");
+        });
+        const cashRes = executeNormalizedCashPipeline(data.payrolls, data.txs, deptInvoices, effectiveCashRange);
+        rev = cashRes.totalInflow;
+        deptPayrollCost = sumPayrollDetails(data.payrolls, data.txs, effectiveTrendRange, true);
+        exp = cashRes.totalOutflow;
+        deptNonPayrollExp = Math.max(0, exp - deptPayrollCost);
       } else {
         rev = data.glIncome;
+        deptPayrollCost = data.payrollCost;
+        deptNonPayrollExp = data.nonPayrollExp;
+        exp = deptPayrollCost + deptNonPayrollExp;
       }
-      const exp = data.payrollCost + data.nonPayrollExp;
       const margin = rev > 0 ? Math.round(((rev - exp) / rev) * 100) : 0;
 
       return {
         departmentId: deptId,
         departmentName: data.name,
         expenses: parseFloat(exp.toFixed(2)),
-        payrollCost: parseFloat(data.payrollCost.toFixed(2)),
-        nonPayrollExpenses: parseFloat(data.nonPayrollExp.toFixed(2)),
+        payrollCost: parseFloat(deptPayrollCost.toFixed(2)),
+        nonPayrollExpenses: parseFloat(deptNonPayrollExp.toFixed(2)),
         revenue: parseFloat(rev.toFixed(2)),
         margin,
         employeeCount: data.empCount,
@@ -2401,9 +2548,15 @@ export class AnalyticsEngine {
 
       let commissions = 0;
       if (relevantPayrolls.length > 0) {
-        commissions = relevantPayrolls.reduce((sum, p) => {
+        commissions = relevantPayrolls.reduce((sum, p: any) => {
           const factor = AnalyticsEngine.getRecordProrationFactor(p, current, cycleMap);
-          return sum + (getRecordCommissions(p) * factor);
+          const rawComm = getRecordCommissions(p);
+          const commCurr = p.commissionsHtg !== undefined ? "HTG" : (p.currency || p.currency_code || p.currencyCode || "HTG");
+          const pDate = toDateOnly(p.paidAt || p.paymentDate || p.effectiveAccountingDate || p.created_at);
+          const normComm = commCurr.toUpperCase() !== "HTG" && rawComm !== 0
+            ? NormalizedAmountResolver.resolveToHTG(rawComm, commCurr, pDate, normalizationContext, "BRH", p.exchange_rate ?? p.exchangeRate)
+            : rawComm;
+          return sum + (normComm * factor);
         }, 0);
       }
 
@@ -2411,14 +2564,20 @@ export class AnalyticsEngine {
       if (relevantPayrolls.length > 0) {
         empSalesVolume = relevantPayrolls.reduce((sum: number, p: any) => {
           const factor = AnalyticsEngine.getRecordProrationFactor(p, current, cycleMap);
-          const sales = (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || 0));
-          return sum + (sales * factor);
+          const isSalesHtg = p.salesHtg !== undefined && p.salesHtg !== null;
+          const rawSales = (p.sales_cents ? p.sales_cents / 100 : (p.salesHtg || p.salesVolume || p.sales_gl || 0));
+          const sCurr = isSalesHtg ? "HTG" : (p.currency || p.currency_code || p.currencyCode || "HTG");
+          const pDate = toDateOnly(p.paidAt || p.paymentDate || p.effectiveAccountingDate || p.created_at);
+          const normSales = sCurr.toUpperCase() !== "HTG" && rawSales !== 0
+            ? NormalizedAmountResolver.resolveToHTG(rawSales, sCurr, pDate, normalizationContext, "BRH", p.exchange_rate ?? p.exchangeRate)
+            : rawSales;
+          return sum + (normSales * factor);
         }, 0);
       }
       if (empSalesVolume === 0 && empTxs.length > 0) {
         empSalesVolume = empTxs
-          .filter((t) => (t.type || "").toUpperCase() === "INCOME" && (t.status || "").toUpperCase() !== "VOIDED")
-          .reduce((sum, t) => sum + (t.amount || 0), 0);
+          .filter((t) => isIncomeTx(t))
+          .reduce((sum, t) => sum + getTxAmount(t), 0);
       }
 
       const latestPayroll = relevantPayrolls[0];
@@ -2463,18 +2622,36 @@ export class AnalyticsEngine {
         ? Math.max(0, Math.min(100, Math.round((attendanceConsistencyScore ?? 0) + commissionBonus)))
         : 0;
 
-      const empBaseSalary = emp.baseSalary 
+      const empBaseSalaryRaw = emp.baseSalary 
         ?? (emp as any).base_salary 
         ?? ((emp as any).base_salary_cents ? (emp as any).base_salary_cents / 100 : 0)
         ?? ((emp as any).monthly_salary_cents ? (emp as any).monthly_salary_cents / 200 : 0)
         ?? (relevantPayrolls[0]?.baseSalary || (relevantPayrolls[0]?.base_salary_cents ? relevantPayrolls[0].base_salary_cents / 100 : 0));
+      const empSalaryCurr = (emp as any).currency || "HTG";
+      const empBaseSalary = empSalaryCurr.toUpperCase() !== "HTG" && empBaseSalaryRaw !== 0
+        ? NormalizedAmountResolver.resolveToHTG(empBaseSalaryRaw, empSalaryCurr, effectiveTrendRange.endDate || undefined, normalizationContext)
+        : empBaseSalaryRaw;
 
       const totalBaseSalary = relevantPayrolls.length > 0
-        ? relevantPayrolls.reduce((sum, p) => sum + (p.baseSalary || (p.base_salary_cents ? p.base_salary_cents / 100 : empBaseSalary)), 0)
+        ? relevantPayrolls.reduce((sum, p: any) => {
+            const rawBase = p.baseSalary || (p.base_salary_cents ? p.base_salary_cents / 100 : empBaseSalaryRaw);
+            const pCurr = p.currency || p.currency_code || p.currencyCode || empSalaryCurr || "HTG";
+            const pDate = toDateOnly(p.paidAt || p.paymentDate || p.effectiveAccountingDate || p.created_at);
+            return sum + (pCurr.toUpperCase() !== "HTG" && rawBase !== 0
+              ? NormalizedAmountResolver.resolveToHTG(rawBase, pCurr, pDate, normalizationContext, "BRH", p.exchange_rate ?? p.exchangeRate)
+              : rawBase);
+          }, 0)
         : (hasWorked ? empBaseSalary : 0);
 
       const totalNetPaid = relevantPayrolls.length > 0
-        ? relevantPayrolls.reduce((sum, p) => sum + (p.netPaid || (p.net_salary_cents ? p.net_salary_cents / 100 : 0)), 0)
+        ? relevantPayrolls.reduce((sum, p: any) => {
+            const rawNet = p.netPaid || (p.net_salary_cents ? p.net_salary_cents / 100 : 0);
+            const pCurr = p.currency || p.currency_code || p.currencyCode || "HTG";
+            const pDate = toDateOnly(p.paidAt || p.paymentDate || p.effectiveAccountingDate || p.created_at);
+            return sum + (pCurr.toUpperCase() !== "HTG" && rawNet !== 0
+              ? NormalizedAmountResolver.resolveToHTG(rawNet, pCurr, pDate, normalizationContext, "BRH", p.exchange_rate ?? p.exchangeRate)
+              : rawNet);
+          }, 0)
         : (hasWorked ? (empBaseSalary + commissions) : 0);
 
       const empPayrollCost = sumPayrollDetails(relevantPayrolls, empTxs, current);
@@ -2666,71 +2843,38 @@ export class AnalyticsEngine {
       let net = 0;
 
       if (actualAccountingMode === "CASH") {
-        const cashStatement = CanonicalCashEngine.executePipeline(
-          {
-            payrollRecords: matchPayrolls,
-            ledgerTransactions: matchTransactions,
-          },
-          {
-            businessId: actualBizId,
-            startDate: b.startDate,
-            endDate: b.endDate,
-          }
-        );
-        gross = cashStatement.totalInflow;
-        net = cashStatement.totalInflow - cashStatement.totalOutflow;
+        const cashRes = executeNormalizedCashPipeline(matchPayrolls, matchTransactions, scopedInvoices, bucketRange);
+        gross = cashRes.totalInflow;
+        net = cashRes.totalInflow - cashRes.totalOutflow;
       } else {
-        const getTxAmountLocal = (t: LedgerTransaction) => {
-          if (t.amount_cents !== undefined && t.amount_cents !== null) {
-            return t.amount_cents / 100;
-          }
-          return t.amount || (t as any).amountHtg || 0;
-        };
-
         const grossValResolved = matchTransactions
-          .filter((t) => t.type === "INCOME")
-          .reduce((sum, t) => sum + getTxAmountLocal(t), 0);
+          .filter((t) => isIncomeTx(t))
+          .reduce((sum, t) => sum + getTxAmount(t), 0);
 
-        // True Operational Expenses strictly in bucket
-        const opExpenses = matchTransactions
-          .filter((t) => t.type === "EXPENSE" || t.type === "BONUS" || t.type === "COMPENSATION")
-          .reduce((sum, t) => sum + getTxAmountLocal(t), 0);
+        // True Operational Expenses strictly in bucket (normalized, respecting ACC-01 & liability exclusion)
+        const opExpenses = AnalyticsEngine.computeOperationalExpenses(
+          matchTransactions,
+          bucketRange,
+          actualBizId,
+          false,
+          normalizationContext
+        );
 
-        // Prorated or exact payroll in bucket
+        // Prorated or exact payroll in bucket (prefers subledger over GL consistent with ACC-05)
         let payrollInBucket = 0;
-        const bucketPayrollTxs = matchTransactions.filter((t) => t.type === "PAYROLL");
-
-        if (bucketPayrollTxs.length > 0) {
-          payrollInBucket = bucketPayrollTxs.reduce((sum, t) => sum + getTxAmountLocal(t), 0);
-        } else if (matchPayrolls.length > 0) {
-          payrollInBucket = matchPayrolls.reduce((sum, p) => {
-            const rawGross = p.grossSalary || ((p as any).gross_salary_cents ? (p as any).gross_salary_cents / 100 : 0) || (p.baseSalary || 0);
-            if (rawGross <= 0) return sum;
-
-            const cycleId = p.cycleId || p.payroll_cycle_id;
-            const cycle = cycleId ? cycleMap.get(cycleId) : undefined;
-            let pStart = normalizeDateStr(p.period_start || cycle?.startDate || cycle?.start_date || (p as any).generated_at || effectiveTrendRange.startDate);
-            let pEnd = normalizeDateStr(p.period_end || cycle?.endDate || cycle?.end_date || cycle?.effectiveAccountingDate || (p as any).generated_at || effectiveTrendRange.endDate);
-
-            if (!pStart || !pEnd) {
-              return sum + rawGross / Math.max(1, diffDays);
-            }
-
-            const dStart = new Date(pStart);
-            const dEnd = new Date(pEnd);
-            const totalCycleDays = Math.max(1, Math.round((dEnd.getTime() - dStart.getTime()) / 86400000) + 1);
-
-            const bStart = new Date(b.startDate);
-            const bEnd = new Date(b.endDate);
-            const oStart = Math.max(dStart.getTime(), bStart.getTime());
-            const oEnd = Math.min(dEnd.getTime(), bEnd.getTime());
-
-            if (oStart <= oEnd) {
-              const overlapDays = Math.round((oEnd - oStart) / 86400000) + 1;
-              return sum + (rawGross / totalCycleDays) * overlapDays;
-            }
-            return sum;
-          }, 0);
+        if (matchPayrolls.length > 0) {
+          payrollInBucket = AnalyticsEngine.computePayrollCost(
+            matchPayrolls,
+            bucketRange,
+            isSocialTaxEnabled,
+            cycleMap,
+            normalizationContext,
+            false
+          );
+        } else {
+          payrollInBucket = matchTransactions
+            .filter((t) => isPayrollRelatedTransaction(t) && t.status !== "REVERSED" && (t.status as any) !== "VOID")
+            .reduce((sum, t) => sum + getTxAmount(t), 0);
         }
 
         const totalCosts = opExpenses + payrollInBucket;
@@ -2767,12 +2911,13 @@ export class AnalyticsEngine {
 
     // Basic expense anomaly
     const avgExpense =
-      curTxs.filter((t) => t.type === "EXPENSE").reduce((sum, t, _, arr) => sum + t.amount / (arr.length || 1), 0) || 0;
+      curTxs.filter((t) => t.type === "EXPENSE").reduce((sum, t, _, arr) => sum + getTxAmount(t) / (arr.length || 1), 0) || 0;
     curTxs.forEach((tx) => {
-      if (tx.type === "EXPENSE" && tx.amount > avgExpense * 3.5) {
+      const txAmtHtg = getTxAmount(tx);
+      if (tx.type === "EXPENSE" && txAmtHtg > avgExpense * 3.5) {
         anomalies.push({
           txId: tx.id,
-          description: `Unusually high expense detected: ${tx.amount.toLocaleString()} HTG (Expected average ~${Math.round(
+          description: `Unusually high expense detected: ${Math.round(txAmtHtg).toLocaleString()} HTG (Expected average ~${Math.round(
             avgExpense
           ).toLocaleString()})`,
           severity: "HIGH",
@@ -2819,19 +2964,28 @@ export class AnalyticsEngine {
     let employerCharges = 0;
 
     curPayroll.forEach((p: any) => {
+      if (isCashMode && !AnalyticsEngine.isPayrollCashDisbursed(p, cycleMap)) return;
       const factor = AnalyticsEngine.getRecordProrationFactor(p, effectiveTrendRange, cycleMap);
       if (factor <= 0) return;
 
-      const pGross = ((p.gross_salary_cents !== undefined && p.gross_salary_cents !== null ? p.gross_salary_cents / 100 : undefined) ?? p.grossSalary ?? p.grossSalaryHtg ?? p.gross ?? p.baseSalary ?? 0) * factor;
-      totalGross += pGross;
+      const pCurr = p.grossSalaryHtg !== undefined ? "HTG" : (p.currency || p.currency_code || p.currencyCode || "HTG");
+      const pDate = toDateOnly(p.paidAt || p.paymentDate || p.effectiveAccountingDate || p.created_at);
+      const pRate = p.exchange_rate ?? p.exchangeRate;
+      const normPrVal = (v: number, forceHtg = false) =>
+        !forceHtg && pCurr.toUpperCase() !== "HTG" && v !== 0
+          ? NormalizedAmountResolver.resolveToHTG(v, pCurr, pDate, normalizationContext, "BRH", pRate)
+          : v;
+
+      const rawGross = ((p.gross_salary_cents !== undefined && p.gross_salary_cents !== null ? p.gross_salary_cents / 100 : undefined) ?? p.grossSalary ?? p.grossSalaryHtg ?? p.gross ?? p.baseSalary ?? 0);
+      totalGross += normPrVal(rawGross, p.grossSalaryHtg !== undefined) * factor;
 
       if (isSocialTaxEnabled) {
-        const empCnss = ((p.cnss_employee_cents ? p.cnss_employee_cents / 100 : 0) || (p.cnssDeduction || 0) || (p.onaEmployee || 0)) * factor;
-        const erCnss = ((p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || (p.onaEmployer || 0)) * factor;
+        const empCnss = normPrVal((p.cnss_employee_cents ? p.cnss_employee_cents / 100 : 0) || (p.cnssDeduction || 0) || (p.onaEmployee || 0)) * factor;
+        const erCnss = normPrVal((p.cnss_employer_cents ? p.cnss_employer_cents / 100 : 0) || (p.onaEmployer || 0)) * factor;
         totalCnss += (empCnss + erCnss);
 
-        const empCns = ((p.cns_employee_cents ? p.cns_employee_cents / 100 : 0) || (p.cnsDeduction || 0) || (p.ofatmaEmployee || 0)) * factor;
-        const erCns = ((p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (p.ofatmaEmployer || 0)) * factor;
+        const empCns = normPrVal((p.cns_employee_cents ? p.cns_employee_cents / 100 : 0) || (p.cnsDeduction || 0) || (p.ofatmaEmployee || 0)) * factor;
+        const erCns = normPrVal((p.ofatma_employer_cents ? p.ofatma_employer_cents / 100 : 0) || (p.cns_employer_cents ? p.cns_employer_cents / 100 : 0) || (p.ofatmaEmployer || 0)) * factor;
         totalCns += (empCns + erCns);
 
         employerCharges += (erCnss + erCns);

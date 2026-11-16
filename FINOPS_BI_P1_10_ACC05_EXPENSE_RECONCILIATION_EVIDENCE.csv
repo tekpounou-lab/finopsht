@@ -1,0 +1,10 @@
+scope_level,entity_id,entity_name,gl_non_payroll_opex,payroll_cost_subledger,payroll_gl_posted,canonical_expenses,engine_reported_expenses,delta_to_canonical,department_presence_status,notes
+ORGANIZATION_TOTAL,BIZ_ALL,Enterprise Snapshot,10000.00,27250.00,30000.00,37250.00,37250.00,0.00,N/A,AnalyticsEngine unified totalExpenses and expenses = 37250 HTG
+BRANCH_TOTAL,br_1,Siège PAP,0.00,27250.00,30000.00,27250.00,27250.00,0.00,PRESENT,Branch 1 expenses = 27250 HTG (subledger payroll)
+BRANCH_TOTAL,br_2,Cap-Haïtien,10000.00,0.00,0.00,10000.00,10000.00,0.00,PRESENT,Branch 2 expenses = 10000 HTG (GL non-payroll OPEX)
+BRANCH_SUM,SUM_BRANCHES,Sum of All Branches,10000.00,27250.00,30000.00,37250.00,37250.00,0.00,RECONCILED,sum(branchPerformance.expenses) = 37250 HTG (exact tie-out)
+DEPARTMENT,dep_ops,Opérations,0.00,27250.00,30000.00,27250.00,27250.00,0.00,PRESENT,Department Ops expenses = 27250 HTG (subledger payroll)
+DEPARTMENT,dep_sales,Ventes,10000.00,0.00,0.00,10000.00,10000.00,0.00,PRESENT,Department Sales expenses = 10000 HTG (GL OPEX; included in both engines)
+DEPARTMENT_SUM,SUM_DEPTS,Sum of All Departments,10000.00,27250.00,30000.00,37250.00,37250.00,0.00,RECONCILED,sum(departmentPerformance.expenses) = 37250 HTG (exact tie-out in ACCRUAL)
+ACCRUAL_ENGINE_BY_DEPT,dep_ops,Opérations,0.00,27250.00,N/A,27250.00,27250.00,0.00,PRESENT,AccrualBasisEngine includes dep_ops (payroll 27250)
+ACCRUAL_ENGINE_BY_DEPT,dep_sales,Ventes,10000.00,0.00,N/A,10000.00,10000.00,0.00,PRESENT,AccrualBasisEngine includes GL-only dep_sales (revenue 50000, expenses 10000)

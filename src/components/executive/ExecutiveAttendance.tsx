@@ -17,9 +17,7 @@ const ExecutiveAttendanceComponent: React.FC<ExecutiveAttendanceProps> = ({ snap
       : null;
   const activeStaffCount = stabilizedSnapshot?.activeStaff?.currentValue ?? 0;
   const checkedInCount = attRate !== null ? Math.round((activeStaffCount * attRate) / 100) : null;
-  const absenceRate =
-    stabilizedSnapshot?.absenceRate?.currentValue ??
-    (attRate !== null ? Math.max(0, 100 - attRate) : null);
+  const absenceRate = stabilizedSnapshot?.absenceRate?.currentValue ?? null;
   const latenessRate = stabilizedSnapshot?.latenessRate?.currentValue ?? null;
 
   const borderTone =

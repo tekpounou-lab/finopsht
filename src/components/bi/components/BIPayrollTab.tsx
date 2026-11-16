@@ -36,11 +36,13 @@ export const BIPayrollTab: React.FC<BIPayrollTabProps> = ({
   formatCurrencyValue: customFormatCurrency,
   ledgerTransactions = [],
   isSimplifiedMode = false,
+  accountingBasis,
   phase6cDataset,
   phase6dDataset,
   phase7Dataset,
 }) => {
   const [activeSection, setActiveSection] = useState<SubSection>("OVERVIEW");
+  const effectiveBasis: "CASH" | "ACCRUAL" = accountingBasis || (isSimplifiedMode ? "CASH" : "ACCRUAL");
 
   // Fallback formatter if none provided
   const formatCurrency = customFormatCurrency || ((val: number) => `${Math.round(val).toLocaleString()} ${selectedCurrency}`);
@@ -61,7 +63,7 @@ export const BIPayrollTab: React.FC<BIPayrollTabProps> = ({
               Payroll Intelligence & Économie du Travail
             </h2>
             <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
-              <span>Mode: <strong className="text-slate-300 font-mono">{isSimplifiedMode ? "CASH (Encaissement)" : "ACCRUAL (Engagement)"}</strong></span>
+              <span>Mode: <strong className="text-slate-300 font-mono">{effectiveBasis === "CASH" ? "CASH (Encaissement)" : "ACCRUAL (Engagement)"}</strong></span>
               <span>•</span>
               <span>Fiches scellées: <strong className="text-indigo-400 font-mono">{filteredPayrolls.length}</strong></span>
               <span>•</span>

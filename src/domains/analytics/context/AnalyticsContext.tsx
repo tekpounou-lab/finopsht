@@ -104,10 +104,12 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     ledgerTransactions: contextTxs,
     attendanceRecords: contextAtt,
     payrollRecords: contextPay,
+    payrollCycles: contextCycles,
     employeeContracts: contextContracts,
+    invoices: contextInvoices,
     businessSettings,
     state,
-  } = useBusinessContext();
+  } = useBusinessContext() as any;
   const { language } = useI18n();
 
   // 0. Register with Runtime
@@ -179,6 +181,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     payrollCycles,
     contracts,
     departmentActivities: activities,
+    invoices,
     isLoading: isSubscribedLoading,
     error: subscriptionError,
   } = useAnalyticsSubscriptions((businessId && isInitialized) ? businessId : "");
@@ -193,6 +196,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const deferredCycles = useDeferredValue(payrollCycles);
   const deferredContracts = useDeferredValue(contracts);
   const deferredActivities = useDeferredValue(activities);
+  const deferredInvoices = useDeferredValue(invoices);
 
   // Fallback to BusinessContext values if subscription arrays are empty
   const effectiveEmployees = useMemo(
@@ -217,8 +221,8 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [deferredPayrolls, contextPay]
   );
   const effectiveCycles = useMemo(
-    () => (deferredCycles && deferredCycles.length > 0 ? deferredCycles : []),
-    [deferredCycles]
+    () => (deferredCycles && deferredCycles.length > 0 ? deferredCycles : contextCycles || []),
+    [deferredCycles, contextCycles]
   );
   const effectiveContracts = useMemo(
     () => (deferredContracts.length > 0 ? deferredContracts : contextContracts || []),
@@ -227,6 +231,10 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const effectiveActivities = useMemo(
     () => deferredActivities,
     [deferredActivities]
+  );
+  const effectiveInvoices = useMemo(
+    () => (deferredInvoices && deferredInvoices.length > 0 ? deferredInvoices : contextInvoices || []),
+    [deferredInvoices, contextInvoices]
   );
 
   const cycleMap = useMemo(() => {
@@ -307,18 +315,33 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const scopedTransactions = useMemo(() => {
     return effectiveTransactions.filter((tx) => {
       const empId = tx.employeeId || (tx as any).employee_id;
-      const txBranch = tx.branchId || (tx as any).branch_id || (empId ? empBranchMap.get(empId) : undefined);
+      const txBranch = tx.branchId || (tx as any).branch_id || (tx as any).cost_center_id || (empId ? empBranchMap.get(empId) : undefined);
       const txDept = tx.departmentId || (tx as any).department_id || (empId ? empDeptMap.get(empId) : undefined);
 
       if (filters.branchId !== "ALL" && txBranch !== filters.branchId) return false;
       if (filters.departmentId !== "ALL" && txDept !== filters.departmentId) return false;
+      if (filters.employeeId && filters.employeeId !== "ALL" && (!empId || empId !== filters.employeeId)) return false;
       if (filters.transactionType !== "ALL" && tx.type !== filters.transactionType) return false;
       if (filters.status !== "ALL" && tx.status !== filters.status) return false;
-      if (filters.currency && filters.currency !== "ALL" && (tx.currency || "HTG") !== filters.currency) return false;
 
       return true;
     });
-  }, [effectiveTransactions, filters.branchId, filters.departmentId, filters.transactionType, filters.status, filters.currency, empDeptMap, empBranchMap]);
+  }, [effectiveTransactions, filters.branchId, filters.departmentId, filters.employeeId, filters.transactionType, filters.status, empDeptMap, empBranchMap]);
+
+  const scopedInvoices = useMemo(() => {
+    return (effectiveInvoices || []).filter((inv: any) => {
+      const empId = inv.employeeId || inv.employee_id || inv.assignedTo;
+      const invBranch = inv.branchId || inv.branch_id || inv.cost_center_id || (empId ? empBranchMap.get(empId) : undefined);
+      const invDept = inv.departmentId || inv.department_id || (empId ? empDeptMap.get(empId) : undefined);
+
+      if (filters.branchId !== "ALL" && invBranch !== filters.branchId) return false;
+      if (filters.departmentId !== "ALL" && invDept !== filters.departmentId) return false;
+      if (filters.employeeId && filters.employeeId !== "ALL" && (!empId || empId !== filters.employeeId)) return false;
+      if (filters.transactionType && filters.transactionType !== "ALL" && filters.transactionType !== "INCOME") return false;
+
+      return true;
+    });
+  }, [effectiveInvoices, filters.branchId, filters.departmentId, filters.employeeId, filters.transactionType, empDeptMap, empBranchMap]);
 
   const scopedAttendance = useMemo(() => {
     return effectiveAttendance.filter((rec) => {
@@ -453,6 +476,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           activities: effectiveActivities,
           businessSettings,
           payrollCycles: effectiveCycles,
+          invoices: scopedInvoices,
           accountingMode: filters.accountingMode || "CASH",
           normalizationContext,
         });
@@ -479,6 +503,7 @@ export const AnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     scopedTransactions,
     scopedAttendance,
     scopedPayrolls,
+    scopedInvoices,
     branches,
     departments,
     effectiveContracts,

@@ -1,0 +1,6 @@
+invoice_id,invoice_status,total_amount_htg,amount_paid_htg,settlement_date_source,resolved_settlement_date,payments_array_present,adapter_resolution_status,cash_inflow_effect,analytics_engine_included,cash_basis_engine_included,notes
+inv_paid_crm,PAID,20000.00,20000.00,paidAt,2026-10-12,false,VALID,+20000.00,true,true,Fully paid CRM invoice without GL posting; correctly recognized
+inv_partial_2,PARTIAL,10000.00,5000.00,paidAt,2026-10-14,false,VALID,+5000.00,true,true,Partially paid invoice without payments[] array; parses amountPaid cleanly
+inv_snake,PARTIALLY_PAID,20000.00,5000.00,paid_at,2026-10-14,false,VALID,+5000.00,true,true,Snake case invoice payload; InvoiceCashAdapter parses paid_at and amount_paid
+inv_unpaid,POSTED,15000.00,0.00,none,UNSETTLED,false,EXCLUDED_UNPAID,0.00,false,false,Unsettled AR balance properly excluded from CASH inflows
+inv_nodate,PAID,5000.00,5000.00,none,UNSETTLED,false,INCOMPLETE,0.00,false,false,Missing settlement date rejected with INCOMPLETE status; prevents ghost inflow

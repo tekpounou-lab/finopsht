@@ -16,6 +16,9 @@ import {
   PayrollCycle,
 } from "../types";
 
+import { InvoiceRepository } from "../repositories/crm/InvoiceRepository";
+import type { Invoice } from "../types/crm";
+
 export interface AnalyticsSubscriptions {
   employees: Employee[];
   transactions: LedgerTransaction[];
@@ -26,6 +29,7 @@ export interface AnalyticsSubscriptions {
   branches: Branch[];
   departmentActivities: EmployeeDepartmentActivity[];
   contracts: EmployeeContract[];
+  invoices: Invoice[];
   isLoading: boolean;
   error: string | null;
 }
@@ -40,6 +44,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
   const [branches, setBranches] = useState<Branch[]>([]);
   const [departmentActivities, setDepartmentActivities] = useState<EmployeeDepartmentActivity[]>([]);
   const [contracts, setContracts] = useState<EmployeeContract[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
 
   const [loadingStates, setLoadingStates] = useState({
     emp: true,
@@ -66,6 +71,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       setBranches([]);
       setDepartmentActivities([]);
       setContracts([]);
+      setInvoices([]);
       setLoadingStates({
         emp: false,
         tx: false,
@@ -235,6 +241,17 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       }
     );
 
+    // 9. CRM Invoices subcollection
+    const unsubInvoices = InvoiceRepository.subscribeToInvoices(
+      businessId,
+      (data) => {
+        setInvoices(data);
+      },
+      (err) => {
+        console.warn("[useAnalyticsSubscriptions] Invoice subscription notice:", err);
+      }
+    );
+
     return () => {
       unsubEmp();
       unsubTx();
@@ -246,6 +263,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
       unsubBranch();
       unsubAct();
       unsubCont();
+      unsubInvoices();
     };
   }, [businessId]);
 
@@ -263,6 +281,7 @@ export function useAnalyticsSubscriptions(businessId: string): AnalyticsSubscrip
     branches,
     departmentActivities,
     contracts,
+    invoices,
     isLoading,
     error,
   };

@@ -42,7 +42,8 @@ import {
   useRoleProfiles,
   useBranchDepartmentLinks,
   useBranches,
-  useDepartments
+  useDepartments,
+  useInvoices
 } from "../hooks/useRepositories";
 import { usePayrollCycle } from "../hooks/usePayrollCycle";
 
@@ -88,6 +89,7 @@ export interface BusinessContextState {
   attendanceRules: any | null;
   branchDepartmentLinks: any[];
   attendanceSnapshot: any | null;
+  invoices: any[];
   updateAttendanceRules: (rules: any) => Promise<void>;
 
   // --- New Enterprise V1.3 Core API ---
@@ -277,6 +279,7 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
   const branchDepartmentLinks = useBranchDepartmentLinks(activeBusinessId);
   const liveBranches = useBranches(activeBusinessId);
   const liveDepartments = useDepartments(activeBusinessId);
+  const invoices = useInvoices(activeBusinessId);
 
   const effectiveBranches = useMemo(() => {
     if (liveBranches && liveBranches.length > 0) return liveBranches;
@@ -601,6 +604,7 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
       attendanceRules,
       branchDepartmentLinks,
       attendanceSnapshot,
+      invoices,
       updateAttendanceRules,
 
       // --- New Enterprise V1.3 Core ---

@@ -16,16 +16,107 @@ import { ExecutiveDepartmentExpenses } from "./ExecutiveDepartmentExpenses";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from "recharts";
 import { SafeChartContainer } from "../ui/SafeChartContainer";
 import { RefreshCw } from "lucide-react";
+import { TaxPolicyEngine } from "../../services/payroll/TaxPolicyEngine";
+import { NormalizedAmountResolver } from "../../domains/analytics/utils/NormalizedAmountResolver";
 
-export const ExecutiveIntelligenceCenter: React.FC = () => {
+export interface ExecutiveIntelligenceCenterProps {
+  usdToHtgRate?: number;
+}
+
+export const ExecutiveIntelligenceCenter: React.FC<ExecutiveIntelligenceCenterProps> = ({ usdToHtgRate }) => {
   const { snapshot, employees, loading } = useAnalytics();
   const { filters } = useExecutiveFilters();
-  const { businessSettings, branches } = useBusinessContext();
+  const { businessSettings, branches, business: currentBusiness } = useBusinessContext();
 
-  const activeSnapshot = snapshot;
-  const activeCurrency = filters.currency || "HTG";
+  const requestedCurrency = filters.currency || "HTG";
+  const canConvertUsd =
+    requestedCurrency === "USD" &&
+    typeof usdToHtgRate === "number" &&
+    Number.isFinite(usdToHtgRate) &&
+    usdToHtgRate > 0;
+  const activeCurrency = canConvertUsd ? "USD" : "HTG";
   const accountingBasis: "CASH" | "ACCRUAL" = filters.accountingBasis || filters.accountingMode || "CASH";
   const isCashBasis = accountingBasis === "CASH";
+
+  const toDisplay = (val: number | null | undefined): number | null | undefined => {
+    if (val === null || val === undefined) return val;
+    return canConvertUsd ? NormalizedAmountResolver.convertFromHTG(val, "USD", usdToHtgRate!) : val;
+  };
+
+  const convertKpi = (kpi?: any) => {
+    if (!kpi) return kpi;
+    const curr = toDisplay(kpi.currentValue);
+    const prev = toDisplay(kpi.previousValue);
+    const diff = curr !== null && prev !== null && curr !== undefined && prev !== undefined
+      ? Number((curr - prev).toFixed(2))
+      : toDisplay(kpi.difference);
+    return {
+      ...kpi,
+      currentValue: curr,
+      previousValue: prev,
+      difference: diff,
+    };
+  };
+
+  const displaySnapshot = useMemo(() => {
+    if (!snapshot || !canConvertUsd) return snapshot;
+
+    return {
+      ...snapshot,
+      revenue: convertKpi(snapshot.revenue),
+      quickbooksSalesRevenue: convertKpi(snapshot.quickbooksSalesRevenue),
+      expenses: convertKpi(snapshot.expenses),
+      operationalExpenses: convertKpi(snapshot.operationalExpenses),
+      totalExpenses: convertKpi(snapshot.totalExpenses),
+      profit: convertKpi(snapshot.profit),
+      netCashFlow: convertKpi(snapshot.netCashFlow),
+      cashOnHand: convertKpi(snapshot.cashOnHand),
+      burnRate: convertKpi(snapshot.burnRate),
+      payrollCost: convertKpi(snapshot.payrollCost),
+      advanceExposure: convertKpi(snapshot.advanceExposure),
+      commissionsPaid: convertKpi(snapshot.commissionsPaid),
+      branchPerformance: (snapshot.branchPerformance || []).map((b) => ({
+        ...b,
+        revenue: toDisplay(b.revenue) ?? 0,
+        expenses: toDisplay(b.expenses) ?? 0,
+        payrollCost: toDisplay(b.payrollCost) ?? 0,
+        nonPayrollExpenses: toDisplay(b.nonPayrollExpenses) ?? 0,
+      })),
+      departmentPerformance: (snapshot.departmentPerformance || []).map((d) => ({
+        ...d,
+        revenue: toDisplay(d.revenue) ?? 0,
+        expenses: toDisplay(d.expenses) ?? 0,
+        payrollCost: toDisplay(d.payrollCost) ?? 0,
+        nonPayrollExpenses: toDisplay(d.nonPayrollExpenses) ?? 0,
+      })),
+      employeeScorecards: (snapshot.employeeScorecards || []).map((s: any) => ({
+        ...s,
+        baseSalary: toDisplay(s.baseSalary) ?? 0,
+        commissions: toDisplay(s.commissions) ?? 0,
+      })),
+      historicalTrends: (snapshot.historicalTrends || []).map((t) => ({
+        ...t,
+        gross: toDisplay(t.gross) ?? 0,
+        net: toDisplay(t.net) ?? 0,
+      })),
+      expenseBreakdown: (snapshot.expenseBreakdown || []).map((e) => ({
+        ...e,
+        value: toDisplay(e.value) ?? 0,
+      })),
+      payrollAggregates: snapshot.payrollAggregates
+        ? {
+            payrollPaid: toDisplay(snapshot.payrollAggregates.payrollPaid) ?? 0,
+            commissionsPaid: toDisplay(snapshot.payrollAggregates.commissionsPaid) ?? 0,
+            cnssContributions: toDisplay(snapshot.payrollAggregates.cnssContributions) ?? 0,
+            cnsContributions: toDisplay(snapshot.payrollAggregates.cnsContributions) ?? 0,
+            employerChargesSocials: toDisplay(snapshot.payrollAggregates.employerChargesSocials) ?? 0,
+            totalEmploymentCost: toDisplay(snapshot.payrollAggregates.totalEmploymentCost) ?? 0,
+          }
+        : undefined,
+    };
+  }, [snapshot, canConvertUsd, usdToHtgRate]);
+
+  const activeSnapshot = displaySnapshot;
 
   const effectiveRevenue = useMemo(() => {
     if (activeSnapshot?.revenue?.currentValue !== undefined) {
@@ -74,12 +165,8 @@ export const ExecutiveIntelligenceCenter: React.FC = () => {
   }, [activeSnapshot, accountingBasis]);
 
   const isSocialTaxEnabled = useMemo(() => {
-    if (businessSettings?.payroll_policies?.enableTaxes !== undefined) return Boolean(businessSettings.payroll_policies.enableTaxes);
-    if (businessSettings?.payrollPolicies?.enableTaxes !== undefined) return Boolean(businessSettings.payrollPolicies.enableTaxes);
-    if (businessSettings?.tax_config?.enableTaxes !== undefined) return Boolean(businessSettings.tax_config.enableTaxes);
-    if (businessSettings?.taxConfig?.enableTaxes !== undefined) return Boolean(businessSettings.taxConfig.enableTaxes);
-    return false;
-  }, [businessSettings]);
+    return TaxPolicyEngine.isSocialTaxEnabled({ ...businessSettings, ...currentBusiness?.settings });
+  }, [businessSettings, currentBusiness?.settings]);
 
   if (loading && !activeSnapshot) {
     return (

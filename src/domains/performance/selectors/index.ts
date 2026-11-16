@@ -19,6 +19,8 @@ import {
   resolveAnalyticsPayrollDate,
 } from "../../../utils/dateNormalization";
 import { CashBasisEngine } from "../../cash/engine/CashBasisEngine";
+import { isEffectiveCashMovement } from "../../cash/types/NormalizedCashMovement";
+import { NormalizedAmountResolver } from "../../analytics/utils/NormalizedAmountResolver";
 
 /**
  * Normalizes filter string for case-insensitive matching
@@ -87,7 +89,7 @@ export function selectFilteredDataSet(
 
     // Branch Filter
     if (branchId && branchId !== "ALL") {
-      const txBranch = tx.branchId || tx.branch_id;
+      const txBranch = tx.branchId || tx.branch_id || (tx as any).cost_center_id;
       if (txBranch && txBranch !== branchId) return false;
     }
     // Department Filter
@@ -234,6 +236,23 @@ export function selectSimplifiedMetrics(
     departments[0]?.business_id ||
     "";
 
+  const scopedInvoices = ((raw as any).invoices || []).filter((inv: any) => {
+    if (businessId) {
+      const iBiz = inv.businessId || inv.business_id;
+      if (iBiz && iBiz !== businessId) return false;
+    }
+    if (filters.branchId && filters.branchId !== "ALL") {
+      const iBranch = inv.branchId || inv.branch_id || inv.cost_center_id;
+      if (iBranch && iBranch !== filters.branchId) return false;
+    }
+    if (filters.departmentId && filters.departmentId !== "ALL") {
+      const iDept = inv.departmentId || inv.department_id;
+      if (iDept && iDept !== filters.departmentId) return false;
+    }
+    if (filters.metricType && filters.metricType !== "all" && filters.metricType !== "revenue") return false;
+    return true;
+  });
+
   // Generate SSOT snapshot via AnalyticsEngine
   const snap = AnalyticsEngine.generateSnapshot({
     period: "CUSTOM",
@@ -242,6 +261,8 @@ export function selectSimplifiedMetrics(
     transactions,
     attendanceLogs: attendanceRecords,
     payrollRecords,
+    payrollCycles: (raw as any).payrollCycles || [],
+    invoices: scopedInvoices,
     branches,
     departments,
     businessId,
@@ -314,6 +335,24 @@ export function selectExpertMetrics(
     allDepts[0]?.business_id ||
     "";
 
+  const scopedInvoices = ((raw as any).invoices || []).filter((inv: any) => {
+    const fBiz = (filters as any).businessId || (filters as any).business_id || businessId;
+    if (fBiz) {
+      const iBiz = inv.businessId || inv.business_id;
+      if (iBiz && iBiz !== fBiz) return false;
+    }
+    if (filters.branchId && filters.branchId !== "ALL") {
+      const iBranch = inv.branchId || inv.branch_id || inv.cost_center_id;
+      if (iBranch && iBranch !== filters.branchId) return false;
+    }
+    if (filters.departmentId && filters.departmentId !== "ALL") {
+      const iDept = inv.departmentId || inv.department_id;
+      if (iDept && iDept !== filters.departmentId) return false;
+    }
+    if (filters.metricType && filters.metricType !== "all" && filters.metricType !== "revenue") return false;
+    return true;
+  });
+
   // Generate SSOT snapshot via AnalyticsEngine
   const snap = AnalyticsEngine.generateSnapshot({
     period: "CUSTOM",
@@ -322,6 +361,8 @@ export function selectExpertMetrics(
     transactions,
     attendanceLogs: attendanceRecords,
     payrollRecords,
+    payrollCycles: (raw as any).payrollCycles || [],
+    invoices: scopedInvoices,
     branches: allBranches,
     departments: allDepts,
     contracts: [],
@@ -508,24 +549,67 @@ export function selectCashBasisExpertMetrics(
     allDepts[0]?.business_id ||
     "default_biz";
 
-  // Execute canonical Cash Basis Engine Pipeline
-  const cashStatement = CashBasisEngine.executePipeline(
+  const scopedInvoices = ((raw as any).invoices || []).filter((inv: any) => {
+    const fBiz = (filters as any).businessId || (filters as any).business_id || businessId;
+    if (fBiz) {
+      const iBiz = inv.businessId || inv.business_id;
+      if (iBiz && iBiz !== fBiz) return false;
+    }
+    if (filters.branchId && filters.branchId !== "ALL") {
+      const iBranch = inv.branchId || inv.branch_id || inv.cost_center_id;
+      if (iBranch && iBranch !== filters.branchId) return false;
+    }
+    if (filters.departmentId && filters.departmentId !== "ALL") {
+      const iDept = inv.departmentId || inv.department_id;
+      if (iDept && iDept !== filters.departmentId) return false;
+    }
+    if (filters.metricType && filters.metricType !== "all" && filters.metricType !== "revenue") return false;
+    return true;
+  });
+
+  // Execute canonical Multi-Currency Cash Basis Engine Pipeline
+  const mcStatement = CashBasisEngine.executeMultiCurrencyPipeline(
     {
-      invoices: (raw as any).invoices || [],
+      invoices: scopedInvoices,
       payrollRecords: cashBasisPayrolls,
+      payrollCycles: (raw as any).payrollCycles || [],
       ledgerTransactions: transactions,
     },
     {
       businessId,
       startDate: startDate || '2000-01-01',
       endDate: endDate || '2099-12-31',
-      currency: 'HTG',
     }
   );
 
-  const totalRevenue = Math.round(cashStatement.totalInflow);
-  const totalExpenses = Math.round(cashStatement.totalOutflow);
-  const netCashFlow = Math.round(cashStatement.netCashFlow);
+  let consolidatedInflowHtg = 0;
+  let consolidatedOutflowHtg = 0;
+  let consolidatedPayrollHtg = 0;
+
+  for (const curr of mcStatement.currencies) {
+    const stmt = mcStatement.byCurrency[curr];
+    if (!stmt) continue;
+    for (const m of stmt.periodMovements) {
+      if (!isEffectiveCashMovement(m)) continue;
+      const mCurrency = (m.currency || curr || "HTG").toUpperCase();
+      const explicitRate = m.metadata?.exchange_rate ?? m.metadata?.exchangeRate;
+      const amtHtg = mCurrency !== "HTG"
+        ? NormalizedAmountResolver.resolveToHTG(m.amount, mCurrency, m.movementDate, normalizationContext, "BRH", explicitRate)
+        : m.amount;
+      if (m.direction === "INFLOW") {
+        consolidatedInflowHtg += amtHtg;
+      } else if (m.direction === "OUTFLOW") {
+        consolidatedOutflowHtg += amtHtg;
+        if (m.sourceModule === 'PAYROLL' || m.movementType === 'PAYROLL') {
+          consolidatedPayrollHtg += amtHtg;
+        }
+      }
+    }
+  }
+
+  const totalRevenue = Math.round(consolidatedInflowHtg);
+  const totalExpenses = Math.round(consolidatedOutflowHtg);
+  const netCashFlow = Math.round(consolidatedInflowHtg - consolidatedOutflowHtg);
   const cashFlowMargin = totalRevenue > 0 ? Math.round((netCashFlow / totalRevenue) * 100) : 0;
 
   const snap = AnalyticsEngine.generateSnapshot({
@@ -535,6 +619,8 @@ export function selectCashBasisExpertMetrics(
     transactions,
     attendanceLogs: attendanceRecords,
     payrollRecords,
+    payrollCycles: (raw as any).payrollCycles || [],
+    invoices: scopedInvoices,
     branches: allBranches,
     departments: allDepts,
     contracts: [],
@@ -547,11 +633,7 @@ export function selectCashBasisExpertMetrics(
   const netProfit = Math.round(snap.profit.currentValue);
   const profitMargin = Math.round(snap.profitMargin);
 
-  const totalPayroll = Math.round(
-    cashStatement.periodMovements
-      .filter((m) => m.sourceModule === 'PAYROLL' || m.movementType === 'PAYROLL')
-      .reduce((acc, m) => acc + m.amount, 0)
-  );
+  const totalPayroll = Math.round(consolidatedPayrollHtg);
 
   const activeHeadcount = snap.activeStaff.currentValue ?? (employees.filter((e) => e.status === "ACTIVE" || !e.status).length);
   const attendanceRate = snap.attendanceRate.currentValue;

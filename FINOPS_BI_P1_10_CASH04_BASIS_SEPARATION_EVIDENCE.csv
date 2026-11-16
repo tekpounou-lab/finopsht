@@ -1,0 +1,8 @@
+input_entity_id,entity_nature,currency,amount_raw,applied_exchange_rate,amount_normalized_htg,cash_basis_recognition,accrual_basis_recognition,timing_difference_reason,evidence_tag
+tx_htg_in,GL Cash Sale,HTG,1000.00,1.00,1000.00,INFLOW (1000.00 HTG),REVENUE (1000.00 HTG),None; simultaneous cash sale,PROVEN_RUNTIME
+tx_usd_in,GL Cash Receipt,USD,100.00,132.00,13200.00,INFLOW (13200.00 HTG / 100.00 USD),REVENUE (13200.00 HTG),None; foreign cash receipt consolidated to HTG,PROVEN_RUNTIME
+tx_usd_out,GL Paid OPEX,USD,25.00,132.00,3300.00,OUTFLOW (3300.00 HTG / 25.00 USD),EXPENSE (3300.00 HTG),None; cash OPEX consolidated to HTG,PROVEN_RUNTIME
+tx_unpaid_ar,GL Credit Invoice,HTG,15000.00,1.00,15000.00,EXCLUDED (0.00 HTG),REVENUE (15000.00 HTG),Customer timing; AR not yet collected in cash,PROVEN_RUNTIME
+tx_unpaid_ap,GL Vendor Bill,HTG,9000.00,1.00,9000.00,EXCLUDED (0.00 HTG),EXPENSE (9000.00 HTG),Vendor timing; AP bill received but not yet disbursed,PROVEN_RUNTIME
+pr_unpaid_app,Payroll Approved,HTG,20000.00,1.00,20000.00,EXCLUDED (0.00 HTG),EXPENSE (20000.00 HTG),Payroll timing; approved cycle accrued but undisbursed,PROVEN_RUNTIME
+pr_paid_sub,Payroll Disbursed,HTG,14000.00,1.00,14000.00,OUTFLOW (14000.00 HTG),DISBURSED_PORTION (14000.00 HTG),Realized cash movement matching net disbursed,PROVEN_RUNTIME

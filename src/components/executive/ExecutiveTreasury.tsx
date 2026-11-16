@@ -51,29 +51,32 @@ const ExecutiveTreasuryComponent: React.FC<ExecutiveTreasuryProps> = ({
         </div>
 
         <div className="space-y-3 mt-4 text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
-          {/* Section 8: Show Bénéfice Net (Accrual/Economic) */}
-          <div className="flex justify-between items-center py-0.5">
-            <span className="flex flex-col">
-              <span className="font-semibold text-slate-300">Bénéfice Net :</span>
-              <span className="text-[9px] text-slate-500 font-sans">
-                {isCashBasis ? "Caisse (Revenus encaissés − Décaissements)" : "Engagement (Chiffre d'affaires − Charges)"}
+          {!isCashBasis && (
+            <div className="flex justify-between items-center py-0.5">
+              <span className="flex flex-col">
+                <span className="font-semibold text-slate-300">Bénéfice Net :</span>
+                <span className="text-[9px] text-slate-500 font-sans">
+                  Engagement (Chiffre d'affaires − Charges)
+                </span>
               </span>
-            </span>
-            <span
-              className={`font-mono font-bold ${
-                netProfit >= 0 ? "text-emerald-400" : "text-rose-400"
-              }`}
-            >
-              {netProfit > 0 ? "+" : ""}
-              {netProfit.toLocaleString()} {activeCurrency}
-            </span>
-          </div>
+              <span
+                className={`font-mono font-bold ${
+                  netProfit >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                {netProfit > 0 ? "+" : ""}
+                {netProfit.toLocaleString()} {activeCurrency}
+              </span>
+            </div>
+          )}
 
-          {/* Section 8: Show Flux Net de Trésorerie (Treasury Cash Flow) */}
-          <div className="flex justify-between items-center py-0.5 border-t border-slate-800/40 pt-1.5">
+          {/* Show Flux Net de Trésorerie (Treasury Cash Flow) */}
+          <div className={`flex justify-between items-center py-0.5 ${!isCashBasis ? "border-t border-slate-800/40 pt-1.5" : ""}`}>
             <span className="flex flex-col">
-              <span className="font-semibold text-slate-300">Flux Net de Trésorerie :</span>
-              <span className="text-[9px] text-slate-500 font-sans">Variation réelle de caisse (Inflows − Outflows)</span>
+              <span className="font-semibold text-slate-300">
+                {isCashBasis ? "Variation de Trésorerie (Cash) :" : "Flux Net de Trésorerie :"}
+              </span>
+              <span className="text-[9px] text-slate-500 font-sans">Variation réelle de caisse (Encaissements − Décaissements)</span>
             </span>
             <span
               className={`font-mono font-bold ${

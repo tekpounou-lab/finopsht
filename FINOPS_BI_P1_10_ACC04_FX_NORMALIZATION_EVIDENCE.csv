@@ -1,0 +1,8 @@
+item_id,item_type,currency,raw_amount,transaction_date,explicit_tx_rate,grid_exact_rate,applied_rate,rate_source,used_fallback,normalized_htg,accrual_engine_output_htg,analytics_engine_output_htg,evidence_tag
+t_usd_inc,GL Income,USD,100.00,2026-10-15,135.00,132.00,135.00,EXPLICIT_TX_RATE,false,13500.00,13500.00,13500.00,PROVEN_UNIT
+t_usd_exact_grid,GL Income,USD,100.00,2026-10-11,undefined,132.00,132.00,DAILY_GRID_EXACT,false,13200.00,13200.00,13200.00,PROVEN_RUNTIME
+pr_usd_pay,Payroll Record,USD,100.00,2026-10-31,132.00,undefined,132.00,EXPLICIT_TX_RATE,false,13200.00,13200.00,13200.00,PROVEN_RUNTIME
+fx_prior_grid,Test Case,USD,100.00,2026-10-20,undefined,132.00 (from 2026-10-15),132.00,DAILY_GRID_PRIOR,false,13200.00,N/A,N/A,PROVEN_UNIT
+fx_missing_fallback,Test Case,USD,100.00,2026-10-01,undefined,undefined,134.25,DEFAULT_FALLBACK,true,13425.00,N/A,N/A,PROVEN_RUNTIME
+dept_ops_payroll,Department Performance,USD,100.00,2026-10-15,132.00,132.00,132.00,EXPLICIT_TX_RATE,false,13200.00,13200.00,13200.00,PROVEN_RUNTIME
+dept_sales_revenue,Department Performance,USD,100.00,2026-10-11,undefined,132.00,132.00,DAILY_GRID_EXACT,false,13200.00,23200.00 (incl 10k HTG),23200.00 (incl 10k HTG),PROVEN_RUNTIME

@@ -170,6 +170,12 @@ export class InvoiceCashAdapter {
           direction: "INFLOW",
         });
 
+        const explicitFxRate =
+          typeof (invoice as any).exchange_rate === "number" && Number.isFinite((invoice as any).exchange_rate) && (invoice as any).exchange_rate > 0
+            ? (invoice as any).exchange_rate
+            : undefined;
+        const invoiceBranchId = (invoice as any).branchId || (invoice as any).branch_id;
+
         const movement: NormalizedCashMovement = {
           id,
           businessId,
@@ -183,6 +189,7 @@ export class InvoiceCashAdapter {
           amountCents,
           currency,
           cashAccountId,
+          ...(invoiceBranchId ? { branchId: String(invoiceBranchId) } : {}),
           paymentMethod: pMethod,
           status: "SETTLED",
           description: `Encaissement Facture ${invoice.invoiceNumber || invoice.id} (${invoice.clientName || 'Client'})`,
@@ -191,6 +198,7 @@ export class InvoiceCashAdapter {
             invoiceId: invoice.id,
             invoiceNumber: invoice.invoiceNumber,
             paymentTransactionId: p.transactionId,
+            ...(explicitFxRate ? { exchange_rate: explicitFxRate } : {}),
           },
           createdAt: p.createdAt || invoice.updatedAt || invoice.createdAt,
         };
@@ -228,13 +236,25 @@ export class InvoiceCashAdapter {
       };
     }
 
-    // Case B: Single Payment Settlement (invoice marked PAID or isPaid === true)
-    const isPaid = invoice.isPaid || invoice.status === "PAID";
-    const amountPaid = typeof invoice.amountPaid === "number" && invoice.amountPaid > 0
-      ? invoice.amountPaid
-      : (isPaid ? Number(invoice.totalAmount) : 0);
+    // Case B: Single Payment Settlement (invoice marked PAID, PARTIALLY_PAID, PARTIAL, or isPaid === true)
+    const statusUpper = (invoice.status || "").toUpperCase();
+    const isPaid = invoice.isPaid || statusUpper === "PAID";
+    const isPartial = statusUpper === "PARTIALLY_PAID" || statusUpper === "PARTIAL";
+    const rawPaidAmount =
+      typeof invoice.amountPaid === "number" && invoice.amountPaid > 0
+        ? invoice.amountPaid
+        : typeof (invoice as any).amount_paid === "number" && (invoice as any).amount_paid > 0
+        ? (invoice as any).amount_paid
+        : typeof (invoice as any).paidAmount === "number" && (invoice as any).paidAmount > 0
+        ? (invoice as any).paidAmount
+        : typeof (invoice as any).paid_amount === "number" && (invoice as any).paid_amount > 0
+        ? (invoice as any).paid_amount
+        : isPaid
+        ? Number(invoice.totalAmount ?? (invoice as any).total_amount ?? 0)
+        : 0;
+    const amountPaid = rawPaidAmount;
 
-    if (!isPaid && amountPaid <= 0) {
+    if ((!isPaid && !isPartial && amountPaid <= 0) || (isPartial && amountPaid <= 0)) {
       return {
         status: "IGNORED",
         sourceModule: "INVOICE",
@@ -244,7 +264,11 @@ export class InvoiceCashAdapter {
     }
 
     // Settlement date check: NEVER substitute issueDate or dueDate
-    const settlementDate = extractDateOnly(invoice.paidAt);
+    const settlementDate =
+      extractDateOnly(invoice.paidAt) ||
+      extractDateOnly((invoice as any).paid_at) ||
+      extractDateOnly((invoice as any).paymentDate) ||
+      extractDateOnly((invoice as any).payment_date);
     if (!settlementDate) {
       return {
         status: "INCOMPLETE",
@@ -288,6 +312,12 @@ export class InvoiceCashAdapter {
       direction: "INFLOW",
     });
 
+    const explicitFxRate =
+      typeof (invoice as any).exchange_rate === "number" && Number.isFinite((invoice as any).exchange_rate) && (invoice as any).exchange_rate > 0
+        ? (invoice as any).exchange_rate
+        : undefined;
+    const invoiceBranchId = (invoice as any).branchId || (invoice as any).branch_id;
+
     const candidate: NormalizedCashMovement = {
       id,
       businessId,
@@ -300,6 +330,7 @@ export class InvoiceCashAdapter {
       amountCents,
       currency,
       cashAccountId,
+      ...(invoiceBranchId ? { branchId: String(invoiceBranchId) } : {}),
       paymentMethod: pMethod,
       status: "SETTLED",
       description: `Encaissement Facture ${invoice.invoiceNumber || invoice.id} (${invoice.clientName || 'Client'})`,
@@ -308,8 +339,9 @@ export class InvoiceCashAdapter {
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         paymentTransactionId: invoice.paymentTransactionId,
+        ...(explicitFxRate ? { exchange_rate: explicitFxRate } : {}),
       },
-      createdAt: invoice.paidAt || invoice.updatedAt || invoice.createdAt,
+      createdAt: invoice.paidAt || (invoice as any).paymentDate || invoice.updatedAt || invoice.createdAt,
     };
 
     const val = validateNormalizedCashMovement(candidate);
@@ -331,6 +363,7 @@ export class InvoiceCashAdapter {
       metadata: {
         invoiceNumber: invoice.invoiceNumber,
         linkedLedgerTransactionId: invoice.paymentTransactionId,
+        ...(explicitFxRate ? { exchange_rate: explicitFxRate } : {}),
       },
     };
   }

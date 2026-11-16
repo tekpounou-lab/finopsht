@@ -4,9 +4,11 @@ import { AccrualBasisEngine } from "../domains/analytics/services/AccrualBasisEn
 import { useBusinessContext } from "../contexts/BusinessContext";
 import { useAnalyticsFilters } from "../contexts/AnalyticsFilterContext";
 import { useExecutiveFilters } from "../domains/analytics/context/ExecutiveFilterContext";
+import { CurrencyRateRepository } from "../repositories/CurrencyRateRepository";
+import type { NormalizationContext } from "../domains/analytics/utils/NormalizedAmountResolver";
 
 export function useAccrualBasisSnapshot(overrideFilters?: Record<string, any>) {
-  const { currentBusiness, ledgerTransactions, payrollRecords, employees, businessSettings, payrollCycles } = useBusinessContext() as any;
+  const { currentBusiness, ledgerTransactions, payrollRecords, employees, businessSettings, payrollCycles, invoices } = useBusinessContext() as any;
   const { filters: globalFilters } = useAnalyticsFilters();
   const { filters: execFilters } = useExecutiveFilters();
   const [snapshot, setSnapshot] = useState<AccrualBasisSnapshot | null>(null);
@@ -32,6 +34,15 @@ export function useAccrualBasisSnapshot(overrideFilters?: Record<string, any>) {
       }
       setLoading(true);
       try {
+        let normalizationContext: NormalizationContext = {};
+        try {
+          const normStart = resolvedFilters.startDate || "2020-01-01";
+          const normEnd = resolvedFilters.endDate || new Date().toISOString().split("T")[0];
+          normalizationContext = await CurrencyRateRepository.getRatesForPeriod(currentBusiness.id, normStart, normEnd);
+        } catch (fxErr) {
+          console.warn("[useAccrualBasisSnapshot] Failed to fetch rate grids:", fxErr);
+        }
+
         const snap = await AccrualBasisEngine.generateSnapshot(
           currentBusiness.id,
           resolvedFilters,
@@ -41,6 +52,8 @@ export function useAccrualBasisSnapshot(overrideFilters?: Record<string, any>) {
           {
             businessSettings: { ...businessSettings, ...currentBusiness?.settings },
             payrollCycles: payrollCycles || [],
+            normalizationContext,
+            invoices: invoices || [],
           }
         );
         if (isMounted) setSnapshot(snap);
@@ -52,7 +65,7 @@ export function useAccrualBasisSnapshot(overrideFilters?: Record<string, any>) {
     }
     loadData();
     return () => { isMounted = false; };
-  }, [currentBusiness?.id, currentBusiness?.settings, businessSettings, filterKey, ledgerTransactions, payrollRecords, payrollCycles, employees]);
+  }, [currentBusiness?.id, currentBusiness?.settings, businessSettings, filterKey, ledgerTransactions, payrollRecords, payrollCycles, employees, invoices]);
 
   return { snapshot, loading };
 }

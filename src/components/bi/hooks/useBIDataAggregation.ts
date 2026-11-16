@@ -24,7 +24,7 @@ import { Phase6DForecastingEngine } from "../../../domains/analytics/services/Ph
 import { Phase6DForecastDataset } from "../../../domains/analytics/types/phase6d";
 import { Phase7LaborEconomicsEngine } from "../../../domains/analytics/services/Phase7LaborEconomicsEngine";
 import { Phase7Dataset } from "../../../domains/analytics/types/phase7";
-import { NormalizationContext } from "../../../domains/analytics/utils/NormalizedAmountResolver";
+import { NormalizedAmountResolver, NormalizationContext } from "../../../domains/analytics/utils/NormalizedAmountResolver";
 import { AnalyticsPeriod } from "../../../domains/analytics/types";
 
 interface UseBIDataAggregationParams {
@@ -78,7 +78,7 @@ export function useBIDataAggregation({
   const effectiveAccountingBasis: "CASH" | "ACCRUAL" = accountingBasis || (isSimplifiedMode ? "CASH" : "ACCRUAL");
   const isCashBasis = effectiveAccountingBasis === "CASH";
   const { snapshot, loading, status, contracts: ctxContracts } = useAnalytics();
-  const { selectedCurrency, businessSettings, employeeContracts, payrollCycles, departmentActivities } = useBusinessContext() as any;
+  const { selectedCurrency, businessSettings, employeeContracts, payrollCycles, departmentActivities, invoices } = useBusinessContext() as any;
   const [usdToHtgRate, setUsdToHtgRate] = useState<number>(135.0);
   const [normalizationContext, setNormalizationContext] = useState<NormalizationContext>({});
 
@@ -381,6 +381,14 @@ export function useBIDataAggregation({
     });
   }, [scopedAttendance, startDate, endDate]);
 
+  const cycleMap = useMemo(() => {
+    const map = new Map<string, any>();
+    (payrollCycles || []).forEach((c: any) => {
+      if (c?.id) map.set(c.id, c);
+    });
+    return map;
+  }, [payrollCycles]);
+
   const scopedPayrolls = useMemo(() => {
     if (!currentBusiness?.id) return [];
     return (payrollRecords || []).filter((rec) => {
@@ -388,10 +396,9 @@ export function useBIDataAggregation({
       if (recBizId && recBizId !== currentBusiness.id) return false;
       if (rec.isExcluded) return false;
 
-      if (isCashBasis) {
-        const pStatus = String(rec.status || "").toUpperCase();
-        if (pStatus === "DRAFT" || pStatus === "PENDING" || pStatus === "REJECTED" || pStatus === "VOID") return false;
-      }
+      const pStatus = String(rec.status || "").toUpperCase();
+      if (pStatus === "CANCELLED" || pStatus === "VOID" || pStatus === "REJECTED") return false;
+      if (isCashBasis && !AnalyticsEngine.isPayrollCashDisbursed(rec, cycleMap)) return false;
 
       const rEmpId = rec.employeeId || rec.employee_id;
       const emp = (employees || []).find((e) => String(e.id) === String(rEmpId));
@@ -404,7 +411,24 @@ export function useBIDataAggregation({
 
       return true;
     });
-  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedEmployeeId, isCashBasis, empBranchMap, empDeptMap]);
+  }, [payrollRecords, employees, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedEmployeeId, isCashBasis, cycleMap, empBranchMap, empDeptMap]);
+
+  const scopedInvoices = useMemo(() => {
+    if (!currentBusiness?.id) return [];
+    return (invoices || []).filter((inv: any) => {
+      const iBizId = inv.business_id || inv.businessId;
+      if (iBizId && iBizId !== currentBusiness.id) return false;
+      const iEmpId = inv.employeeId || inv.employee_id || inv.assignedTo;
+      const iBranch = inv.branchId || inv.branch_id || inv.cost_center_id || (iEmpId ? empBranchMap.get(iEmpId) : undefined);
+      const iDept = inv.departmentId || inv.department_id || (iEmpId ? empDeptMap.get(iEmpId) : undefined);
+
+      if (selectedBranchId !== "ALL" && (!iBranch || iBranch !== selectedBranchId)) return false;
+      if (selectedDeptId !== "ALL" && (!iDept || iDept !== selectedDeptId)) return false;
+      if (selectedEmployeeId !== "ALL" && (!iEmpId || iEmpId !== selectedEmployeeId)) return false;
+      if (selectedTxType && selectedTxType !== "ALL" && selectedTxType !== "INCOME") return false;
+      return true;
+    });
+  }, [invoices, currentBusiness?.id, selectedBranchId, selectedDeptId, selectedEmployeeId, selectedTxType, empBranchMap, empDeptMap]);
 
   const filteredPayrolls = useMemo(() => {
     return scopedPayrolls.filter((rec) => {
@@ -482,6 +506,7 @@ export function useBIDataAggregation({
       contracts: resolvedContracts,
       payrollCycles: payrollCycles || [],
       activities: departmentActivities || [],
+      invoices: scopedInvoices,
       businessId: currentBusiness.id,
       language: language as "fr" | "ht" | "en",
       businessSettings: { ...businessSettings, ...currentBusiness?.settings },
@@ -499,6 +524,7 @@ export function useBIDataAggregation({
     scopedTx,
     scopedAttendance,
     scopedPayrolls,
+    scopedInvoices,
     branches,
     departments,
     resolvedContracts,
@@ -523,17 +549,32 @@ export function useBIDataAggregation({
 
   const getTxAmount = (t: any): number => {
     if (!t) return 0;
-    if (typeof t.amount === "number" && !isNaN(t.amount) && t.amount !== 0) return Math.abs(t.amount);
-    if (typeof t.amount_htg === "number" && !isNaN(t.amount_htg) && t.amount_htg !== 0) return Math.abs(t.amount_htg);
-    if (typeof t.amountHtg === "number" && !isNaN(t.amountHtg) && t.amountHtg !== 0) return Math.abs(t.amountHtg);
-    if (typeof t.amount_cents === "number" && !isNaN(t.amount_cents) && t.amount_cents !== 0) return Math.abs(t.amount_cents) / 100;
-    if (typeof t.amountCents === "number" && !isNaN(t.amountCents) && t.amountCents !== 0) return Math.abs(t.amountCents) / 100;
-    if (typeof t.total === "number" && !isNaN(t.total) && t.total !== 0) return Math.abs(t.total);
-    if (typeof t.credit === "number" && t.credit > 0) return t.credit;
-    if (typeof t.debit === "number" && t.debit > 0) return t.debit;
-    if (typeof t.credit_cents === "number" && t.credit_cents > 0) return t.credit_cents / 100;
-    if (typeof t.debit_cents === "number" && t.debit_cents > 0) return t.debit_cents / 100;
-    return 0;
+    let rawAmt = 0;
+    let isAlreadyHtg = false;
+    if (typeof t.amount === "number" && !isNaN(t.amount) && t.amount !== 0) rawAmt = Math.abs(t.amount);
+    else if (typeof t.amount_htg === "number" && !isNaN(t.amount_htg) && t.amount_htg !== 0) {
+      rawAmt = Math.abs(t.amount_htg);
+      isAlreadyHtg = true;
+    } else if (typeof t.amountHtg === "number" && !isNaN(t.amountHtg) && t.amountHtg !== 0) {
+      rawAmt = Math.abs(t.amountHtg);
+      isAlreadyHtg = true;
+    } else if (typeof t.amount_cents === "number" && !isNaN(t.amount_cents) && t.amount_cents !== 0) rawAmt = Math.abs(t.amount_cents) / 100;
+    else if (typeof t.amountCents === "number" && !isNaN(t.amountCents) && t.amountCents !== 0) rawAmt = Math.abs(t.amountCents) / 100;
+    else if (typeof t.total === "number" && !isNaN(t.total) && t.total !== 0) rawAmt = Math.abs(t.total);
+    else if (typeof t.credit === "number" && t.credit > 0) rawAmt = t.credit;
+    else if (typeof t.debit === "number" && t.debit > 0) rawAmt = t.debit;
+    else if (typeof t.credit_cents === "number" && t.credit_cents > 0) rawAmt = t.credit_cents / 100;
+    else if (typeof t.debit_cents === "number" && t.debit_cents > 0) rawAmt = t.debit_cents / 100;
+
+    if (rawAmt > 0 && !isAlreadyHtg) {
+      const txCurrency = String(t.currency || t.currency_code || t.currencyCode || "HTG").toUpperCase();
+      if (txCurrency !== "HTG") {
+        const txDate = resolveAnalyticsTxDate(t, isCashBasis);
+        const explicitRate = t.exchange_rate ?? t.exchangeRate;
+        return NormalizedAmountResolver.resolveToHTG(rawAmt, txCurrency, txDate, normalizationContext, "BRH", explicitRate);
+      }
+    }
+    return rawAmt;
   };
 
   // Payroll Aggregates calculated early as a source of truth
@@ -930,19 +971,25 @@ export function useBIDataAggregation({
     });
   }, [employeeScorecards, effectiveRankMetric]);
 
-  // Cashflow Timeline
+  // Cashflow Timeline (normalized to selectedCurrency for display in BICostCenterTab)
   const cashflowTimeline = useMemo(() => {
+    const convertForChart = (valHtg: number) =>
+      selectedCurrency === "USD"
+        ? NormalizedAmountResolver.convertFromHTG(valHtg, "USD", usdToHtgRate)
+        : valHtg;
+
     let runningBalance = 0;
     if (effectiveSnapshot?.historicalTrends && effectiveSnapshot.historicalTrends.length > 0) {
       return effectiveSnapshot.historicalTrends.map((t) => {
-        const net = t.net !== undefined ? t.net : (t.gross - ((t as any).expenses || 0));
-        runningBalance += net;
+        const netHtg = t.net !== undefined ? t.net : (t.gross - ((t as any).expenses || 0));
+        const expHtg = t.gross - netHtg;
+        runningBalance += netHtg;
         return {
           date: t.label || t.key,
-          Revenus: t.gross,
-          Dépenses: t.gross - net,
-          Net: net,
-          Balance: runningBalance,
+          Revenus: convertForChart(t.gross),
+          Dépenses: convertForChart(expHtg),
+          Net: convertForChart(netHtg),
+          Balance: convertForChart(runningBalance),
         };
       });
     }
@@ -973,22 +1020,32 @@ export function useBIDataAggregation({
     const items = Object.values(dateMap)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((item) => {
-        const net = item.Revenus - item.Dépenses;
-        runningBalance += net;
+        const netHtg = item.Revenus - item.Dépenses;
+        runningBalance += netHtg;
         return {
-          ...item,
-          Net: net,
-          Balance: runningBalance,
+          date: item.date,
+          Revenus: convertForChart(item.Revenus),
+          Dépenses: convertForChart(item.Dépenses),
+          Net: convertForChart(netHtg),
+          Balance: convertForChart(runningBalance),
         };
       });
 
     return items;
-  }, [effectiveSnapshot?.historicalTrends, filteredTx, isFiltered]);
+  }, [effectiveSnapshot?.historicalTrends, filteredTx, isFiltered, selectedCurrency, usdToHtgRate]);
 
-  // Expense Categories
+  // Expense Categories (normalized to selectedCurrency for display in BICostCenterTab)
   const expenseCategoryChartData = useMemo(() => {
+    const convertForChart = (valHtg: number) =>
+      selectedCurrency === "USD"
+        ? NormalizedAmountResolver.convertFromHTG(valHtg, "USD", usdToHtgRate)
+        : Math.round(valHtg);
+
     if (effectiveSnapshot?.expenseBreakdown && effectiveSnapshot.expenseBreakdown.length > 0) {
-      return effectiveSnapshot.expenseBreakdown;
+      return effectiveSnapshot.expenseBreakdown.map((item) => ({
+        ...item,
+        value: convertForChart(item.value),
+      }));
     }
 
     const catMap: Record<string, number> = {};
@@ -1009,11 +1066,11 @@ export function useBIDataAggregation({
 
     const entries = Object.entries(catMap).map(([name, value]) => ({
       name,
-      value: Math.round(value),
+      value: convertForChart(value),
     }));
 
     return entries.length > 0 ? entries : [{ name: "Aucune Dépense", value: 1 }];
-  }, [effectiveSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost]);
+  }, [effectiveSnapshot?.expenseBreakdown, filteredTx, payrollAggregates.totalEmploymentCost, selectedCurrency, usdToHtgRate]);
 
   // Dashboard Chart Data
   const dashboardChartData = useMemo(() => {

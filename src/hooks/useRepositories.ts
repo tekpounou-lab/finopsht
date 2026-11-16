@@ -31,6 +31,8 @@ import {
   Department 
 } from "../types";
 import { tenantQuery, realtimeManager } from "../services/firestore/realtimeManager";
+import { InvoiceRepository } from "../repositories/crm/InvoiceRepository";
+import type { Invoice } from "../types/crm";
 
 export function useCompensationModels(business_id: string | undefined) {
   const { data } = useRealtimeSubscription<CompensationModelConfig>(
@@ -475,4 +477,25 @@ export function useDepartments(business_id: string | undefined) {
     { enabled: Boolean(business_id), businessId: business_id }
   );
   return data;
+}
+
+export function useInvoices(business_id: string | undefined) {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+
+  useEffect(() => {
+    if (!business_id) {
+      setInvoices([]);
+      return;
+    }
+
+    const unsubscribe = InvoiceRepository.subscribeToInvoices(
+      business_id,
+      (data) => setInvoices(data),
+      (err) => console.warn("[useInvoices] Invoice subscription notice:", err)
+    );
+
+    return () => unsubscribe();
+  }, [business_id]);
+
+  return invoices;
 }

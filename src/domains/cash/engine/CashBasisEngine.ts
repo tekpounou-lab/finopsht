@@ -187,7 +187,8 @@ export class CashBasisEngine {
       }
 
       for (const rec of sources.payrollRecords) {
-        const cycle = rec.cycleId ? cycleMap.get(rec.cycleId) : undefined;
+        const cycleKey = rec.cycleId || (rec as any).payroll_cycle_id;
+        const cycle = cycleKey ? cycleMap.get(cycleKey) : undefined;
         const res = PayrollCashAdapter.adaptRecord(rec, { cycle });
         if (res.status === 'VALID' && res.movement) {
           candidateMovements.push(res.movement);
@@ -308,7 +309,8 @@ export class CashBasisEngine {
         }
       }
       for (const rec of sources.payrollRecords) {
-        const cycle = rec.cycleId ? cycleMap.get(rec.cycleId) : undefined;
+        const cycleKey = rec.cycleId || (rec as any).payroll_cycle_id;
+        const cycle = cycleKey ? cycleMap.get(cycleKey) : undefined;
         const res = PayrollCashAdapter.adaptRecord(rec, { cycle });
         if (res.status === 'VALID' && res.movement) {
           candidateMovements.push(res.movement);

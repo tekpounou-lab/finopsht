@@ -78,9 +78,13 @@ export class CrossSourceCashReconciliationEngine {
         if (m.sourceId) operationalCycleIds.add(m.sourceId);
         if (m.metadata?.cycleId) operationalCycleIds.add(String(m.metadata.cycleId));
         if (m.metadata?.linkedCycleId) operationalCycleIds.add(String(m.metadata.linkedCycleId));
+        if (m.metadata?.payrollCycleId) operationalCycleIds.add(String(m.metadata.payrollCycleId));
+        if (m.metadata?.payroll_cycle_id) operationalCycleIds.add(String(m.metadata.payroll_cycle_id));
       } else if (m.sourceModule === 'INVOICE') {
         if (m.sourceId) operationalInvoiceIds.add(m.sourceId);
         if (m.metadata?.invoiceId) operationalInvoiceIds.add(String(m.metadata.invoiceId));
+        if (m.metadata?.linkedInvoiceId) operationalInvoiceIds.add(String(m.metadata.linkedInvoiceId));
+        if (m.metadata?.crmInvoiceId) operationalInvoiceIds.add(String(m.metadata.crmInvoiceId));
       } else if (m.sourceModule === 'CASH_SETTLEMENT') {
         if (m.sourceId) operationalSettlementIds.add(m.sourceId);
         if (m.metadata?.rawSettlementId) operationalSettlementIds.add(String(m.metadata.rawSettlementId));
@@ -136,12 +140,23 @@ export class CrossSourceCashReconciliationEngine {
 
       // 4.3 General Ledger Deduplication against Operational sources
       if (m.sourceModule === 'LEDGER') {
-        const linkedCycle = m.metadata?.linkedCycleId || m.metadata?.payrollCycleId;
-        const linkedInvoice = m.metadata?.linkedInvoiceId || m.metadata?.crmInvoiceId;
+        const linkedCycle =
+          m.metadata?.linkedCycleId ||
+          m.metadata?.payrollCycleId ||
+          m.metadata?.payroll_cycle_id ||
+          m.metadata?.cycleId;
+        const linkedInvoice =
+          m.metadata?.linkedInvoiceId ||
+          m.metadata?.crmInvoiceId ||
+          m.metadata?.invoiceId;
         const linkedSettlement = m.metadata?.linkedSettlementId || m.metadata?.cashSettlementId || m.metadata?.settlementId;
 
-        // Check Payroll GL duplication
-        if (linkedCycle && operationalCycleIds.has(String(linkedCycle))) {
+        const debitAccUpper = String(m.metadata?.debitAccount || '').trim().toUpperCase();
+        const isTaxLiabilitySettlement =
+          /^2\d*/.test(debitAccUpper) && m.movementType !== 'PAYROLL';
+
+        // Check Payroll GL duplication (do not suppress Class 2xxx tax liability settlements)
+        if (!isTaxLiabilitySettlement && linkedCycle && operationalCycleIds.has(String(linkedCycle))) {
           suppressedMovements.push({
             movement: m,
             reason: 'Suppressed GL duplicate of operational Payroll cycle',

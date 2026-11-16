@@ -1,0 +1,7 @@
+transaction_id,posting_type,debit_account,credit_account,amount_htg,status,analytics_engine_revenue,analytics_engine_expense,accrual_engine_revenue,accrual_engine_expense,cash_basis_engine_direction,classification_verdict,notes
+a1_ar,INCOME,12000_ACCOUNTS_RECEIVABLE,4000_SALES,25000.00,POSTED,25000.00,0.00,25000.00,0.00,EXCLUDED,REVENUE_ONLY,Operating credit sale recognized as revenue
+a1_other4,OTHER,1000_CASH,4100_SERVICE_REV,5000.00,POSTED,5000.00,0.00,5000.00,0.00,INFLOW,REVENUE_ONLY,Class 4100 recognized strictly as revenue; eliminated from expenses in AE
+a1_opex,EXPENSE,6200_OPEX,2000_AP,8000.00,POSTED,0.00,8000.00,0.00,8000.00,EXCLUDED,EXPENSE_ONLY,Operating expense accrued into AP
+a1_pen,PENALTY,1000_CASH,6200_OPEX,2000.00,POSTED,0.00,-2000.00,0.00,-2000.00,EXCLUDED,EXPENSE_REDUCTION,Penalty treated as expense offset in both engines
+a1_liab,EXPENSE,2100_ONA_TAXES_PAYABLE,1000_CASH,12000.00,POSTED,0.00,0.00,0.00,0.00,OUTFLOW,BALANCE_SHEET_ONLY,Debit to Class 2xxx liability excluded from P&L; recognized as cash outflow
+a1_void,INCOME,1000_CASH,4000_SALES,9999.00,VOID,0.00,0.00,0.00,0.00,EXCLUDED,EXCLUDED_VOID,Voided transaction excluded from both revenue and expenses

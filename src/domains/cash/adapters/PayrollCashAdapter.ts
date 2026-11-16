@@ -112,9 +112,12 @@ export class PayrollCashAdapter {
     // 3. Date Determination (Strict: No Silent Fallback to period endDate)
     // Priority:
     // a) record.paidAt
-    // b) cycle.disbursedAt
-    // c) cycle.effectiveAccountingDate (only if cycle is actually PAID/SEALED)
-    const recPaidDate = extractDateOnly((record as any).paidAt);
+    // b) record.paymentDate (when record itself is explicitly settled PAID/SEALED)
+    // c) cycle.disbursedAt
+    // d) cycle.effectiveAccountingDate (only if cycle is actually PAID/SEALED)
+    const recPaidDate =
+      extractDateOnly((record as any).paidAt) ||
+      extractDateOnly((record as any).paymentDate);
     const cycleDisbursedDate = extractDateOnly(options.cycle?.disbursedAt);
     const cycleEffectiveDate = (isCyclePaid && options.cycle?.effectiveAccountingDate)
       ? extractDateOnly(options.cycle.effectiveAccountingDate)
@@ -229,6 +232,12 @@ export class PayrollCashAdapter {
       direction: "OUTFLOW",
     });
 
+    const resolvedCycleId = record.cycleId || (record as any).payroll_cycle_id || options.cycle?.id;
+    const explicitFxRate =
+      typeof (record as any).exchange_rate === "number" && Number.isFinite((record as any).exchange_rate) && (record as any).exchange_rate > 0
+        ? (record as any).exchange_rate
+        : undefined;
+
     const candidateMovement: NormalizedCashMovement = {
       id,
       businessId,
@@ -247,11 +256,13 @@ export class PayrollCashAdapter {
       branchId: record.branch_id || (record as any).branchId,
       status: movementStatus,
       description: `Paiement Salaire Net - ${record.employeeName || record.employeeId}`,
-      reference: options.cycle?.cycleName || options.cycle?.label || record.cycleId,
+      reference: options.cycle?.cycleName || options.cycle?.label || resolvedCycleId,
       reversalOf,
       metadata: {
-        cycleId: record.cycleId || options.cycle?.id,
+        cycleId: resolvedCycleId,
+        payrollCycleId: resolvedCycleId,
         grossSalary: record.grossSalary,
+        ...(explicitFxRate ? { exchange_rate: explicitFxRate } : {}),
       },
       createdAt: (record as any).created_at || (record as any).updated_at || new Date().toISOString(),
     };
@@ -274,8 +285,10 @@ export class PayrollCashAdapter {
       sourceId,
       movement: validation.data,
       metadata: {
-        cycleId: record.cycleId || options.cycle?.id,
+        cycleId: resolvedCycleId,
+        payrollCycleId: resolvedCycleId,
         grossSalary: record.grossSalary,
+        ...(explicitFxRate ? { exchange_rate: explicitFxRate } : {}),
       },
     };
   }

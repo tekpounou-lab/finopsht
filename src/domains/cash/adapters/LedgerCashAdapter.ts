@@ -299,11 +299,39 @@ export class LedgerCashAdapter {
     }
 
     // Cross-module deduplication links
-    const linkedCycleId = tx.metadata?.payrollCycleId || tx.metadata?.cycleId;
-    const linkedInvoiceId = tx.metadata?.crmInvoiceId || tx.metadata?.invoiceId;
-    const linkedSettlementId = tx.metadata?.linkedSettlementId || tx.metadata?.cashSettlementId || tx.metadata?.settlementId;
+    const rawAny = tx as any;
+    const linkedCycleId =
+      tx.metadata?.linkedCycleId ||
+      tx.metadata?.payrollCycleId ||
+      tx.metadata?.payroll_cycle_id ||
+      tx.metadata?.cycleId ||
+      rawAny.linkedCycleId ||
+      rawAny.payrollCycleId ||
+      rawAny.payroll_cycle_id ||
+      rawAny.cycleId ||
+      (tx.source === "PAYROLL_ENGINE" ? (rawAny.referenceId || rawAny.reference) : undefined);
+
+    const linkedInvoiceId =
+      tx.metadata?.linkedInvoiceId ||
+      tx.metadata?.crmInvoiceId ||
+      tx.metadata?.invoiceId ||
+      rawAny.linkedInvoiceId ||
+      rawAny.crmInvoiceId ||
+      rawAny.invoiceId ||
+      (tx.category === "SALES_PAYMENT" ? (rawAny.referenceId || rawAny.reference) : undefined);
+
+    const linkedSettlementId =
+      tx.metadata?.linkedSettlementId ||
+      tx.metadata?.cashSettlementId ||
+      tx.metadata?.settlementId ||
+      rawAny.linkedSettlementId;
+
     const isPayrollEngine = tx.source === "PAYROLL_ENGINE" || !!linkedCycleId;
     const isInvoicePayment = tx.category === "SALES_PAYMENT" || !!linkedInvoiceId;
+    const explicitFxRate =
+      typeof rawAny.exchange_rate === "number" && Number.isFinite(rawAny.exchange_rate) && rawAny.exchange_rate > 0
+        ? rawAny.exchange_rate
+        : undefined;
 
     const metadata = {
       ...(tx.metadata || {}),
@@ -311,9 +339,10 @@ export class LedgerCashAdapter {
       creditAccount,
       isDebitTreasury,
       isCreditTreasury,
-      linkedCycleId,
-      linkedInvoiceId,
-      linkedSettlementId,
+      ...(linkedCycleId ? { linkedCycleId } : {}),
+      ...(linkedInvoiceId ? { linkedInvoiceId } : {}),
+      ...(linkedSettlementId ? { linkedSettlementId } : {}),
+      ...(explicitFxRate ? { exchange_rate: explicitFxRate } : {}),
       isPayrollEngine,
       isInvoicePayment,
       source: tx.source,
