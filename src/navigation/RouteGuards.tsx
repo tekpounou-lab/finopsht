@@ -180,3 +180,47 @@ export const CrmRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
   return <>{children}</>;
 };
 
+const PIC_ALLOWED_ROLES = new Set<string>([
+  "SUPER_ADMIN",
+  "OWNER",
+  "ADMIN",
+  "MANAGER",
+  "SUPERVISOR",
+  "ACCOUNTANT",
+  "AUDITOR",
+]);
+
+/**
+ * PicRoute
+ * Enforces Performance Intelligence Center (PIC) access.
+ * Strictly blocks tellers and general employees.
+ */
+export const PicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isResolved, role, flowState } = useAuth();
+
+  if (!isResolved) {
+    return (
+      <div className="w-full h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-200">
+        <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3" />
+        <div className="text-xs font-medium text-slate-400 tracking-wider uppercase">Vérification des droits PIC...</div>
+      </div>
+    );
+  }
+
+  if (!user || flowState === "LOGGED_OUT" || flowState === "LANDING") {
+    return <Navigate to="/login" replace />;
+  }
+
+  const userRole = String(role || "").trim().toUpperCase();
+  if (!PIC_ALLOWED_ROLES.has(userRole) && flowState !== "SUPER_ADMIN_ACTIVE") {
+    return (
+      <AccessDenied
+        requiredRole="SUPERVISOR / MANAGER / OWNER / AUDITOR"
+        message="Le Centre d'Intelligence de Performance (PIC) n'est pas accessible à votre rôle."
+      />
+    );
+  }
+
+  return <>{children}</>;
+};
+

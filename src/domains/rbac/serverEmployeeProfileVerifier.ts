@@ -8,10 +8,13 @@ import {
   canSuperviseTillLifecycleRole,
   evaluateOperationalProfileAccess,
   extractRawOperationalProfileFromRecord,
+  isBranchScopedTellerRole,
   normalizeOperationalProfile,
   normalizeRole,
   validateRoleOperationalProfileCompatibility
 } from "./operationalProfilePolicy";
+
+export { isBranchScopedTellerRole };
 
 const INACTIVE_STATUSES = new Set<string>([
   "INACTIVE",
@@ -34,9 +37,28 @@ export interface VerifiedServerOperationalActor {
   uid: string;
   employeeId?: string;
   businessId: string;
+  branchId?: string;
   role: string;
   operationalProfile: CanonicalOperationalProfile | null;
   status: string;
+}
+
+function extractBranchFromRecord(
+  record: any,
+  sourceLabel: string
+): { branchId?: string } {
+  if (!record || typeof record !== "object") return {};
+  const snake = typeof record.branch_id === "string" ? record.branch_id.trim() : "";
+  const camel = typeof record.branchId === "string" ? record.branchId.trim() : "";
+  if (snake && camel && snake !== camel) {
+    throw new ServerProfileVerificationError(
+      "BRANCH_MISMATCH",
+      `Incohérence de succursale (branch_id='${snake}' vs branchId='${camel}') sur le profil ${sourceLabel}.`,
+      403
+    );
+  }
+  const resolved = snake || camel;
+  return resolved ? { branchId: resolved } : {};
 }
 
 export class ServerProfileVerificationError extends Error {
@@ -59,14 +81,21 @@ async function safeGetDoc(adminDb: any, collectionPath: string, docId: string): 
       if (snap && snap.exists) {
         return { id: snap.id || docId, ...(typeof snap.data === "function" ? snap.data() : snap.data) };
       }
-    } else if (typeof adminDb.collection === "function") {
+      return null;
+    }
+    if (typeof adminDb.collection === "function") {
       const snap = await adminDb.collection(collectionPath).doc(docId).get();
       if (snap && snap.exists) {
         return { id: snap.id || docId, ...(typeof snap.data === "function" ? snap.data() : snap.data) };
       }
+      return null;
     }
-  } catch {
-    return null;
+  } catch (err: any) {
+    throw new ServerProfileVerificationError(
+      "AUTH_VERIFICATION_UNAVAILABLE",
+      `Impossible de vérifier le profil (${collectionPath}/${docId}) auprès de Firestore.`,
+      503
+    );
   }
   return null;
 }
@@ -114,8 +143,12 @@ async function safeFindEmployeeRecord(
               return { id: d.id, ...data };
             }
           }
-        } catch {
-          // ignore query mismatch on mocks
+        } catch (err: any) {
+          throw new ServerProfileVerificationError(
+            "AUTH_VERIFICATION_UNAVAILABLE",
+            `Erreur lors de la vérification du profil employé (${field}).`,
+            503
+          );
         }
       }
       if (email) {
@@ -130,8 +163,12 @@ async function safeFindEmployeeRecord(
                 return { id: d.id, ...data };
               }
             }
-          } catch {
-            // ignore
+          } catch (err: any) {
+            throw new ServerProfileVerificationError(
+              "AUTH_VERIFICATION_UNAVAILABLE",
+              `Erreur lors de la vérification du profil employé (${field}).`,
+              503
+            );
           }
         }
       }
@@ -172,6 +209,9 @@ export async function verifyServerEmployeeOperationalProfile(args: {
   uid: string;
   email?: string;
   businessId?: string;
+  actorBranchId?: string;
+  claimedBranchId?: unknown;
+  requireBranchScope?: boolean;
   actorRole?: string;
   isSuperAdmin?: boolean;
   claimedRole?: unknown;
@@ -320,31 +360,73 @@ export async function verifyServerEmployeeOperationalProfile(args: {
     }
   }
 
+  // Extract and validate authoritative branchId across employees / users / token
+  const userBranchInfo = extractBranchFromRecord(userDoc, "utilisateur");
+  const empBranchInfo = extractBranchFromRecord(employeeDoc, "employé");
+  const middlewareBranchId =
+    typeof args.actorBranchId === "string" && args.actorBranchId.trim()
+      ? args.actorBranchId.trim()
+      : undefined;
+
+  if (userBranchInfo.branchId && empBranchInfo.branchId && userBranchInfo.branchId !== empBranchInfo.branchId) {
+    throw new ServerProfileVerificationError(
+      "BRANCH_MISMATCH",
+      `Conflit de succursale entre utilisateur (${userBranchInfo.branchId}) et employé (${empBranchInfo.branchId}).`,
+      403
+    );
+  }
+  const dbBranchId = empBranchInfo.branchId || userBranchInfo.branchId;
+  if (middlewareBranchId && dbBranchId && middlewareBranchId !== dbBranchId) {
+    throw new ServerProfileVerificationError(
+      "BRANCH_MISMATCH",
+      `Conflit de succursale entre le jeton authentifié (${middlewareBranchId}) et le profil persisté (${dbBranchId}).`,
+      403
+    );
+  }
+  const resolvedBranchId = dbBranchId || middlewareBranchId;
+
+  // Enforce branch scope for branch-scoped tellers when requested (or if claimedBranchId conflicts)
+  const claimedBranchId =
+    typeof args.claimedBranchId === "string" && args.claimedBranchId.trim()
+      ? args.claimedBranchId.trim()
+      : undefined;
+
+  if (!args.isSuperAdmin && isBranchScopedTellerRole(resolvedRole)) {
+    if (args.requireBranchScope && !resolvedBranchId) {
+      throw new ServerProfileVerificationError(
+        "MISSING_BRANCH_SCOPE",
+        `Aucune succursale (branch_id) assignée au profil guichetier [${resolvedRole}].`,
+        403
+      );
+    }
+    if (resolvedBranchId && claimedBranchId && claimedBranchId !== resolvedBranchId) {
+      throw new ServerProfileVerificationError(
+        "BRANCH_ISOLATION_VIOLATION",
+        `Accès inter-succursale refusé : acteur rattaché à '${resolvedBranchId}', cible '${claimedBranchId}'.`,
+        403
+      );
+    }
+  }
+
   // Capability enforcement
   if (args.isSuperAdmin || resolvedRole === "SUPER_ADMIN") {
     return {
       uid,
       employeeId: employeeDoc?.id,
       businessId,
+      branchId: resolvedBranchId,
       role: resolvedRole,
       operationalProfile: compat.normalizedProfile,
       status: "ACTIVE"
     };
   }
 
-  // Explicit Step 3 Correction: MASTER_HEAD_TELLER MUST NEVER approve or reject internal transfers
+  // Strict P2 Security Guard: NO teller role (including HEAD_TELLER & MASTER_HEAD_TELLER) may approve or reject internal transfers
   if (args.capability === "transfer_approve") {
-    if (!canApproveInternalTransferRole(resolvedRole)) {
+    if (TELLER_ROLES.has(resolvedRole) || !canApproveInternalTransferRole(resolvedRole)) {
       throw new ServerProfileVerificationError(
         "FORBIDDEN_ROLE",
         `Le rôle [${resolvedRole}] n'est pas autorisé à approuver ou rejeter les transferts internes.`,
-        403
-      );
-    }
-    if (TELLER_ROLES.has(resolvedRole) && compat.normalizedProfile !== "teller") {
-      throw new ServerProfileVerificationError(
-        "FORBIDDEN_OPERATIONAL_PROFILE",
-        `Le rôle [${resolvedRole}] exige un profil opérationnel 'teller' valide pour superviser un transfert.`,
         403
       );
     }
@@ -352,6 +434,7 @@ export async function verifyServerEmployeeOperationalProfile(args: {
       uid,
       employeeId: employeeDoc?.id,
       businessId,
+      branchId: resolvedBranchId,
       role: resolvedRole,
       operationalProfile: compat.normalizedProfile,
       status: "ACTIVE"
@@ -377,6 +460,7 @@ export async function verifyServerEmployeeOperationalProfile(args: {
       uid,
       employeeId: employeeDoc?.id,
       businessId,
+      branchId: resolvedBranchId,
       role: resolvedRole,
       operationalProfile: compat.normalizedProfile,
       status: "ACTIVE"
@@ -403,6 +487,7 @@ export async function verifyServerEmployeeOperationalProfile(args: {
         uid,
         employeeId: employeeDoc?.id,
         businessId,
+        branchId: resolvedBranchId,
         role: resolvedRole,
         operationalProfile: null,
         status: "ACTIVE"
@@ -413,6 +498,7 @@ export async function verifyServerEmployeeOperationalProfile(args: {
         uid,
         employeeId: employeeDoc?.id,
         businessId,
+        branchId: resolvedBranchId,
         role: resolvedRole,
         operationalProfile: "teller",
         status: "ACTIVE"
@@ -451,6 +537,7 @@ export async function verifyServerEmployeeOperationalProfile(args: {
     uid,
     employeeId: employeeDoc?.id,
     businessId,
+    branchId: resolvedBranchId,
     role: resolvedRole,
     operationalProfile: decision.normalizedProfile,
     status: "ACTIVE"

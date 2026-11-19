@@ -15,12 +15,14 @@ import { FinopsException } from "../../../modules/runtime/FinopsException";
 import { LedgerTransaction } from "../../../types";
 import {
   canOperateCashTill,
+  isBranchScopedTellerRole,
   normalizeRole
 } from "../../rbac/operationalProfilePolicy";
 
 export interface PostTellerTransactionParams {
   businessId: string;
   branchId: string;
+  operatorBranchId?: string;
   tillId: string;
   sessionId: string;
   operatorId: string;
@@ -131,11 +133,54 @@ export class TellerTransactionEngine {
       }
     }
 
-    // 2. Fetch and Validate Till Status
+    // 2. Fetch and Validate Till Status, Tenant & Branch Isolation
     const till = await CashManagementRepository.getTillById(tillId);
     if (!till) {
       throw new FinopsException("TILL_NOT_FOUND", `La caisse [${tillId}] est introuvable.`);
     }
+
+    if (till.business_id && till.business_id !== businessId) {
+      throw new FinopsException(
+        "CROSS_TENANT_ACCESS_DENIED",
+        `Isolement multi-tenant : La caisse [${tillId}] n'appartient pas à l'entreprise [${businessId}].`
+      );
+    }
+
+    const tillBranchId = (till.branch_id || "").trim();
+    if (!tillBranchId) {
+      throw new FinopsException(
+        "MISSING_BRANCH_SCOPE",
+        `La caisse [${till.name}] ne possède aucune succursale assignée (branch_id manquant).`
+      );
+    }
+
+    const claimedBranchId = (params.branchId || "").trim();
+    const actorBranchId = (params.operatorBranchId || "").trim();
+
+    if (claimedBranchId && claimedBranchId !== tillBranchId) {
+      throw new FinopsException(
+        "BRANCH_ISOLATION_VIOLATION",
+        `Isolement succursale : La caisse [${till.name}] appartient à [${tillBranchId}], pas à [${claimedBranchId}].`
+      );
+    }
+
+    if (isBranchScopedTellerRole(normalizedOpRole)) {
+      const effectiveTellerBranch = actorBranchId || claimedBranchId;
+      if (!effectiveTellerBranch) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          `Le rôle [${normalizedOpRole}] requiert un branch_id assigné pour opérer la caisse [${till.name}].`
+        );
+      }
+      if (effectiveTellerBranch !== tillBranchId) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : Le caissier de [${effectiveTellerBranch}] ne peut pas opérer la caisse [${till.name}] rattachée à [${tillBranchId}].`
+        );
+      }
+    }
+
+    const resolvedBranchId = tillBranchId;
 
     if (till.status !== "OPEN") {
       throw new FinopsException(
@@ -219,8 +264,8 @@ export class TellerTransactionEngine {
         id: glTxIdA,
         businessId,
         business_id: businessId,
-        branchId: params.branchId || till.branch_id || "MAIN_BRANCH",
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branchId: resolvedBranchId,
+        branch_id: resolvedBranchId,
         departmentId: "counter",
         date: businessDate,
         description: `[FX LEG A] ${params.transactionTypeName} - ${till.name} (${currency})`,
@@ -258,8 +303,8 @@ export class TellerTransactionEngine {
         id: glTxIdB,
         businessId,
         business_id: businessId,
-        branchId: params.branchId || till.branch_id || "MAIN_BRANCH",
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branchId: resolvedBranchId,
+        branch_id: resolvedBranchId,
         departmentId: "counter",
         date: businessDate,
         description: `[FX LEG B] ${params.transactionTypeName} - Liaison Change (${targetCurrency})`,
@@ -312,8 +357,8 @@ export class TellerTransactionEngine {
           id: glTxIdC,
           businessId,
           business_id: businessId,
-          branchId: params.branchId || till.branch_id || "MAIN_BRANCH",
-          branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+          branchId: resolvedBranchId,
+          branch_id: resolvedBranchId,
           departmentId: "counter",
           date: businessDate,
           description: `[FX LEG C] ${marginResult.accountName}`,
@@ -357,8 +402,8 @@ export class TellerTransactionEngine {
         id: glTxId,
         businessId,
         business_id: businessId,
-        branchId: params.branchId || till.branch_id || "MAIN_BRANCH",
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branchId: resolvedBranchId,
+        branch_id: resolvedBranchId,
         departmentId: "counter",
         date: businessDate,
         description: `[GUICHET] ${params.transactionTypeName} - ${till.name}`,
@@ -391,7 +436,7 @@ export class TellerTransactionEngine {
     const tellerTx: TellerTransaction = {
       id: txId,
       business_id: businessId,
-      branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+      branch_id: resolvedBranchId,
       till_id: till.id,
       session_id: params.sessionId || till.active_session_id || "default_session",
       operator_id: operatorId,
@@ -515,12 +560,13 @@ export class TellerTransactionEngine {
   ): Promise<{ transaction: TellerTransaction; ledgerTransaction: LedgerTransaction; ledgerTransactions: LedgerTransaction[]; till: CashTill }> {
     const till = await CashManagementRepository.getTillById(params.tillId);
     const resolvedBusinessId = params.businessId || till?.business_id || "";
-    const resolvedBranchId = params.branchId || till?.branch_id || "MAIN_BRANCH";
+    const resolvedBranchId = params.branchId || "";
     const resolvedCurrency = params.currency || till?.currency || "HTG";
 
     const res = await this.postTransaction({
       businessId: resolvedBusinessId,
       branchId: resolvedBranchId,
+      operatorBranchId: params.operatorBranchId || params.branchId,
       tillId: params.tillId,
       sessionId: params.sessionId,
       operatorId: params.operatorId,

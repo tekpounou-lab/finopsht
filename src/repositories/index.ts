@@ -339,7 +339,7 @@ export const PermissionRepository = {
         "view_documents", "view_employee_space", "override_attendance"
       ],
       HEAD_TELLER: [
-        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve",
+        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "cash.supervise",
         "view_documents", "view_employee_space", "override_attendance"
       ],
       SENIOR_TELLER: [

@@ -62,7 +62,34 @@ vi.mock("../../../lib/firebaseAdmin", () => {
             }
           })
         }),
-        doc: () => ({ set: async () => {} })
+        doc: (docId?: string) => {
+          const resolvedId = docId || `auto_${Math.random().toString(36).slice(2, 9)}`;
+          const pathStr = `${colName}/${resolvedId}`;
+          return {
+            id: resolvedId,
+            path: pathStr,
+            get: async () => {
+              const data = mockFirestoreStore.get(pathStr);
+              return {
+                exists: Boolean(data),
+                id: resolvedId,
+                data: () => data
+              };
+            },
+            update: async (fields: any) => {
+              const current = mockFirestoreStore.get(pathStr) || {};
+              mockFirestoreStore.set(pathStr, { ...current, ...fields });
+            },
+            set: async (fields: any, opts?: any) => {
+              if (opts?.merge) {
+                const current = mockFirestoreStore.get(pathStr) || {};
+                mockFirestoreStore.set(pathStr, { ...current, ...fields });
+              } else {
+                mockFirestoreStore.set(pathStr, fields);
+              }
+            }
+          };
+        }
       }),
       runTransaction: async (cb: any) => {
         const transactionMock = {

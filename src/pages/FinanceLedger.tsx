@@ -32,8 +32,11 @@ import { EventBus } from '../modules/runtime/EventBus';
 import {
   EXECUTIVE_RBAC_ROLES,
   extractRawOperationalProfileFromRecord,
-  validateRoleOperationalProfileCompatibility
+  validateRoleOperationalProfileCompatibility,
+  isBranchScopedTellerRole,
+  normalizeRole
 } from '../domains/rbac/operationalProfilePolicy';
+import { PermissionService } from '../services/PermissionService';
 
 const DEFAULT_GL_FILTERS: LedgerFilterParams = {
   type: ['ALL'],
@@ -83,6 +86,28 @@ export default function FinanceLedger({
   const { language } = useI18n();
   const tText = useTranslate();
   const { user: authUser } = useAuth();
+
+  const roleUpper = normalizeRole(currentRole);
+  const isTellerRole = isBranchScopedTellerRole(roleUpper) || roleUpper === 'MASTER_HEAD_TELLER';
+  const canAccessAccountingLedger = ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'].includes(roleUpper);
+  const canAccessCashModule = [
+    'SUPER_ADMIN',
+    'OWNER',
+    'ADMIN',
+    'MANAGER',
+    'ACCOUNTANT',
+    'AUDITOR',
+    'MASTER_HEAD_TELLER',
+    'HEAD_TELLER',
+    'SENIOR_TELLER',
+    'JUNIOR_TELLER',
+    'TELLER'
+  ].includes(roleUpper);
+  const hasPermInit = PermissionService.getRole() !== 'UNASSIGNED';
+  const canWriteLedger =
+    ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(roleUpper) &&
+    (!hasPermInit || PermissionService.can('ledger.write') || PermissionService.can('write_ledger') || PermissionService.can('journal.post'));
+  const canImportLedgerCsv = ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER'].includes(roleUpper);
 
   const currentEmployee = React.useMemo(() => {
     const uid = authUser?.uid || auth.currentUser?.uid;
@@ -159,13 +184,17 @@ export default function FinanceLedger({
   const [showCompensation, setShowCompensation] = useState(false);
   const [showAiCfo, setShowAiCfo] = useState(false);
   const [showDataIntegrity, setShowDataIntegrity] = useState(false);
-  const [currentView, setCurrentView] = useState<'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION' | 'CASH_MANAGEMENT' | 'REPORT_CENTER'>(initialView);
+  const [currentView, setCurrentView] = useState<'TRANSACTIONS' | 'FINANCIAL_STATEMENTS' | 'BANK_RECONCILIATION' | 'CASH_MANAGEMENT' | 'REPORT_CENTER'>(
+    isTellerRole ? 'CASH_MANAGEMENT' : initialView
+  );
 
   useEffect(() => {
-    if (initialView) {
+    if (isTellerRole) {
+      setCurrentView('CASH_MANAGEMENT');
+    } else if (initialView) {
       setCurrentView(initialView);
     }
-  }, [initialView]);
+  }, [initialView, isTellerRole]);
   const [isSeeding, setIsSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -447,22 +476,8 @@ export default function FinanceLedger({
   };
 
   const handleSaveTransaction = async (txData: Partial<LedgerTransaction>) => {
-    const roleUpper = (currentRole || '').toUpperCase();
-    const canSave = [
-      'OWNER',
-      'ADMIN',
-      'MANAGER',
-      'SUPER_ADMIN',
-      'ACCOUNTANT',
-      'MASTER_HEAD_TELLER',
-      'HEAD_TELLER',
-      'SENIOR_TELLER',
-      'JUNIOR_TELLER',
-      'TELLER',
-      'EMPLOYEE'
-    ].includes(roleUpper);
-    if (!canSave) {
-      toast.error(tText("Accès refusé."));
+    if (!canWriteLedger) {
+      toast.error(tText("Accès refusé : votre rôle est en lecture seule ou non autorisé sur le Grand Livre."));
       return;
     }
 
@@ -548,8 +563,8 @@ export default function FinanceLedger({
   const [importProgress, setImportProgress] = useState(0);
 
   const handleCsvImport = async (txs: Partial<LedgerTransaction>[]) => {
-    if (currentRole !== 'OWNER' && currentRole !== 'MANAGER') {
-      toast.error(tText("Accès refusé."));
+    if (!canImportLedgerCsv) {
+      toast.error(tText("Accès refusé : import CSV réservé aux gestionnaires comptables autorisés."));
       return;
     }
 
@@ -701,6 +716,42 @@ export default function FinanceLedger({
     );
   }
 
+  if (!canAccessAccountingLedger && !canAccessCashModule) {
+    return (
+      <div id="unauthorized-ledger-pane" className="p-8 bg-slate-900 border border-rose-500/30 rounded-2xl text-center space-y-2">
+        <p className="text-base font-bold text-rose-400">Accès Restreint — Grand Livre & Trésorerie</p>
+        <p className="text-xs text-slate-400">Votre rôle ({roleUpper || 'INCONNU'}) n'est pas autorisé à consulter ce module.</p>
+      </div>
+    );
+  }
+
+  if (isTellerRole) {
+    if (initialView !== 'CASH_MANAGEMENT') {
+      return (
+        <div id="unauthorized-ledger-pane" className="p-8 bg-slate-900 border border-rose-500/30 rounded-2xl text-center space-y-2">
+          <p className="text-base font-bold text-rose-400">Accès Restreint — Grand Livre & États Financiers</p>
+          <p className="text-xs text-slate-400">Les caissiers et chefs caissiers opèrent uniquement dans le module Caisses & Coffres.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col flex-1 min-h-0 gap-4 font-sans animate-in fade-in w-full">
+        <CashConsole
+          businessId={current_business_id}
+          branchId={currentBranchId || ""}
+          currentUser={{
+            id: authUser?.uid || auth.currentUser?.uid || "user_current",
+            name: authUser?.displayName || currentEmployee?.name || currentBusiness?.name || "Responsable Caisse",
+            role: currentRole,
+            branch_id: currentBranchId || undefined
+          }}
+          employees={employees}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-4 font-sans animate-in fade-in w-full">
       <div className="shrink-0">
@@ -709,13 +760,16 @@ export default function FinanceLedger({
           cashflow={netCashflow}
           orphanCount={orphanTransactions.length}
           isCleaningOrphans={isCleaningOrphans}
-          onCleanOrphans={handleCleanOrphans}
+          onCleanOrphans={canWriteLedger ? handleCleanOrphans : undefined}
           onNewTransaction={() => setShowCreate(true)}
           onImportCsv={() => setShowImport(true)}
           onGenerateReport={handleExportExcel}
           onCompensation={() => setShowCompensation(true)}
           onAiCfo={() => setShowAiCfo(true)}
           onOpenDataIntegrity={() => setShowDataIntegrity(true)}
+          canWriteLedger={canWriteLedger}
+          canImportCsv={canImportLedgerCsv}
+          canUseAiCfo={canAccessAccountingLedger}
         />
       </div>
 
@@ -906,11 +960,12 @@ export default function FinanceLedger({
       ) : currentView === 'CASH_MANAGEMENT' ? (
         <CashConsole
           businessId={current_business_id}
-          branchId={currentBranchId || "MAIN_BRANCH"}
+          branchId={currentBranchId || ""}
           currentUser={{
             id: authUser?.uid || auth.currentUser?.uid || "user_current",
-            name: authUser?.displayName || currentBusiness?.name || "Responsable Caisse",
-            role: currentRole
+            name: authUser?.displayName || currentEmployee?.name || currentBusiness?.name || "Responsable Caisse",
+            role: currentRole,
+            branch_id: currentBranchId || undefined
           }}
           employees={employees}
         />
@@ -939,13 +994,13 @@ export default function FinanceLedger({
           currentRole={currentRole}
           employees={employees}
           onViewDetails={(tx) => {}}
-          onReverse={handleReverseTransaction}
-          onBatchReverse={handleBatchReverseTransactions}
-          onBatchDelete={handleBatchDeleteTransactions}
+          onReverse={canWriteLedger ? handleReverseTransaction : undefined}
+          onBatchReverse={canWriteLedger ? handleBatchReverseTransactions : undefined}
+          onBatchDelete={canWriteLedger ? handleBatchDeleteTransactions : undefined}
           onResetFilters={handleResetFilters}
-          onSeedDemoData={handleSeedDemoData}
+          onSeedDemoData={canImportLedgerCsv ? handleSeedDemoData : undefined}
           isSeeding={isSeeding}
-          onOpenCreate={() => setShowCreate(true)}
+          onOpenCreate={canWriteLedger ? () => setShowCreate(true) : undefined}
           selectedIds={selectedIds}
           onToggleSelection={handleToggleSelection}
           onToggleSelectAll={handleToggleSelectAll}

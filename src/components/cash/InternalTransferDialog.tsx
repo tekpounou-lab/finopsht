@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { CashTill, BranchSafe, CurrencyCode } from "../../types/cashManagement";
 import { TransferUserContext } from "../../domains/cash/services/CashTransferEngine";
 import { auth } from "../../lib/firebase";
+import { isBranchScopedTellerRole, normalizeRole } from "../../domains/rbac/operationalProfilePolicy";
 import { X, ArrowRightLeft, ShieldAlert } from "lucide-react";
 import SearchableSelect from "../ui/SearchableSelect";
 
@@ -16,6 +17,16 @@ interface InternalTransferDialogProps {
   onTransferCreated: () => void;
 }
 
+const TRANSFER_INITIATOR_ROLES = new Set<string>([
+  "SUPER_ADMIN",
+  "OWNER",
+  "ADMIN",
+  "MANAGER",
+  "MASTER_HEAD_TELLER",
+  "HEAD_TELLER",
+  "SENIOR_TELLER"
+]);
+
 export const InternalTransferDialog: React.FC<InternalTransferDialogProps> = ({
   isOpen,
   onClose,
@@ -26,10 +37,27 @@ export const InternalTransferDialog: React.FC<InternalTransferDialogProps> = ({
   currentUser,
   onTransferCreated
 }) => {
+  const normalizedRole = normalizeRole(currentUser?.role);
+  const canInitiateTransfer = Boolean(normalizedRole && TRANSFER_INITIATOR_ROLES.has(normalizedRole));
+  const actorBranchId = (currentUser?.branch_id || currentUser?.branchId || branchId || "").trim();
+  const isBranchScopedTeller = isBranchScopedTellerRole(normalizedRole);
+
+  const scopedSafes = useMemo(() => {
+    if (!isBranchScopedTeller) return safes;
+    if (!actorBranchId) return [];
+    return safes.filter((s) => !s.branch_id || s.branch_id === actorBranchId);
+  }, [safes, isBranchScopedTeller, actorBranchId]);
+
+  const scopedTills = useMemo(() => {
+    if (!isBranchScopedTeller) return tills;
+    if (!actorBranchId) return [];
+    return tills.filter((t) => !t.branch_id || t.branch_id === actorBranchId);
+  }, [tills, isBranchScopedTeller, actorBranchId]);
+
   const [sourceType, setSourceType] = useState<"TILL" | "SAFE" | "BANK">("SAFE");
-  const [sourceId, setSourceId] = useState<string>(safes[0]?.id || "");
+  const [sourceId, setSourceId] = useState<string>(scopedSafes[0]?.id || "");
   const [destType, setDestType] = useState<"TILL" | "SAFE" | "BANK">("TILL");
-  const [destId, setDestId] = useState<string>(tills[0]?.id || "");
+  const [destId, setDestId] = useState<string>(scopedTills[0]?.id || "");
   const [currency, setCurrency] = useState<CurrencyCode>("HTG");
   const [amountStr, setAmountStr] = useState<string>("");
   const [description, setDescription] = useState<string>("");
@@ -38,44 +66,47 @@ export const InternalTransferDialog: React.FC<InternalTransferDialogProps> = ({
 
   if (!isOpen) return null;
 
-  const safeOptions = safes.map((s) => ({
+  const safeOptions = scopedSafes.map((s) => ({
     id: s.id,
     name: `${s.name} (Solde : ${(s.balance_cents / 100).toLocaleString()} ${s.currency})`
   }));
 
-  const tillOptions = tills.map((t) => ({
+  const tillOptions = scopedTills.map((t) => ({
     id: t.id,
     name: `${t.name} (Solde : ${(t.balance_cents / 100).toLocaleString()} ${t.currency})`
   }));
 
   const handleSourceTypeChange = (type: "TILL" | "SAFE" | "BANK") => {
     setSourceType(type);
-    if (type === "SAFE") setSourceId(safes[0]?.id || "");
-    else if (type === "TILL") setSourceId(tills[0]?.id || "");
+    if (type === "SAFE") setSourceId(scopedSafes[0]?.id || "");
+    else if (type === "TILL") setSourceId(scopedTills[0]?.id || "");
     else setSourceId("BANK_SOGEBANK_HTG");
   };
 
   const handleDestTypeChange = (type: "TILL" | "SAFE" | "BANK") => {
     setDestType(type);
-    if (type === "TILL") setDestId(tills[0]?.id || "");
-    else if (type === "SAFE") setDestId(safes[0]?.id || "");
+    if (type === "TILL") setDestId(scopedTills[0]?.id || "");
+    else if (type === "SAFE") setDestId(scopedSafes[0]?.id || "");
     else setDestId("BANK_SOGEBANK_HTG");
-  };
-
-  const getSourceName = (): string => {
-    if (sourceType === "TILL") return tills.find((t) => t.id === sourceId)?.name || "Caisse Source";
-    if (sourceType === "SAFE") return safes.find((s) => s.id === sourceId)?.name || "Coffre Source";
-    return "Compte Bancaire Principal (SOGEBANK)";
-  };
-
-  const getDestName = (): string => {
-    if (destType === "TILL") return tills.find((t) => t.id === destId)?.name || "Caisse Destination";
-    if (destType === "SAFE") return safes.find((s) => s.id === destId)?.name || "Coffre Destination";
-    return "Compte Bancaire Principal (SOGEBANK)";
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canInitiateTransfer) {
+      setErrorMessage(
+        `Accès refusé : le rôle (${normalizedRole || "INCONNU"}) n'est pas autorisé à initier un transfert interne.`
+      );
+      return;
+    }
+    if (isBranchScopedTeller && !actorBranchId) {
+      setErrorMessage("Succursale assignée manquante : impossible d'initier un transfert sans branch_id.");
+      return;
+    }
+    if (sourceType === destType && sourceId === destId) {
+      setErrorMessage("La source et la destination ne peuvent pas être identiques.");
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage(null);
 
@@ -86,21 +117,24 @@ export const InternalTransferDialog: React.FC<InternalTransferDialogProps> = ({
       }
 
       const token = auth.currentUser ? await auth.currentUser.getIdToken() : "";
+      if (!token) {
+        throw new Error("Session expirée ou non authentifiée. Veuillez vous reconnecter.");
+      }
+
       const idempotencyKey = `idemp_req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "x-business-id": businessId,
         "Idempotency-Key": idempotencyKey
       };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
 
       const response = await fetch("/api/cash/transfers/internal/request", {
         method: "POST",
         headers,
         body: JSON.stringify({
           businessId,
-          branchId,
+          ...(actorBranchId ? { branchId: actorBranchId } : {}),
           sourceType,
           sourceId,
           destinationType: destType,
@@ -156,6 +190,22 @@ export const InternalTransferDialog: React.FC<InternalTransferDialogProps> = ({
             </p>
           </div>
         </div>
+
+        {!canInitiateTransfer ? (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>
+              Accès refusé : le rôle ({normalizedRole || "INCONNU"}) n'est pas autorisé à initier un transfert interne.
+            </span>
+          </div>
+        ) : isBranchScopedTeller && !actorBranchId ? (
+          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300 text-xs flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>
+              Succursale assignée manquante : impossible d'initier un transfert sans branch_id.
+            </span>
+          </div>
+        ) : null}
 
         {errorMessage && (
           <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs flex items-center gap-2">
@@ -336,8 +386,8 @@ export const InternalTransferDialog: React.FC<InternalTransferDialogProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition shadow-lg shadow-blue-600/20"
+              disabled={isSubmitting || !canInitiateTransfer || (isBranchScopedTeller && !actorBranchId)}
+              className="px-4 py-2 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition shadow-lg shadow-blue-600/20"
             >
               Soumettre pour Approbation
             </button>

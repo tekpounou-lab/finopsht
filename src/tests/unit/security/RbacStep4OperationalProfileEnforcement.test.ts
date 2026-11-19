@@ -476,9 +476,10 @@ describe("RBAC STEP 4 — Server-Side Operational Profile Enforcement & Step 3 M
 
     it("S4-MHT-03: MASTER_HEAD_TELLER MUST NEVER approve or reject internal transfers across policy, permissions, and server verifier", async () => {
       expect(canApproveInternalTransferRole("MASTER_HEAD_TELLER")).toBe(false);
+      expect(canApproveInternalTransferRole("HEAD_TELLER")).toBe(false);
       expect(canSuperviseTillLifecycleRole("MASTER_HEAD_TELLER")).toBe(true);
       expect(SUPERVISOR_TRANSFER_ROLES.has("MASTER_HEAD_TELLER")).toBe(false);
-      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(true);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(false);
       expect(SUPERVISOR_TRANSFER_ROLES.has("MANAGER")).toBe(true);
       expect(SUPERVISOR_TRANSFER_ROLES.has("OWNER")).toBe(true);
       expect(SUPERVISOR_TRANSFER_ROLES.has("ADMIN")).toBe(true);
@@ -513,15 +514,15 @@ describe("RBAC STEP 4 — Server-Side Operational Profile Enforcement & Step 3 M
         })
       ).rejects.toMatchObject({ code: "FORBIDDEN_ROLE", statusCode: 403 });
 
-      const htVerified = await verifyServerEmployeeOperationalProfile({
-        adminDb,
-        uid: "u_ht",
-        businessId: "biz_alpha",
-        actorRole: "HEAD_TELLER",
-        capability: "transfer_approve"
-      });
-      expect(htVerified.role).toBe("HEAD_TELLER");
-      expect(htVerified.operationalProfile).toBe("teller");
+      await expect(
+        verifyServerEmployeeOperationalProfile({
+          adminDb,
+          uid: "u_ht",
+          businessId: "biz_alpha",
+          actorRole: "HEAD_TELLER",
+          capability: "transfer_approve"
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN_ROLE", statusCode: 403 });
 
       // Direct service invocation check on ServerInternalTransferEngine.approveTransfer & rejectTransfer
       await expect(

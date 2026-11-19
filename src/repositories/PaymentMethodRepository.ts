@@ -371,10 +371,13 @@ export const PaymentMethodRepository = {
       const snap = await getDocs(q);
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as PaymentMethod));
 
-      // Seed defaults if empty
+      // Return defaults read-only if collection is empty (explicit SuperAdmin seed only)
       if (list.length === 0) {
-        await this.seedDefaultPaymentMethods();
-        return await this.getAllMethods(businessId);
+        const defaults = DEFAULT_PAYMENT_METHODS as PaymentMethod[];
+        if (businessId) {
+          return defaults.filter(m => m.scope === "GLOBAL" || (m.scope === "TENANT" && m.business_id === businessId));
+        }
+        return defaults;
       }
 
       cachedPaymentMethods = list;
@@ -397,10 +400,9 @@ export const PaymentMethodRepository = {
   },
 
   /**
-   * Seed standard global payment methods.
+   * Seed standard global payment methods (Super Admin only).
    */
   async seedDefaultPaymentMethods(): Promise<void> {
-    const actor = { uid: "SYSTEM", email: "system@finops.corp", name: "System Bootstrapper" };
     for (const def of DEFAULT_PAYMENT_METHODS) {
       const method: PaymentMethod = {
         ...def,
@@ -410,7 +412,7 @@ export const PaymentMethodRepository = {
       try {
         await setDoc(doc(db, "payment_methods", method.id), method);
       } catch (err) {
-        console.warn(`Failed to seed payment method ${method.code}:`, err);
+        handleFirestoreError(err, OperationType.WRITE, `payment_methods/${method.id}`);
       }
     }
     this.clearCache();

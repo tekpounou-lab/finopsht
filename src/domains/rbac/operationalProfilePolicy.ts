@@ -17,10 +17,12 @@
  *    - Must not carry retired or employee/teller operational profiles.
  * 5. Oversight / non-operational roles ("ACCOUNTANT", "AUDITOR", "SUPERVISOR", "UNASSIGNED", etc.):
  *    - Fail closed (DENY) on commercial employee (sales/services) and teller cash operations.
- * 6. MASTER_HEAD_TELLER Internal Transfer Approval Correction (Step 3 fix):
- *    - MASTER_HEAD_TELLER CAN operate cash, initiate transfers (cash.transfer), supervise tills/closures (cash.supervise),
- *      and auto-provision tills, but MUST NEVER approve or reject internal transfers (transfer.approve = DENY).
- *    - Only SUPER_ADMIN, OWNER, ADMIN, MANAGER, HEAD_TELLER can hold transfer.approve.
+ * 6. Strict No-Teller Internal Transfer Approval Policy (P2 Security Remediation):
+ *    - NO teller role (JUNIOR_TELLER, SENIOR_TELLER, HEAD_TELLER, MASTER_HEAD_TELLER, legacy TELLER) may EVER
+ *      approve or reject internal transfers (transfer.approve = DENY, transfer.reject = DENY).
+ *    - HEAD_TELLER & MASTER_HEAD_TELLER retain till lifecycle supervision (cash.supervise) and transfer initiation
+ *      (cash.transfer), strictly without internal transfer approval authority.
+ *    - Only SUPER_ADMIN, OWNER, ADMIN, MANAGER can hold transfer.approve / transfer.reject.
  */
 
 export const CANONICAL_OPERATIONAL_PROFILES = ["vendeur", "polyvalent", "teller"] as const;
@@ -41,6 +43,18 @@ export const TELLER_ROLES = new Set<string>([
   "MASTER_HEAD_TELLER",
   "TELLER"
 ]);
+
+export const BRANCH_SCOPED_TELLER_ROLES = new Set<string>([
+  "JUNIOR_TELLER",
+  "SENIOR_TELLER",
+  "HEAD_TELLER",
+  "TELLER"
+]);
+
+export function isBranchScopedTellerRole(rawRole: unknown): boolean {
+  const role = normalizeRole(rawRole);
+  return Boolean(role && BRANCH_SCOPED_TELLER_ROLES.has(role));
+}
 
 export const EXECUTIVE_RBAC_ROLES = new Set<string>([
   "OWNER",
@@ -63,14 +77,14 @@ export const OVERSIGHT_NON_OPERATIONAL_ROLES = new Set<string>([
 
 /**
  * Authoritative roles allowed to approve or reject internal transfers (with Maker-Checker enforcement).
- * Explicitly EXCLUDES MASTER_HEAD_TELLER, JUNIOR_TELLER, SENIOR_TELLER, TELLER, EMPLOYEE, ACCOUNTANT, AUDITOR.
+ * Strictly EXCLUDES ALL teller roles (HEAD_TELLER, MASTER_HEAD_TELLER, JUNIOR_TELLER, SENIOR_TELLER, TELLER),
+ * EMPLOYEE, ACCOUNTANT, and AUDITOR.
  */
 export const INTERNAL_TRANSFER_APPROVER_ROLES = new Set<string>([
   "SUPER_ADMIN",
   "OWNER",
   "ADMIN",
-  "MANAGER",
-  "HEAD_TELLER"
+  "MANAGER"
 ]);
 
 /**
@@ -640,13 +654,14 @@ export function canOperateCashTill(
 }
 
 /**
- * Step 3 Mandatory Correction Guard:
- * MASTER_HEAD_TELLER MUST NEVER approve or reject internal transfers.
+ * Strict P2 Security Guard:
+ * NO teller role (JUNIOR_TELLER, SENIOR_TELLER, HEAD_TELLER, MASTER_HEAD_TELLER, TELLER)
+ * may ever approve or reject internal transfers.
  */
 export function canApproveInternalTransferRole(rawRole: unknown): boolean {
   const role = normalizeRole(rawRole);
   if (!role) return false;
-  if (role === "MASTER_HEAD_TELLER") return false;
+  if (TELLER_ROLES.has(role)) return false;
   return INTERNAL_TRANSFER_APPROVER_ROLES.has(role);
 }
 

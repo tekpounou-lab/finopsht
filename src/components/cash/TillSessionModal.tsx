@@ -14,7 +14,7 @@ interface TillSessionModalProps {
   onClose: () => void;
   till: CashTill;
   currentSession?: TillSession;
-  currentUser: { id: string; name: string; role: string };
+  currentUser: { id: string; name: string; role: string; branch_id?: string; branchId?: string };
   onSessionUpdated: () => void;
 }
 
@@ -63,7 +63,30 @@ export const TillSessionModal: React.FC<TillSessionModalProps> = ({
     }));
   };
 
+  const normalizedRole = (currentUser?.role || "").trim().toUpperCase();
+  const canOperateSession = [
+    "SUPER_ADMIN",
+    "OWNER",
+    "ADMIN",
+    "MANAGER",
+    "MASTER_HEAD_TELLER",
+    "HEAD_TELLER",
+    "SENIOR_TELLER",
+    "JUNIOR_TELLER",
+    "TELLER"
+  ].includes(normalizedRole);
+  const resolvedOperatorBranchId = (
+    currentUser?.branch_id ||
+    currentUser?.branchId ||
+    till.branch_id ||
+    ""
+  ).trim();
+
   const handleStartSession = async () => {
+    if (!canOperateSession) {
+      setErrorMessage("Autorisation insuffisante : ce rôle ne peut pas ouvrir de session de caisse.");
+      return;
+    }
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
@@ -74,6 +97,7 @@ export const TillSessionModal: React.FC<TillSessionModalProps> = ({
         operatorId: till.assigned_teller_id || currentUser.id,
         operatorName: till.assigned_teller_name || currentUser.name,
         operatorRole: currentUser.role,
+        operatorBranchId: resolvedOperatorBranchId || undefined,
         openingBalanceCents: openingCents
       });
 
@@ -87,6 +111,10 @@ export const TillSessionModal: React.FC<TillSessionModalProps> = ({
   };
 
   const handleCloseSession = async () => {
+    if (!canOperateSession) {
+      setErrorMessage("Autorisation insuffisante : ce rôle ne peut pas clôturer de session de caisse.");
+      return;
+    }
     if (!currentSession) {
       setErrorMessage("Aucune session active identifiée.");
       return;
@@ -111,6 +139,7 @@ export const TillSessionModal: React.FC<TillSessionModalProps> = ({
         operatorId: currentUser.id,
         operatorName: currentUser.name,
         operatorRole: currentUser.role,
+        operatorBranchId: resolvedOperatorBranchId || undefined,
         notes: notes.trim()
       });
 
@@ -183,9 +212,9 @@ export const TillSessionModal: React.FC<TillSessionModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canOperateSession}
                 onClick={handleStartSession}
-                className="px-4 py-2 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-2 shadow-lg shadow-emerald-600/20"
+                className="px-4 py-2 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition flex items-center gap-2 shadow-lg shadow-emerald-600/20"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Confirmer & Ouvrir la Session</span>
@@ -288,9 +317,9 @@ export const TillSessionModal: React.FC<TillSessionModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canOperateSession}
                 onClick={handleCloseSession}
-                className="px-4 py-2 rounded-lg text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white transition flex items-center gap-2 shadow-lg shadow-amber-600/20"
+                className="px-4 py-2 rounded-lg text-xs font-medium bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white transition flex items-center gap-2 shadow-lg shadow-amber-600/20"
               >
                 <CheckCircle className="w-4 h-4" />
                 <span>Valider le Billetage & Clôturer</span>

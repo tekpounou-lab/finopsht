@@ -31,7 +31,10 @@ import {
   normalizeRole,
   validateRoleOperationalProfileCompatibility
 } from "../../rbac/operationalProfilePolicy";
-import { verifyServerEmployeeOperationalProfile } from "../../rbac/serverEmployeeProfileVerifier";
+import {
+  isBranchScopedTellerRole,
+  verifyServerEmployeeOperationalProfile
+} from "../../rbac/serverEmployeeProfileVerifier";
 
 export interface OpenSessionParams {
   tillId: string;
@@ -40,6 +43,7 @@ export interface OpenSessionParams {
   operatorName: string;
   operatorRole?: string;
   operatorProfile?: string;
+  operatorBranchId?: string;
   openingBalanceCents: number;
   businessDate?: string;
 }
@@ -55,6 +59,7 @@ export interface CloseSessionParams {
   operatorName: string;
   operatorRole?: string;
   operatorProfile?: string;
+  operatorBranchId?: string;
   claimedOperatorRole?: unknown;
   claimedOperatorProfile?: unknown;
   authenticatedUid?: string;
@@ -72,6 +77,7 @@ export interface ReopenSessionParams {
   approverName: string;
   approverRole: string;
   approverProfile?: string;
+  approverBranchId?: string;
   claimedApproverRole?: unknown;
   claimedApproverProfile?: unknown;
   authenticatedApproverUid?: string;
@@ -770,13 +776,21 @@ export class TillSessionEngine {
         creditAcc = varianceAccountCode;
       }
 
+      const resolvedVarianceBranchId = (till.branch_id || currentSession.branch_id || "").trim();
+      if (!resolvedVarianceBranchId) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          "L'identifiant de succursale (branch_id) est obligatoire pour comptabiliser un écart de caisse."
+        );
+      }
+
       const varianceGlId = `gl_variance_${sessionId}`;
       const rawVarianceTx: LedgerTransaction = {
         id: varianceGlId,
         business_id: till.business_id,
         businessId: till.business_id,
-        branchId: till.branch_id || "MAIN_BRANCH",
-        branch_id: till.branch_id || "MAIN_BRANCH",
+        branchId: resolvedVarianceBranchId,
+        branch_id: resolvedVarianceBranchId,
         departmentId: "counter",
         department_id: "counter",
         date: (currentSession.business_date || now).slice(0, 10),
@@ -1692,6 +1706,8 @@ export class TillSessionEngine {
         adminDb,
         uid: params.operatorId,
         businessId: targetBizId,
+        actorBranchId: params.operatorBranchId,
+        requireBranchScope: isBranchScopedTellerRole(actorRoleNorm),
         actorRole: params.operatorRole,
         claimedRole: params.claimedOperatorRole,
         claimedProfile: params.claimedOperatorProfile,
@@ -1700,8 +1716,10 @@ export class TillSessionEngine {
       const verifiedParams: CloseSessionParams = {
         ...params,
         operatorRole: verifiedActor.role,
-        operatorProfile: verifiedActor.operationalProfile ?? undefined
+        operatorProfile: verifiedActor.operationalProfile ?? undefined,
+        operatorBranchId: verifiedActor.branchId
       };
+      const isTellerBranchScoped = verifiedActor.role !== "SUPER_ADMIN" && isBranchScopedTellerRole(verifiedActor.role);
 
       const result = await adminDb.runTransaction(async (tx: any) => {
         // 1. All Transactional Reads First (D3.1-D)
@@ -1760,6 +1778,28 @@ export class TillSessionEngine {
           customerTransfers = (custSnap.docs || []).map(
             (d: any) => ({ id: d.id, ...d.data() } as CustomerTransfer)
           );
+        }
+
+        if (
+          isTellerBranchScoped &&
+          verifiedActor.branchId &&
+          currentSession &&
+          till &&
+          ((currentSession.business_id || "").trim() === (verifiedParams.businessId || currentSession.business_id || "").trim()) &&
+          ((till.business_id || "").trim() === (currentSession.business_id || "").trim())
+        ) {
+          if (currentSession.branch_id && currentSession.branch_id !== verifiedActor.branchId) {
+            throw new FinopsException(
+              "BRANCH_ISOLATION_VIOLATION",
+              `Accès inter-succursale refusé : la session [${currentSession.id}] appartient à '${currentSession.branch_id}', opérateur limité à '${verifiedActor.branchId}'.`
+            );
+          }
+          if (till.branch_id && till.branch_id !== verifiedActor.branchId) {
+            throw new FinopsException(
+              "BRANCH_ISOLATION_VIOLATION",
+              `Accès inter-succursale refusé : la caisse [${till.id}] appartient à '${till.branch_id}', opérateur limité à '${verifiedActor.branchId}'.`
+            );
+          }
         }
 
         // 2. Pure Validation & Variance / Balance Calculation
@@ -2010,6 +2050,8 @@ export class TillSessionEngine {
         adminDb,
         uid: params.approverId,
         businessId: params.businessId,
+        actorBranchId: params.approverBranchId,
+        requireBranchScope: isBranchScopedTellerRole(approverRoleNorm),
         actorRole: params.approverRole,
         claimedRole: params.claimedApproverRole,
         claimedProfile: params.claimedApproverProfile,
@@ -2018,8 +2060,11 @@ export class TillSessionEngine {
       const verifiedReopenParams: ReopenSessionParams = {
         ...params,
         approverRole: verifiedApprover.role,
-        approverProfile: verifiedApprover.operationalProfile ?? undefined
+        approverProfile: verifiedApprover.operationalProfile ?? undefined,
+        approverBranchId: verifiedApprover.branchId
       };
+      const isApproverBranchScoped =
+        verifiedApprover.role !== "SUPER_ADMIN" && isBranchScopedTellerRole(verifiedApprover.role);
 
       const result = await adminDb.runTransaction(async (tx: any) => {
         const tillSnap = await tx.get(tillRef);
@@ -2042,6 +2087,31 @@ export class TillSessionEngine {
           : reqUserSnap.exists
           ? { id: reqUserSnap.id || cleanReqId, ...reqUserSnap.data() }
           : null;
+
+        if (
+          isApproverBranchScoped &&
+          verifiedApprover.branchId &&
+          till &&
+          prevSession &&
+          (!params.businessId || till.business_id === params.businessId) &&
+          till.business_id === prevSession.business_id
+        ) {
+          if (till.branch_id && till.branch_id !== verifiedApprover.branchId) {
+            throw new FinopsException(
+              "BRANCH_ISOLATION_VIOLATION",
+              `Accès inter-succursale refusé : la caisse [${till.id}] appartient à '${till.branch_id}', superviseur limité à '${verifiedApprover.branchId}'.`
+            );
+          }
+          if (requesterRecord) {
+            const reqBranch = String(requesterRecord.branch_id || requesterRecord.branchId || "").trim();
+            if (reqBranch && reqBranch !== verifiedApprover.branchId) {
+              throw new FinopsException(
+                "BRANCH_ISOLATION_VIOLATION",
+                `Accès inter-succursale refusé : le demandeur [${cleanReqId}] appartient à '${reqBranch}', superviseur limité à '${verifiedApprover.branchId}'.`
+              );
+            }
+          }
+        }
 
         const { updatedPrevSession, newSession, reopenedTill } = this.evaluateReopen({
           params: verifiedReopenParams,

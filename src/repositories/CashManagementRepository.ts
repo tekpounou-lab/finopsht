@@ -236,7 +236,7 @@ export class CashManagementRepository {
 
   static async autoProvisionTillsForBusiness(
     businessId: string,
-    branchId: string = "MAIN_BRANCH",
+    branchId?: string,
     initialEmployees?: Employee[]
   ): Promise<{
     tillsCreated: number;
@@ -257,7 +257,7 @@ export class CashManagementRepository {
 
     const cleanBusinessId = businessId.trim();
     const cleanBranchId =
-      typeof branchId === "string" && branchId.trim() ? branchId.trim() : "MAIN_BRANCH";
+      typeof branchId === "string" && branchId.trim() ? branchId.trim() : undefined;
 
     try {
       // 1. Gather candidate employees from initialEmployees and EmployeeRepository
@@ -310,7 +310,7 @@ export class CashManagementRepository {
         },
         body: JSON.stringify({
           businessId: cleanBusinessId,
-          branchId: cleanBranchId,
+          ...(cleanBranchId ? { branchId: cleanBranchId } : {}),
           initialEmployees: activeEmployees
         })
       });

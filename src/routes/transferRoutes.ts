@@ -16,15 +16,18 @@ import {
 } from "../domains/cash/services/ServerInternalTransferEngine";
 import { FinopsException } from "../modules/runtime/FinopsException";
 import { getAdminFirestore } from "../lib/firebaseAdmin";
-import {
-  ServerProfileVerificationError,
-  verifyServerEmployeeOperationalProfile
-} from "../domains/rbac/serverEmployeeProfileVerifier";
+import { isBranchScopedTellerRole, ServerProfileVerificationError, verifyServerEmployeeOperationalProfile } from "../domains/rbac/serverEmployeeProfileVerifier";
 import { canApproveInternalTransferRole } from "../domains/rbac/operationalProfilePolicy";
 
 export const transferRouter = Router();
 
 function mapFinopsExceptionStatus(code: string): number {
+  if (code === "UNAUTHORIZED") {
+    return 401;
+  }
+  if (code === "AUTH_VERIFICATION_UNAVAILABLE") {
+    return 503;
+  }
   if (
     code === "TENANT_ISOLATION_VIOLATION" ||
     code === "UNAUTHORIZED_SESSION_OPERATOR" ||
@@ -44,7 +47,9 @@ function mapFinopsExceptionStatus(code: string): number {
     code === "INACTIVE_ACTOR" ||
     code === "INVALID_OR_MISSING_ROLE" ||
     code === "OVERSIGHT_ROLE_OPERATIONAL_DENY" ||
-    code === "FORBIDDEN_EMPLOYEE_CASH_ACCESS"
+    code === "FORBIDDEN_EMPLOYEE_CASH_ACCESS" ||
+    code === "BRANCH_ISOLATION_VIOLATION" ||
+    code === "MISSING_BRANCH_SCOPE"
   ) {
     return 403;
   }
@@ -135,28 +140,40 @@ transferRouter.post("/intake", authenticateToken, async (req: AuthenticatedReque
     }
 
     const params = req.body || {};
-    await verifyServerEmployeeOperationalProfile({
+    const verifiedActor = await verifyServerEmployeeOperationalProfile({
       adminDb: getAdminFirestore(),
       uid: req.user.uid,
       email: req.user.email,
       businessId,
+      actorBranchId: req.user.branch_id,
+      claimedBranchId: params.branchId ?? params.branch_id,
+      requireBranchScope: true,
       actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
       isSuperAdmin: req.user.isSuperAdmin,
       claimedRole: params.operatorRole,
       claimedProfile: params.operational_profile ?? params.operationalProfile,
       capability: "cash"
     });
+    const resolvedBranchId = isBranchScopedTellerRole(verifiedActor.role)
+      ? verifiedActor.branchId
+      : verifiedActor.branchId ||
+        req.user.branch_id ||
+        (typeof params.branchId === "string" ? params.branchId.trim() : undefined) ||
+        (typeof params.branch_id === "string" ? params.branch_id.trim() : undefined);
+
     const operatorContext = {
       uid: req.user.uid,
       name: req.user.email || req.user.uid,
-      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : verifiedActor.role,
       email: req.user.email,
-      business_id: businessId
+      business_id: businessId,
+      branch_id: resolvedBranchId
     };
 
     const result = await ServerTransferIntakeEngine.recordInboundTransfer(
       {
         ...params,
+        branchId: resolvedBranchId,
         businessId
       },
       operatorContext
@@ -209,28 +226,40 @@ transferRouter.post("/payout", authenticateToken, async (req: AuthenticatedReque
     }
 
     const params = req.body || {};
-    await verifyServerEmployeeOperationalProfile({
+    const verifiedActor = await verifyServerEmployeeOperationalProfile({
       adminDb: getAdminFirestore(),
       uid: req.user.uid,
       email: req.user.email,
       businessId,
+      actorBranchId: req.user.branch_id,
+      claimedBranchId: params.branchId ?? params.branch_id,
+      requireBranchScope: true,
       actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
       isSuperAdmin: req.user.isSuperAdmin,
       claimedRole: params.operatorRole,
       claimedProfile: params.operational_profile ?? params.operationalProfile,
       capability: "cash"
     });
+    const resolvedBranchId = isBranchScopedTellerRole(verifiedActor.role)
+      ? verifiedActor.branchId
+      : verifiedActor.branchId ||
+        req.user.branch_id ||
+        (typeof params.branchId === "string" ? params.branchId.trim() : undefined) ||
+        (typeof params.branch_id === "string" ? params.branch_id.trim() : undefined);
+
     const operatorContext = {
       uid: req.user.uid,
       name: req.user.email || req.user.uid,
-      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : verifiedActor.role,
       email: req.user.email,
-      business_id: businessId
+      business_id: businessId,
+      branch_id: resolvedBranchId
     };
 
     const updatedTransfer = await ServerTransferPayoutEngine.executePayout(
       {
         ...params,
+        branchId: resolvedBranchId,
         businessId
       },
       operatorContext
@@ -348,11 +377,14 @@ transferRouter.post("/internal/request", authenticateToken, async (req: Authenti
     if (!businessId) return;
 
     const normalizedRole = (req.user.role || "").trim().toUpperCase();
-    await verifyServerEmployeeOperationalProfile({
+    const verifiedActor = await verifyServerEmployeeOperationalProfile({
       adminDb: getAdminFirestore(),
       uid: req.user.uid,
       email: req.user.email,
       businessId,
+      actorBranchId: req.user.branch_id,
+      claimedBranchId: req.body?.branchId ?? req.body?.branch_id,
+      requireBranchScope: true,
       actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
       isSuperAdmin: req.user.isSuperAdmin,
       claimedRole: req.body?.initiatorRole ?? req.body?.operatorRole,
@@ -360,13 +392,20 @@ transferRouter.post("/internal/request", authenticateToken, async (req: Authenti
       capability: "transfer_initiate"
     });
 
+    const resolvedBranchId = isBranchScopedTellerRole(verifiedActor.role)
+      ? verifiedActor.branchId
+      : verifiedActor.branchId ||
+        req.user.branch_id ||
+        (typeof req.body?.branchId === "string" ? req.body.branchId.trim() : undefined) ||
+        (typeof req.body?.branch_id === "string" ? req.body.branch_id.trim() : undefined);
+
     const actor: ServerActorContext = {
       uid: req.user.uid,
       business_id: businessId,
-      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : verifiedActor.role,
       name: req.user.email || req.user.uid,
       email: req.user.email,
-      branch_id: req.user.branch_id || req.body?.branchId || "MAIN_BRANCH"
+      branch_id: resolvedBranchId
     };
 
     const idempotencyKey = (req.headers["idempotency-key"] as string) || req.body?.idempotencyKey || undefined;
@@ -374,6 +413,7 @@ transferRouter.post("/internal/request", authenticateToken, async (req: Authenti
     const result = await ServerInternalTransferEngine.requestTransfer(
       {
         ...req.body,
+        branchId: resolvedBranchId,
         businessId,
         idempotencyKey
       },
@@ -425,18 +465,19 @@ transferRouter.post("/internal/:transferId/approve", authenticateToken, async (r
     }
 
     const normalizedRole = (req.user.role || "").trim().toUpperCase();
-    if (!req.user.isSuperAdmin && (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole))) {
+    if (!req.user.isSuperAdmin && !canApproveInternalTransferRole(normalizedRole)) {
       return res.status(403).json({
         error: "FORBIDDEN_ROLE",
         message: `Role '${req.user.role}' is not authorized to approve internal transfers.`
       });
     }
 
-    await verifyServerEmployeeOperationalProfile({
+    const verifiedActor = await verifyServerEmployeeOperationalProfile({
       adminDb: getAdminFirestore(),
       uid: req.user.uid,
       email: req.user.email,
       businessId,
+      actorBranchId: req.user.branch_id,
       actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
       isSuperAdmin: req.user.isSuperAdmin,
       claimedRole: req.body?.approverRole,
@@ -447,10 +488,13 @@ transferRouter.post("/internal/:transferId/approve", authenticateToken, async (r
     const actor: ServerActorContext = {
       uid: req.user.uid,
       business_id: businessId,
-      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : verifiedActor.role,
       name: req.user.email || req.user.uid,
       email: req.user.email,
-      branch_id: req.user.branch_id || req.body?.branchId || "MAIN_BRANCH"
+      branch_id:
+        verifiedActor.branchId ||
+        req.user.branch_id ||
+        (typeof req.body?.branchId === "string" ? req.body.branchId.trim() : undefined)
     };
 
     const idempotencyKey = (req.headers["idempotency-key"] as string) || req.body?.idempotencyKey || undefined;
@@ -518,18 +562,19 @@ transferRouter.post("/internal/:transferId/reject", authenticateToken, async (re
     }
 
     const normalizedRole = (req.user.role || "").trim().toUpperCase();
-    if (!req.user.isSuperAdmin && (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole))) {
+    if (!req.user.isSuperAdmin && !canApproveInternalTransferRole(normalizedRole)) {
       return res.status(403).json({
         error: "FORBIDDEN_ROLE",
         message: `Role '${req.user.role}' is not authorized to reject internal transfers.`
       });
     }
 
-    await verifyServerEmployeeOperationalProfile({
+    const verifiedActor = await verifyServerEmployeeOperationalProfile({
       adminDb: getAdminFirestore(),
       uid: req.user.uid,
       email: req.user.email,
       businessId,
+      actorBranchId: req.user.branch_id,
       actorRole: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
       isSuperAdmin: req.user.isSuperAdmin,
       claimedRole: req.body?.approverRole,
@@ -540,10 +585,13 @@ transferRouter.post("/internal/:transferId/reject", authenticateToken, async (re
     const actor: ServerActorContext = {
       uid: req.user.uid,
       business_id: businessId,
-      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : normalizedRole,
+      role: req.user.isSuperAdmin ? "SUPER_ADMIN" : verifiedActor.role,
       name: req.user.email || req.user.uid,
       email: req.user.email,
-      branch_id: req.user.branch_id || req.body?.branchId || "MAIN_BRANCH"
+      branch_id:
+        verifiedActor.branchId ||
+        req.user.branch_id ||
+        (typeof req.body?.branchId === "string" ? req.body.branchId.trim() : undefined)
     };
 
     const idempotencyKey = (req.headers["idempotency-key"] as string) || req.body?.idempotencyKey || undefined;

@@ -106,7 +106,15 @@ export const TransactionTypeBulkImportDialog: React.FC<TransactionTypeBulkImport
     reader.readAsText(file);
   };
 
+  const canEditTransactionTypes = ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"].includes(
+    (currentRole || "").trim().toUpperCase()
+  );
+
   const handleConfirmImport = async () => {
+    if (!canEditTransactionTypes) {
+      toast.error("Autorisation insuffisante pour importer des types de transactions.");
+      return;
+    }
     if (parsedRows.length === 0) return;
 
     try {

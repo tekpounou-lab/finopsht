@@ -332,6 +332,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
       operationalProfile: "teller",
       business_id: "biz_tenant_alpha",
       businessId: "biz_tenant_alpha",
+      branch_id: "br_alpha_main",
+      branchId: "br_alpha_main",
       status: "ACTIVE"
     });
     mockUserDocs.set("uid_teller_alpha", {
@@ -342,6 +344,8 @@ describe("Phase D2: Secure Server-Side Till Auto-Provisioning, RBAC, Tenant Isol
       operationalProfile: "teller",
       business_id: "biz_tenant_alpha",
       businessId: "biz_tenant_alpha",
+      branch_id: "br_alpha_main",
+      branchId: "br_alpha_main",
       status: "ACTIVE"
     });
     mockUserDocs.set("uid_auditor_alpha", {

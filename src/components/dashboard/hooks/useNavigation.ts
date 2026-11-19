@@ -99,7 +99,7 @@ export function useNavigation(currentRole: Role, initialTab?: string) {
 
   const isTabAuthorized = useCallback(
     (tab: string) => {
-      if (!authorizedTabs || authorizedTabs.length === 0) return true;
+      if (!authorizedTabs || authorizedTabs.length === 0) return false;
       const normalized = normalizeTab(tab);
       return (
         authorizedTabs.includes(tab) ||

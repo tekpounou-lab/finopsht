@@ -25,7 +25,7 @@ interface TellerTransactionModalProps {
   onClose: () => void;
   till: CashTill;
   currentSession?: TillSession;
-  currentUser: { id: string; name: string; role: string };
+  currentUser: { id: string; name: string; role: string; branch_id?: string; branchId?: string };
   onTransactionSuccess: () => void;
 }
 
@@ -110,8 +110,31 @@ export const TellerTransactionModal: React.FC<TellerTransactionModalProps> = ({
   const fxUsdAmount = parsedAmount;
   const fxHtgEquivalent = Math.round(fxUsdAmount * appliedRate * 100) / 100;
 
+  const normalizedRole = (currentUser?.role || "").trim().toUpperCase();
+  const canOperateTillTransactions = [
+    "SUPER_ADMIN",
+    "OWNER",
+    "ADMIN",
+    "MANAGER",
+    "MASTER_HEAD_TELLER",
+    "HEAD_TELLER",
+    "SENIOR_TELLER",
+    "JUNIOR_TELLER",
+    "TELLER"
+  ].includes(normalizedRole);
+  const resolvedOperatorBranchId = (
+    currentUser?.branch_id ||
+    currentUser?.branchId ||
+    till.branch_id ||
+    ""
+  ).trim();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canOperateTillTransactions) {
+      setErrorMessage("Autorisation insuffisante : ce rôle ne peut pas enregistrer de transactions de guichet.");
+      return;
+    }
     if (!currentSession) {
       setErrorMessage("Une session de caisse active est obligatoire pour enregistrer une transaction.");
       return;
@@ -134,6 +157,7 @@ export const TellerTransactionModal: React.FC<TellerTransactionModalProps> = ({
           operatorId: currentUser.id,
           operatorName: currentUser.name,
           operatorRole: currentUser.role,
+          operatorBranchId: resolvedOperatorBranchId || undefined,
           transactionType: "COLLECTION_CLIENT",
           currency: till.currency,
           amountCents,
@@ -156,6 +180,7 @@ export const TellerTransactionModal: React.FC<TellerTransactionModalProps> = ({
           operatorId: currentUser.id,
           operatorName: currentUser.name,
           operatorRole: currentUser.role,
+          operatorBranchId: resolvedOperatorBranchId || undefined,
           transactionType: "DISBURSEMENT_OPERATION",
           currency: till.currency,
           amountCents,
@@ -178,6 +203,7 @@ export const TellerTransactionModal: React.FC<TellerTransactionModalProps> = ({
           operatorId: currentUser.id,
           operatorName: currentUser.name,
           operatorRole: currentUser.role,
+          operatorBranchId: resolvedOperatorBranchId || undefined,
           transactionType: "FX_EXCHANGE",
           currency: till.currency,
           amountCents,
@@ -482,7 +508,7 @@ export const TellerTransactionModal: React.FC<TellerTransactionModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canOperateTillTransactions}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
               >
                 <ShieldCheck className="w-4 h-4" />

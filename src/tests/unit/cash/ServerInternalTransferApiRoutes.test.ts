@@ -187,6 +187,15 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
     isSuperAdmin: false
   };
 
+  const ownerUser = {
+    uid: "usr_owner_404",
+    email: "boss.owner@finops.com",
+    role: "OWNER",
+    business_id: BIZ_ID,
+    branch_id: BRANCH_ID,
+    isSuperAdmin: false
+  };
+
   const tillA: CashTill = {
     id: "till_api_01",
     business_id: BIZ_ID,
@@ -265,6 +274,22 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
       operational_profile: "teller",
       status: "ACTIVE",
       isActive: true
+    });
+    mockStore.set(`users/${ownerUser.uid}`, {
+      id: ownerUser.uid,
+      uid: ownerUser.uid,
+      business_id: BIZ_ID,
+      branch_id: BRANCH_ID,
+      role: "OWNER",
+      status: "ACTIVE"
+    });
+    mockStore.set(`users/${managerUser.uid}`, {
+      id: managerUser.uid,
+      uid: managerUser.uid,
+      business_id: BIZ_ID,
+      branch_id: BRANCH_ID,
+      role: "MANAGER",
+      status: "ACTIVE"
     });
     mockStore.set(`cash_tills/${tillA.id}`, { ...tillA });
     mockStore.set(`branch_safes/${safeMain.id}`, { ...safeMain });
@@ -361,7 +386,33 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
       expect(approveRes.body.error).toBe("MAKER_CHECKER_VIOLATION");
     });
 
-    it("should approve transfer successfully when distinct supervisor approves", async () => {
+    it("should reject HEAD_TELLER attempting to approve an internal transfer with 403 FORBIDDEN_ROLE (P2 F-01)", async () => {
+      const reqRes = await invokeRoute("post", "/internal/request", tellerUser, {
+        businessId: BIZ_ID,
+        sourceType: "TILL",
+        sourceId: tillA.id,
+        destinationType: "SAFE",
+        destinationId: safeMain.id,
+        amountCents: 15000_00,
+        currency: "HTG",
+        reason: "Transfert par guichetier"
+      });
+
+      const transferId = reqRes.body.transferId;
+
+      const approveRes = await invokeRoute(
+        "post",
+        `/internal/${transferId}/approve`,
+        supervisorUser,
+        { businessId: BIZ_ID, approvalNotes: "Tentative par HEAD_TELLER" },
+        { transferId }
+      );
+
+      expect(approveRes.statusCode).toBe(403);
+      expect(approveRes.body.error).toBe("FORBIDDEN_ROLE");
+    });
+
+    it("should approve transfer successfully when distinct OWNER/MANAGER approves", async () => {
       // 1. Teller initiates transfer
       const reqRes = await invokeRoute("post", "/internal/request", tellerUser, {
         businessId: BIZ_ID,
@@ -376,11 +427,11 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
 
       const transferId = reqRes.body.transferId;
 
-      // 2. Supervisor approves
+      // 2. Authorized OWNER approves
       const approveRes = await invokeRoute(
         "post",
         `/internal/${transferId}/approve`,
-        supervisorUser,
+        ownerUser,
         { businessId: BIZ_ID, approvalNotes: "Conforme" },
         { transferId }
       );
@@ -388,7 +439,7 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
       expect(approveRes.statusCode).toBe(200);
       expect(approveRes.body.success).toBe(true);
       expect(approveRes.body.status).toBe("EXECUTED");
-      expect(approveRes.body.transfer.approver_id).toBe(supervisorUser.uid);
+      expect(approveRes.body.transfer.approver_id).toBe(ownerUser.uid);
     });
 
     it("should return HTTP 409 Conflict when re-approving an already executed transfer", async () => {
@@ -406,11 +457,11 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
 
       const transferId = reqRes.body.transferId;
 
-      // 2. Supervisor approves 1st time
-      await invokeRoute("post", `/internal/${transferId}/approve`, supervisorUser, { businessId: BIZ_ID }, { transferId });
+      // 2. Authorized OWNER approves 1st time
+      await invokeRoute("post", `/internal/${transferId}/approve`, ownerUser, { businessId: BIZ_ID }, { transferId });
 
-      // 3. Supervisor approves 2nd time
-      const res2 = await invokeRoute("post", `/internal/${transferId}/approve`, supervisorUser, { businessId: BIZ_ID }, { transferId });
+      // 3. Authorized OWNER approves 2nd time
+      const res2 = await invokeRoute("post", `/internal/${transferId}/approve`, ownerUser, { businessId: BIZ_ID }, { transferId });
 
       expect(res2.statusCode).toBe(409);
       expect(res2.body.error).toBe("TRANSFER_ALREADY_FINALIZED");
@@ -435,7 +486,7 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
       const rejectRes = await invokeRoute(
         "post",
         `/internal/${transferId}/reject`,
-        supervisorUser,
+        ownerUser,
         { businessId: BIZ_ID, rejectionReason: "NO" }, // Too short
         { transferId }
       );
@@ -444,7 +495,7 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
       expect(rejectRes.body.error).toBe("REJECTION_REASON_REQUIRED");
     });
 
-    it("should reject transfer when supervisor provides a valid rejection reason", async () => {
+    it("should reject transfer when authorized OWNER/MANAGER provides a valid rejection reason", async () => {
       const reqRes = await invokeRoute("post", "/internal/request", tellerUser, {
         businessId: BIZ_ID,
         sourceType: "TILL",
@@ -461,7 +512,7 @@ describe("ServerInternalTransferApiRoutes Test Suite (D4-B-2.2)", () => {
       const rejectRes = await invokeRoute(
         "post",
         `/internal/${transferId}/reject`,
-        supervisorUser,
+        ownerUser,
         { businessId: BIZ_ID, rejectionReason: "Montant incohérent avec le comptage physique" },
         { transferId }
       );

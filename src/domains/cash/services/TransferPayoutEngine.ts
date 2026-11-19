@@ -5,11 +5,12 @@ import { LedgerTransaction } from "../../../types";
 import { CashAccountMapping } from "../validation/cashAccountMapping";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
 import { ForensicLogRepository, computeHMACSignature, getForensicHMACSecretKey } from "../../../repositories/ForensicLogRepository";
-import { canOperateCashTill, normalizeRole } from "../../rbac/operationalProfilePolicy";
+import { canOperateCashTill, isBranchScopedTellerRole, normalizeRole } from "../../rbac/operationalProfilePolicy";
 
 export interface PayoutParams {
   businessId: string;
   branchId: string;
+  operatorBranchId?: string;
   transferId: string;
   tillId: string;
   sessionId: string;
@@ -25,6 +26,8 @@ export interface AuthenticatedUserContext {
   id: string;
   name: string;
   role?: string;
+  branch_id?: string;
+  branchId?: string;
   operational_profile?: string;
   operationalProfile?: string;
 }
@@ -136,6 +139,12 @@ export class TransferPayoutEngine {
         throw new FinopsException("TRANSFER_NOT_FOUND", "Le transfert à payer est introuvable.");
       }
       const transfer = { id: transferSnap.id, ...transferSnap.data() } as CustomerTransfer;
+      if (transfer.business_id && transfer.business_id !== businessId) {
+        throw new FinopsException(
+          "CROSS_TENANT_ACCESS_DENIED",
+          "Isolement multi-tenant : Ce transfert n'appartient pas à cette entreprise."
+        );
+      }
       if (transfer.status === "PAID") {
         throw new FinopsException("TRANSFER_ALREADY_PAID", "Ce transfert a déjà été payé.");
       }
@@ -151,6 +160,47 @@ export class TransferPayoutEngine {
         throw new FinopsException("TILL_NOT_FOUND", "La caisse sélectionnée est introuvable.");
       }
       const till = { id: tillSnap.id, ...tillSnap.data() } as CashTill;
+      if (till.business_id && till.business_id !== businessId) {
+        throw new FinopsException(
+          "CROSS_TENANT_ACCESS_DENIED",
+          "Isolement multi-tenant : Cette caisse n'appartient pas à cette entreprise."
+        );
+      }
+
+      const tillBranchId = (till.branch_id || "").trim();
+      if (!tillBranchId) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          `La caisse "${till.name}" ne possède pas de branch_id.`
+        );
+      }
+
+      const claimedBranchId = (params.branchId || "").trim();
+      const authBranchId = (authenticatedUser.branch_id || authenticatedUser.branchId || params.operatorBranchId || "").trim();
+
+      if (claimedBranchId && claimedBranchId !== tillBranchId) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : La caisse "${till.name}" appartient à [${tillBranchId}], pas à [${claimedBranchId}].`
+        );
+      }
+
+      if (isBranchScopedTellerRole(authRole)) {
+        const effectiveBranch = authBranchId || claimedBranchId;
+        if (!effectiveBranch) {
+          throw new FinopsException(
+            "MISSING_BRANCH_SCOPE",
+            `Le rôle [${authRole}] requiert un branch_id assigné pour payer un transfert.`
+          );
+        }
+        if (effectiveBranch !== tillBranchId) {
+          throw new FinopsException(
+            "BRANCH_ISOLATION_VIOLATION",
+            `Isolement succursale : Le caissier de [${effectiveBranch}] ne peut pas opérer la caisse de [${tillBranchId}].`
+          );
+        }
+      }
+
       if (till.status !== "OPEN") {
         throw new FinopsException(
           "TILL_NOT_OPEN",
@@ -194,8 +244,8 @@ export class TransferPayoutEngine {
         id: glTxId,
         businessId,
         business_id: businessId,
-        branchId: params.branchId || till.branch_id || "MAIN_BRANCH",
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branchId: tillBranchId,
+        branch_id: tillBranchId,
         departmentId: "counter",
         date: businessDate,
         description: `[TRANSFER PAYOUT] ${transfer.reference} - ${transfer.beneficiary_name}`,
@@ -225,7 +275,7 @@ export class TransferPayoutEngine {
       const tellerTx: TellerTransaction = {
         id: txId,
         business_id: businessId,
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branch_id: tillBranchId,
         till_id: till.id,
         session_id: sessionId,
         operator_id: effectiveOperatorId,

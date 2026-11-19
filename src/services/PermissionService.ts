@@ -198,7 +198,8 @@ export const TENANT_ERP_CAPABILITIES = new Set([
   "cash.operate",
   "cash.transfer",
   "cash.supervise",
-  "transfer.approve"
+  "transfer.approve",
+  "transfer.reject"
 ]);
 
 export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, boolean>> = {
@@ -415,7 +416,7 @@ export const DEFAULT_SYSTEM_ROLE_MODULE_MATRIX: Record<string, Record<string, bo
     security: false,
     bi: false,
     personnel: false,
-    performance: true,
+    performance: false,
     organization: false,
     planning: true,
     leave: true,
@@ -584,10 +585,34 @@ class PermissionServiceClass {
       return this.capabilityCache[actionLower];
     }
 
+    // Fail closed if role is missing/UNASSIGNED or tenant binding is missing for non-SUPER_ADMIN
+    if (!this.activeRole || this.activeRole === "UNASSIGNED") {
+      this.capabilityCache[actionLower] = false;
+      return false;
+    }
+
     // Platform Super Admin possesses universal platform bypass across all features/business operations
     if (this.activeRole === "SUPER_ADMIN") {
       this.capabilityCache[actionLower] = true;
       return true;
+    }
+
+    // Reject unrecognized/malicious roles fail-closed (even if injected permission strings exist)
+    const VALID_NON_SUPER_ROLES = new Set([
+      "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HR_MANAGER",
+      "ACCOUNTANT", "PAYROLL_MANAGER", "TEAM_LEADER", "CFO", "CONTROLLER",
+      "MASTER_HEAD_TELLER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER",
+      "AUDITOR", "EMPLOYEE", "GUEST"
+    ]);
+    if (!VALID_NON_SUPER_ROLES.has(this.activeRole)) {
+      this.capabilityCache[actionLower] = false;
+      return false;
+    }
+
+    // Non-SUPER_ADMIN requires valid active tenant binding
+    if (!this.businessId || !String(this.businessId).trim()) {
+      this.capabilityCache[actionLower] = false;
+      return false;
     }
 
     // STRICT INVARIANT ADV-17B-01: Deny-by-default for all non-SUPER_ADMIN on ANY unknown capability
@@ -643,8 +668,151 @@ class PermissionServiceClass {
       }
     }
 
+    // EXPLICIT ROLE DENIALS — evaluated strictly BEFORE this.permissions.includes() and switch fallbacks
+    // 1. ALL teller roles: strict cash-operational isolation (No transfer approval/rejection, no GL/Accounting, no Payroll, no HR Admin, no Settings, no BI/AICFO/Audit)
+    const TELLER_ROLE_SET = new Set([
+      "JUNIOR_TELLER",
+      "SENIOR_TELLER",
+      "HEAD_TELLER",
+      "MASTER_HEAD_TELLER",
+      "TELLER"
+    ]);
+    if (TELLER_ROLE_SET.has(this.activeRole)) {
+      const TELLER_DENIED_CAPABILITIES = new Set([
+        "transfer.approve",
+        "transfer.reject",
+        "write_ledger",
+        "ledger.write",
+        "journal.post",
+        "view_ledger",
+        "ledger.view",
+        "ledger.read",
+        "view_accounting",
+        "accounting.view",
+        "accounting.read",
+        "view_payroll",
+        "manage_payroll",
+        "lock_payroll",
+        "validate_payroll",
+        "payroll.view",
+        "payroll.read",
+        "payroll.calculate",
+        "payroll.approve",
+        "payroll.lock",
+        "manage_employees",
+        "invite_employees",
+        "delete_employees",
+        "employees.suspend",
+        "employee.suspend",
+        "employees.reactivate",
+        "employee.reactivate",
+        "employee.create",
+        "employee.update",
+        "employee.import",
+        "employee.delete",
+        "manage_branches",
+        "create_branch",
+        "branch.create",
+        "branch.update",
+        "manage_departments",
+        "create_department",
+        "department.create",
+        "department.update",
+        "manage_tenant_profile",
+        "manage_settings",
+        "business.settings",
+        "settings.write",
+        "manage_tenant_settings",
+        "manage_tenant_users",
+        "view_tenant_financials",
+        "read_bi",
+        "bi.read",
+        "use_aicfo",
+        "aicfo.use",
+        "observability.view",
+        "observability.read",
+        "view_audit_logs",
+        "security.view",
+        "audit.read",
+        "export_reports",
+        "manage_crm",
+        "crm.write",
+        "leads.write",
+        "prospects.write",
+        "proformas.write",
+        "manage_invoices",
+        "invoices.write",
+        "invoice_template.write",
+        "documents.write",
+        "documents.delete"
+      ]);
+      if (TELLER_DENIED_CAPABILITIES.has(actionLower)) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+      if ((this.activeRole === "JUNIOR_TELLER" || this.activeRole === "TELLER") &&
+          (actionLower === "cash.transfer" || actionLower === "cash.supervise")) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+      if (this.activeRole === "SENIOR_TELLER" && actionLower === "cash.supervise") {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+
+    // 2. AUDITOR: strictly read-only across ALL ERP domains (zero mutations)
+    if (this.activeRole === "AUDITOR") {
+      const AUDITOR_MUTATION_CAPS = new Set([
+        "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve", "transfer.reject",
+        "write_ledger", "ledger.write", "journal.post",
+        "manage_employees", "invite_employees", "delete_employees", "employees.suspend", "employee.suspend",
+        "employees.reactivate", "employee.reactivate", "employee.create", "employee.update", "employee.import", "employee.delete",
+        "manage_branches", "create_branch", "branch.create", "branch.update",
+        "manage_departments", "create_department", "department.create", "department.update",
+        "manage_tenant_profile", "manage_settings", "business.settings", "settings.write",
+        "manage_tenant_settings", "manage_tenant_users",
+        "manage_payroll", "lock_payroll", "validate_payroll", "payroll.calculate", "payroll.approve", "payroll.lock",
+        "manage_attendance", "log_attendance", "override_attendance", "attendance.log", "attendance.override", "attendance.approve",
+        "request_leaves", "manage_leaves", "leave.request", "leave.create", "leaves.request", "leave.manage", "leaves.manage",
+        "manage_planning", "planning.write", "planning.manage",
+        "manage_crm", "crm.write", "leads.write", "prospects.write", "proformas.write",
+        "manage_invoices", "invoices.write", "invoice_template.write",
+        "manage_documents", "documents.write", "documents.delete"
+      ]);
+      if (AUDITOR_MUTATION_CAPS.has(actionLower)) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+
+    // 3. ACCOUNTANT: accounting/payroll checker only — NO physical cash ops, NO HR admin, NO tenant settings
+    if (this.activeRole === "ACCOUNTANT") {
+      const ACCOUNTANT_DENIED_CAPS = new Set([
+        "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve", "transfer.reject",
+        "manage_employees", "invite_employees", "delete_employees", "employees.suspend", "employee.suspend",
+        "employees.reactivate", "employee.reactivate", "employee.create", "employee.update", "employee.import", "employee.delete",
+        "manage_branches", "create_branch", "branch.create", "branch.update",
+        "manage_departments", "create_department", "department.create", "department.update",
+        "manage_tenant_profile", "manage_settings", "business.settings", "settings.write",
+        "manage_tenant_settings", "manage_tenant_users", "payroll.calculate"
+      ]);
+      if (ACCOUNTANT_DENIED_CAPS.has(actionLower)) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+
+    // 4. Non-cash operational & oversight roles: strictly denied physical cash operations & transfer approvals
+    if (["EMPLOYEE", "GUEST", "SUPERVISOR", "TEAM_LEADER", "HR_MANAGER", "PAYROLL_MANAGER", "DIRECTOR", "CFO", "CONTROLLER"].includes(this.activeRole)) {
+      if (["cash.operate", "cash.transfer", "cash.supervise", "transfer.approve", "transfer.reject"].includes(actionLower)) {
+        this.capabilityCache[actionLower] = false;
+        return false;
+      }
+    }
+
     // Business OWNER possesses authorized access to legitimate tenant ERP capabilities
-    // provided module and subscription checks passed above
+    // provided module, subscription, and explicit denial checks passed above
     if (this.activeRole === "OWNER") {
       this.capabilityCache[actionLower] = true;
       return true;
@@ -652,13 +820,7 @@ class PermissionServiceClass {
 
     let result = false;
 
-    // Mandatory Step 3 Correction: MASTER_HEAD_TELLER must NEVER approve or reject internal transfers
-    if (actionLower === "transfer.approve" && this.activeRole === "MASTER_HEAD_TELLER") {
-      this.capabilityCache[actionLower] = false;
-      return false;
-    }
-
-    // Standard static actions / exact matching
+    // Standard static actions / exact matching (only reached if NOT explicitly denied above)
     if (this.permissions.includes(actionLower)) {
       result = true;
     } else {
@@ -807,11 +969,13 @@ class PermissionServiceClass {
           result = (this.permissions.includes("cash.supervise") || ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER"].includes(this.activeRole || "")) && this.activeRole !== "AUDITOR";
           break;
         case "transfer.approve":
+        case "transfer.reject":
           result =
-            this.activeRole !== "MASTER_HEAD_TELLER" &&
+            !TELLER_ROLE_SET.has(this.activeRole) &&
             this.activeRole !== "AUDITOR" &&
             (this.permissions.includes("transfer.approve") ||
-              ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER"].includes(this.activeRole || ""));
+              this.permissions.includes("transfer.reject") ||
+              ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"].includes(this.activeRole || ""));
           break;
 
         default:
@@ -951,7 +1115,7 @@ class PermissionServiceClass {
     const defaultAllowedRoles: Record<string, string[]> = {
       bi: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
       personnel: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
-      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "MASTER_HEAD_TELLER", "HR_MANAGER"],
+      performance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "HR_MANAGER"],
       organization: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER"],
       planning: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "TEAM_LEADER", "HR_MANAGER", "EMPLOYEE"],
       leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],

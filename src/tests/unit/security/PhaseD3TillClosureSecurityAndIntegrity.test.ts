@@ -523,6 +523,7 @@ describe("PHASE D3 — TRANSACTIONAL TILL CLOSURE, PENDING TRANSFERS & VARIANCE 
 
     for (const u of Object.values(tokenMap)) {
       const opProf = u.role === "TELLER" ? "teller" : undefined;
+      const userBranch = u.business_id === TENANT_ALPHA ? BRANCH_MAIN : "BRANCH_BETA";
       mockUserDocs.set(u.uid, {
         uid: u.uid,
         email: u.email,
@@ -532,7 +533,9 @@ describe("PHASE D3 — TRANSACTIONAL TILL CLOSURE, PENDING TRANSFERS & VARIANCE 
         status: "ACTIVE",
         is_active: true,
         business_id: u.business_id,
-        businessId: u.business_id
+        businessId: u.business_id,
+        branch_id: userBranch,
+        branchId: userBranch
       });
       mockFirestoreStore.set(`employees/${u.uid}`, {
         id: u.uid,
@@ -544,7 +547,9 @@ describe("PHASE D3 — TRANSACTIONAL TILL CLOSURE, PENDING TRANSFERS & VARIANCE 
         status: "ACTIVE",
         is_active: true,
         business_id: u.business_id,
-        businessId: u.business_id
+        businessId: u.business_id,
+        branch_id: userBranch,
+        branchId: userBranch
       });
     }
 

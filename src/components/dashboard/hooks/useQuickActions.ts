@@ -1,4 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Role } from "../../../types";
+import { getAuthorizedTabsForRole } from "../../../services/auth/routeResolver";
+import { normalizeTab } from "./useNavigation";
 
 export interface QuickActionItem {
   id: string;
@@ -9,11 +12,11 @@ export interface QuickActionItem {
   action?: () => void;
 }
 
-export function useQuickActions(onNavigateTab: (tab: string) => void) {
+export function useQuickActions(onNavigateTab: (tab: string) => void, currentRole?: Role | string) {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const quickActions: QuickActionItem[] = [
+  const quickActions: QuickActionItem[] = useMemo(() => [
     { id: "nav_platform", title: "Organisations & Tenants Multi-Entreprises (Super Admin)", category: "NAVIGATION", tabTarget: "platform" },
     { id: "nav_plans", title: "Plans Tarifaires & Licences SaaS (Super Admin)", category: "NAVIGATION", tabTarget: "plans" },
     { id: "nav_health", title: "Santé Système, Métriques & SRE (Super Admin)", category: "NAVIGATION", tabTarget: "health" },
@@ -24,6 +27,7 @@ export function useQuickActions(onNavigateTab: (tab: string) => void) {
     { id: "nav_personnel", title: "Effectifs & Personnel", category: "NAVIGATION", tabTarget: "personnel" },
     { id: "nav_payroll", title: "Moteur de Paie & Traitements", category: "NAVIGATION", tabTarget: "payroll" },
     { id: "nav_ledger", title: "Grand Livre & Écritures Comptables", category: "NAVIGATION", tabTarget: "ledger" },
+    { id: "nav_cash", title: "Caisses & Coffres (Cash Management)", category: "NAVIGATION", tabTarget: "cash" },
     { id: "nav_attendance", title: "Gestion des Présences & Pointages", category: "NAVIGATION", tabTarget: "attendance" },
     { id: "nav_planning", title: "Planning & Horaires des Équipes", category: "NAVIGATION", tabTarget: "planning" },
     { id: "nav_leaves", title: "Demandes de Congés & Absences", category: "NAVIGATION", tabTarget: "leaves" },
@@ -34,7 +38,18 @@ export function useQuickActions(onNavigateTab: (tab: string) => void) {
     { id: "nav_workspace", title: "Mon Espace Collaborateur", category: "NAVIGATION", tabTarget: "employeeSpace" },
     { id: "nav_audit", title: "Journal d'Audit Forensique SHA-256", category: "NAVIGATION", tabTarget: "forensic" },
     { id: "nav_settings", title: "Paramètres & Administration Système", category: "NAVIGATION", tabTarget: "settings" },
-  ];
+  ], []);
+
+  const authorizedActions = useMemo(() => {
+    if (!currentRole) return [];
+    const allowedSet = new Set(
+      getAuthorizedTabsForRole(currentRole).map((tab) => normalizeTab(tab))
+    );
+    return quickActions.filter((item) => {
+      if (!item.tabTarget) return true;
+      return allowedSet.has(normalizeTab(item.tabTarget));
+    });
+  }, [quickActions, currentRole]);
 
   // Shortcut key listener (Cmd+K / Ctrl+K)
   useEffect(() => {
@@ -65,7 +80,7 @@ export function useQuickActions(onNavigateTab: (tab: string) => void) {
     [onNavigateTab]
   );
 
-  const filteredActions = quickActions.filter((a) =>
+  const filteredActions = authorizedActions.filter((a) =>
     a.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 

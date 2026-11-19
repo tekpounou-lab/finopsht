@@ -57,7 +57,10 @@ const PROFILE_SECURITY_ERROR_CODES = new Set<string>([
   "INACTIVE_ACTOR",
   "ROLE_SPOOFING_DETECTED",
   "OPERATIONAL_PROFILE_SPOOFING_DETECTED",
-  "INVALID_OR_MISSING_ROLE"
+  "INVALID_OR_MISSING_ROLE",
+  "BRANCH_ISOLATION_VIOLATION",
+  "MISSING_BRANCH_SCOPE",
+  "BRANCH_MISMATCH"
 ]);
 
 dotenv.config();
@@ -796,6 +799,7 @@ export async function createApp() {
         name: req.user.email || req.user.uid,
         role: req.user.isSuperAdmin ? "SUPER_ADMIN" : userRole,
         business_id: businessId,
+        branch_id: req.user.branch_id,
         isSuperAdmin: Boolean(req.user.isSuperAdmin)
       };
 
@@ -835,6 +839,14 @@ export async function createApp() {
           message: "Authentication required."
         });
       }
+      if (error instanceof ServerProfileVerificationError && error.statusCode === 503) {
+        return res.status(503).json({
+          success: false,
+          error: error.code,
+          code: error.code,
+          message: error.message
+        });
+      }
       if (
         error instanceof ServerProfileVerificationError ||
         PROFILE_SECURITY_ERROR_CODES.has(code) ||
@@ -844,7 +856,7 @@ export async function createApp() {
         code === "TENANT_ISOLATION_VIOLATION" ||
         code === "IDENTITY_SPOOFING_DETECTED"
       ) {
-        return res.status(403).json({
+        return res.status(error instanceof ServerProfileVerificationError ? error.statusCode : 403).json({
           success: false,
           error: code,
           code,
@@ -978,6 +990,7 @@ export async function createApp() {
         operatorId,
         operatorName,
         operatorRole: effectiveRole,
+        operatorBranchId: req.user.branch_id,
         claimedOperatorRole: body.operatorRole ?? body.claimedRole,
         claimedOperatorProfile: body.operatorProfile ?? body.claimedProfile ?? closeProfileInfo.rawValue,
         authenticatedUid: req.user.uid,
@@ -1024,6 +1037,14 @@ export async function createApp() {
           message: "Requested till session or till does not exist."
         });
       }
+      if (error instanceof ServerProfileVerificationError && error.statusCode === 503) {
+        return res.status(503).json({
+          success: false,
+          error: error.code,
+          code: error.code,
+          message: error.message
+        });
+      }
       if (
         error instanceof ServerProfileVerificationError ||
         PROFILE_SECURITY_ERROR_CODES.has(code) ||
@@ -1033,7 +1054,7 @@ export async function createApp() {
         code === "UNAUTHORIZED_SESSION_OPERATOR" ||
         code === "IDENTITY_SPOOFING_DETECTED"
       ) {
-        return res.status(403).json({
+        return res.status(error instanceof ServerProfileVerificationError ? error.statusCode : 403).json({
           success: false,
           error: code,
           code,
@@ -1181,6 +1202,7 @@ export async function createApp() {
         approverId: req.user.uid,
         approverName: body.approverName || req.user.email || req.user.uid,
         approverRole: effectiveRole,
+        approverBranchId: req.user.branch_id,
         claimedApproverRole: body.approverRole ?? body.claimedRole,
         claimedApproverProfile: body.approverProfile ?? body.claimedProfile ?? reopenProfileInfo.rawValue,
         authenticatedApproverUid: req.user.uid,
@@ -1222,6 +1244,14 @@ export async function createApp() {
           message: "Requested till, previous session, or requester does not exist."
         });
       }
+      if (error instanceof ServerProfileVerificationError && error.statusCode === 503) {
+        return res.status(503).json({
+          success: false,
+          error: error.code,
+          code: error.code,
+          message: error.message
+        });
+      }
       if (
         error instanceof ServerProfileVerificationError ||
         PROFILE_SECURITY_ERROR_CODES.has(code) ||
@@ -1234,7 +1264,7 @@ export async function createApp() {
         code === "INACTIVE_REQUESTER" ||
         code === "UNAUTHORIZED_REQUESTER_ROLE"
       ) {
-        return res.status(403).json({
+        return res.status(error instanceof ServerProfileVerificationError ? error.statusCode : 403).json({
           success: false,
           error: code,
           code,
@@ -1692,11 +1722,34 @@ export async function createApp() {
     }
   });
 
-  // API endpoint: Get & Seed Subscription Plans in Firestore
+  // API endpoint: Get Subscription Plans (Admin SDK with read-only defaults fallback)
   app.get("/api/subscriptions/plans", async (req, res) => {
     try {
-      const { SubscriptionPlanRepository } = await import("./src/repositories/SubscriptionPlanRepository");
-      const plans = await SubscriptionPlanRepository.getAllPlans();
+      const { DEFAULT_SUBSCRIPTION_PLANS } = await import("./src/repositories/SubscriptionPlanRepository");
+      let plans = [...DEFAULT_SUBSCRIPTION_PLANS].sort((a, b) => a.priceUsd - b.priceUsd);
+
+      try {
+        const adminDb = getAdminFirestore();
+        const snap = await adminDb.collection("subscription_plans").get();
+        if (!snap.empty) {
+          plans = snap.docs
+            .map((d) => {
+              const data = d.data() as any;
+              return {
+                ...data,
+                id: d.id,
+                priceUsd: data.priceUsd ?? data.price ?? 0,
+                priceHtg: data.priceHtg ?? ((data.price || 0) * 131),
+                userLimit: data.userLimit ?? 10,
+                supportedGateways: data.supportedGateways ?? ["stripe", "moncash", "natcash", "bank_transfer"]
+              };
+            })
+            .sort((a, b) => a.priceUsd - b.priceUsd);
+        }
+      } catch (_adminReadErr) {
+        // Local preview without service-account IAM cleanly falls back to DEFAULT_SUBSCRIPTION_PLANS
+      }
+
       res.json({ success: true, plans });
     } catch (error: any) {
       console.error("[Subscription Plans API] Error:", error);
@@ -2562,7 +2615,13 @@ Schema:
 }
 
 export async function startServer() {
-  const PORT = Number(process.env.PORT) || 3000;
+  const envPort = Number(process.env.PORT);
+  const nginxPort = Number(process.env.NGINX_PORT);
+  const defaultAppPort = Number(process.env.DEFAULT_APP_PORT) || 3000;
+  const PORT =
+    process.env.NODE_ENV !== "production" || (nginxPort && envPort === nginxPort)
+      ? defaultAppPort
+      : envPort || defaultAppPort;
   const app = await createApp();
 
   const listenWithRetry = (retriesLeft = 5, delayMs = 1000): Promise<void> => {

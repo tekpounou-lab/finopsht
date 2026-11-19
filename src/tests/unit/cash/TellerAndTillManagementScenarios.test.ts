@@ -178,6 +178,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         openingBalanceCents: 500000
       });
@@ -193,6 +194,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         transactionType: "COLLECTION_CLIENT",
         currency: "HTG",
@@ -215,6 +217,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         transactionType: "DISBURSEMENT_OPERATION",
         currency: "HTG",
@@ -235,6 +238,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_jean_01",
         operatorName: "Jean Caissier",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         denominationBreakdown: { "1000": 15 }
       });
@@ -283,6 +287,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_marie_02",
         operatorName: "Marie Teller",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         openingBalanceCents: 10000
       });
@@ -295,6 +300,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_marie_02",
         operatorName: "Marie Teller",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         transactionType: "COLLECTION_CLIENT",
         currency: "USD",
@@ -434,11 +440,21 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         description: "Remise excédent de recettes"
       });
 
+      // HEAD_TELLER must be denied internal transfer approval (P2 F-01)
+      await expect(
+        CashTransferEngine.approveAndExecuteTransfer(
+          trf.id,
+          "user_ht_02",
+          "Head Teller",
+          "HEAD_TELLER"
+        )
+      ).rejects.toThrow(/n'est pas autorisé à approuver/i);
+
       const execResult = await CashTransferEngine.approveAndExecuteTransfer(
         trf.id,
         "user_mgr_02",
         "Manager Eric",
-        "HEAD_TELLER"
+        "MANAGER"
       );
 
       expect(execResult.source.balance_cents).toBe(1000000); // 30k - 20k = 10k HTG
@@ -488,6 +504,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_fx_op",
         operatorName: "FX Operator",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         transactionType: "FX_EXCHANGE",
         currency: "HTG",
@@ -697,6 +714,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
           operatorId: "emp_var_teller",
           operatorName: "Teller Discrepancy",
           operatorRole: "TELLER",
+          operatorBranchId: BRANCH_ID,
           operatorProfile: "teller",
           denominationBreakdown: { "1000": 99, "500": 1 },
           notes: ""
@@ -710,6 +728,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_var_teller",
         operatorName: "Teller Discrepancy",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         denominationBreakdown: { "1000": 99, "500": 1 },
         notes: "Erreur de rendu de monnaie constatée en fin de journée"
@@ -843,6 +862,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_idemp",
         operatorName: "Idemp Operator",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         transactionType: "DISBURSEMENT_OPERATION",
         currency: "HTG",
@@ -861,6 +881,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "emp_idemp",
         operatorName: "Idemp Operator",
         operatorRole: "TELLER",
+        operatorBranchId: BRANCH_ID,
         operatorProfile: "teller",
         transactionType: "DISBURSEMENT_OPERATION",
         currency: "HTG",
@@ -927,6 +948,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "op_01",
         operatorName: "Operator",
         operatorRole: "TELLER",
+        operatorBranchId: "MAIN",
         operatorProfile: "teller",
         transactionTypeCode: "FX_BUY",
         transactionTypeName: "Achat USD",
@@ -990,6 +1012,7 @@ describe("TELLER & TILL MANAGEMENT — SCENARIO AUDIT SUITE", () => {
         operatorId: "op_01",
         operatorName: "Operator",
         operatorRole: "TELLER",
+        operatorBranchId: "MAIN",
         operatorProfile: "teller",
         transactionTypeCode: "FX_SELL",
         transactionTypeName: "Vente USD",

@@ -76,9 +76,11 @@ describe("RBAC Step 3 — MASTER_HEAD_TELLER Cash Management & Multi-Branch Till
       expect(AUTHORIZED_CASH_OPERATOR_ROLES.has("MASTER_HEAD_TELLER")).toBe(true);
     });
 
-    it("MHT-T09: supervisor transfer approval role set excludes MASTER_HEAD_TELLER while allowing HEAD_TELLER/MANAGER/OWNER", () => {
+    it("MHT-T09: supervisor transfer approval role set excludes MASTER_HEAD_TELLER and HEAD_TELLER while allowing MANAGER/OWNER", () => {
       expect(SUPERVISOR_TRANSFER_ROLES.has("MASTER_HEAD_TELLER")).toBe(false);
-      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(true);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(false);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("MANAGER")).toBe(true);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("OWNER")).toBe(true);
       expect(PermissionService.can("transfer.approve")).toBe(false);
     });
 
@@ -142,9 +144,9 @@ describe("RBAC Step 3 — MASTER_HEAD_TELLER Cash Management & Multi-Branch Till
       expect(initiatorId !== approverId).toBe(true);
     });
 
-    it("MHT-T21: Supervisor transfer approval roles deny MASTER_HEAD_TELLER and require HEAD_TELLER/MANAGER/OWNER", () => {
+    it("MHT-T21: Supervisor transfer approval roles deny MASTER_HEAD_TELLER and HEAD_TELLER and require MANAGER/OWNER", () => {
       expect(SUPERVISOR_TRANSFER_ROLES.has("MASTER_HEAD_TELLER")).toBe(false);
-      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(true);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(false);
       expect(SUPERVISOR_TRANSFER_ROLES.has("MANAGER")).toBe(true);
       expect(SUPERVISOR_TRANSFER_ROLES.has("OWNER")).toBe(true);
     });
@@ -196,8 +198,10 @@ describe("RBAC Step 3 — MASTER_HEAD_TELLER Cash Management & Multi-Branch Till
       expect(PermissionService.isPayrollChecker("ACCOUNTANT")).toBe(true);
     });
 
-    it("MHT-T32: Step 2 Maker-Checker restrictions remain intact", () => {
-      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(true);
+    it("MHT-T32: Step 2 Maker-Checker restrictions exclude teller roles from transfer approval", () => {
+      expect(SUPERVISOR_TRANSFER_ROLES.has("HEAD_TELLER")).toBe(false);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("MANAGER")).toBe(true);
+      expect(SUPERVISOR_TRANSFER_ROLES.has("OWNER")).toBe(true);
     });
 
     it("MHT-T33: AUDITOR remains strictly read-only", () => {

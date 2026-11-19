@@ -25,10 +25,13 @@ export const ApprovalQueueWidget: React.FC<ApprovalQueueWidgetProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const normalizedActorRole = (currentUser?.role || "").trim().toUpperCase();
+  const permissionServiceRole = (PermissionService.getRole() || "").trim().toUpperCase();
   const permissionServiceAllows =
-    PermissionService.getRole() === normalizedActorRole
+    !permissionServiceRole || permissionServiceRole === "UNASSIGNED"
       ? PermissionService.can("transfer.approve")
-      : true;
+      : permissionServiceRole === normalizedActorRole
+      ? PermissionService.can("transfer.approve")
+      : false;
   const canApproveTransfers =
     canApproveInternalTransferRole(normalizedActorRole) && permissionServiceAllows;
 
@@ -225,7 +228,7 @@ export const ApprovalQueueWidget: React.FC<ApprovalQueueWidgetProps> = ({
                       ? "👁️ Supervision uniquement — MASTER_HEAD_TELLER ne peut pas approuver ni rejeter de transferts internes"
                       : "🔒 Rôle non autorisé à approuver ou rejeter les transferts internes"}
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono shrink-0">Approbation Manager/Head Teller</span>
+                  <span className="text-[10px] text-slate-400 font-mono shrink-0">Approbation Manager / Owner / Admin</span>
                 </div>
               ) : (
                 <div className="pt-2 border-t border-slate-900 flex items-center justify-end gap-2">

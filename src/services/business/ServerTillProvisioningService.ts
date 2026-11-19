@@ -4,7 +4,11 @@ import { CashTill, BranchSafe, CurrencyCode } from "../../types/cashManagement";
 import { Employee } from "../../types";
 import { CashAccountMapping } from "../../domains/cash/validation/cashAccountMapping";
 import { EmployeeCashEligibilityService } from "../../domains/cash/services/EmployeeCashEligibilityService";
-import { verifyServerEmployeeOperationalProfile } from "../../domains/rbac/serverEmployeeProfileVerifier";
+import {
+  isBranchScopedTellerRole,
+  ServerProfileVerificationError,
+  verifyServerEmployeeOperationalProfile
+} from "../../domains/rbac/serverEmployeeProfileVerifier";
 import { TILL_SUPERVISOR_ROLES } from "../../domains/rbac/operationalProfilePolicy";
 
 export const TILL_PROVISIONING_AUTHORIZED_ROLES = TILL_SUPERVISOR_ROLES;
@@ -15,6 +19,7 @@ export interface TillProvisioningActor {
   name?: string;
   role: string;
   business_id: string;
+  branch_id?: string;
   isSuperAdmin?: boolean;
 }
 
@@ -145,11 +150,18 @@ export class ServerTillProvisioningService {
       }
     }
 
-    const rawBranchId = options.branchId !== undefined ? options.branchId : "MAIN_BRANCH";
-    if (typeof rawBranchId !== "string" || !rawBranchId.trim() || rawBranchId.includes("/") || rawBranchId.includes("..")) {
-      throw new Error("INVALID_PROVISIONING_PARAMS");
+    let explicitBranchId: string | undefined;
+    if (options.branchId !== undefined) {
+      if (
+        typeof options.branchId !== "string" ||
+        !options.branchId.trim() ||
+        options.branchId.includes("/") ||
+        options.branchId.includes("..")
+      ) {
+        throw new Error("INVALID_PROVISIONING_PARAMS");
+      }
+      explicitBranchId = options.branchId.trim();
     }
-    const branchId = rawBranchId.trim();
 
     if (options.initialEmployees !== undefined && !Array.isArray(options.initialEmployees)) {
       throw new Error("INVALID_PROVISIONING_PARAMS");
@@ -238,17 +250,39 @@ export class ServerTillProvisioningService {
 
     const db = customAdminDb || getAdminFirestore();
 
-    await verifyServerEmployeeOperationalProfile({
+    const verifiedActor = await verifyServerEmployeeOperationalProfile({
       adminDb: db,
       uid: actor.uid,
       email: actor.email,
       businessId,
+      actorBranchId: actor.branch_id,
+      claimedBranchId: explicitBranchId,
+      requireBranchScope: !actor.isSuperAdmin && isBranchScopedTellerRole(normalizedRole),
       actorRole: normalizedRole,
       isSuperAdmin: actor.isSuperAdmin,
       claimedRole: options.claimedRole,
       claimedProfile: options.claimedProfile,
       capability: "till_supervise"
     });
+
+    const isTellerBranchScoped = !actor.isSuperAdmin && isBranchScopedTellerRole(verifiedActor.role);
+    const tellerScopedBranchId = isTellerBranchScoped ? verifiedActor.branchId : undefined;
+    if (isTellerBranchScoped && !tellerScopedBranchId) {
+      throw new ServerProfileVerificationError(
+        "MISSING_BRANCH_SCOPE",
+        `Aucune succursale assignée au superviseur [${verifiedActor.role}].`,
+        403
+      );
+    }
+
+    if (isTellerBranchScoped && tellerScopedBranchId) {
+      for (const initEmp of validatedInitialEmployees) {
+        const empBranch = String(initEmp.branchId || (initEmp as any).branch_id || "").trim();
+        if (empBranch && empBranch !== tellerScopedBranchId) {
+          throw new Error("BRANCH_ISOLATION_VIOLATION");
+        }
+      }
+    }
 
     return withTenantProvisioningLock(businessId, async () => {
       // Discover persisted tenant employees, tills, and safes prior to transaction
@@ -356,8 +390,14 @@ export class ServerTillProvisioningService {
 
         const allCandidateEmployees = Array.from(candidateEmployeesMap.values());
 
-        // Filter eligible employees using authoritative domain service
+        // Filter eligible employees using authoritative domain service (+ teller branch isolation)
         const eligibleEmployees = allCandidateEmployees.filter((emp) => {
+          if (isTellerBranchScoped && tellerScopedBranchId) {
+            const empBranch = String(emp.branchId || (emp as any).branch_id || "").trim();
+            if (empBranch && empBranch !== tellerScopedBranchId) {
+              return false;
+            }
+          }
           const eligibility = EmployeeCashEligibilityService.isEligibleForTillAssignment(
             emp,
             [],
@@ -366,6 +406,13 @@ export class ServerTillProvisioningService {
           );
           return eligibility.isEligible;
         });
+
+        const firstKnownEmpBranch = allCandidateEmployees
+          .map((e) => String(e.branchId || (e as any).branch_id || "").trim())
+          .find(Boolean);
+        const branchId = isTellerBranchScoped
+          ? tellerScopedBranchId!
+          : explicitBranchId || verifiedActor.branchId || actor.branch_id || firstKnownEmpBranch || "HEAD_OFFICE";
 
         // 2. Collect all target safe IDs and till IDs to read transactionally
         const targetSafeHtgId = `safe_${businessId}_htg`;
@@ -501,7 +548,9 @@ export class ServerTillProvisioningService {
         const currencies: CurrencyCode[] = ["HTG", "USD"];
         for (const emp of eligibleEmployees) {
           const empName = emp.name || emp.displayName || `Employé ${emp.id}`;
-          const empBranch = emp.branchId || (emp as any).branch_id || branchId || "MAIN_BRANCH";
+          const empBranch = isTellerBranchScoped
+            ? tellerScopedBranchId!
+            : emp.branchId || (emp as any).branch_id || branchId;
 
           for (const currency of currencies) {
             const targetTillId =

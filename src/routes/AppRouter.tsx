@@ -8,7 +8,8 @@ import {
   ProtectedRoute, 
   SuperAdminRoute, 
   BusinessRoute,
-  CrmRoute
+  CrmRoute,
+  PicRoute
 } from "../navigation";
 
 import { ResolveRoute } from "./ResolveRoute";
@@ -122,8 +123,8 @@ export default function AppRouter() {
         <Route path="/approval-pending" element={<BusinessRoute><ApprovalPending /></BusinessRoute>} />
         <Route path="/account-recovery" element={<BusinessRoute><AccountRecovery /></BusinessRoute>} />
         <Route path="/operations" element={<BusinessRoute><OperationsLayout /></BusinessRoute>} />
-        <Route path="/performance-intelligence" element={<BusinessRoute><PerformanceIntelligenceCenter /></BusinessRoute>} />
-        <Route path="/pic" element={<BusinessRoute><PerformanceIntelligenceCenter /></BusinessRoute>} />
+        <Route path="/performance-intelligence" element={<PicRoute><PerformanceIntelligenceCenter /></PicRoute>} />
+        <Route path="/pic" element={<PicRoute><PerformanceIntelligenceCenter /></PicRoute>} />
         <Route path="/admin/design-system" element={<BusinessRoute><DesignSystemCatalog /></BusinessRoute>} />
         <Route path="/dev/ui" element={<BusinessRoute><DesignSystemCatalog /></BusinessRoute>} />
 

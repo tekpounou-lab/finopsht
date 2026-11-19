@@ -53,6 +53,9 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
   const [description, setDescription] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  const normalizedRole = (currentRole || "").trim().toUpperCase();
+  const canEditChart = ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT"].includes(normalizedRole);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -70,6 +73,10 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
   }, [loadData]);
 
   const handleSeedStarterPack = async (packType: StarterPackType) => {
+    if (!canEditChart) {
+      toast.error("Consultation seule : ce rôle ne peut pas modifier la Charte des Comptes.");
+      return;
+    }
     if (!window.confirm("Voulez-vous injecter ce modèle sectoriel préconfiguré dans votre Plan Comptable ?")) {
       return;
     }
@@ -89,6 +96,10 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
   };
 
   const openNewModal = () => {
+    if (!canEditChart) {
+      toast.error("Consultation seule : ce rôle ne peut pas créer de compte comptable.");
+      return;
+    }
     setEditingAccount(null);
     setCode("");
     setName("");
@@ -100,6 +111,10 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
   };
 
   const openEditModal = (acc: ChartOfAccountItem) => {
+    if (!canEditChart) {
+      toast.error("Consultation seule : ce rôle ne peut pas éditer les comptes comptables.");
+      return;
+    }
     setEditingAccount(acc);
     setCode(acc.code);
     setName(acc.name);
@@ -116,6 +131,10 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditChart) {
+      toast.error("Autorisation insuffisante pour modifier le Plan Comptable.");
+      return;
+    }
     if (!codeValidation.isValid) {
       toast.error(codeValidation.error);
       return;
@@ -187,68 +206,72 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin text-emerald-400" : ""}`} />
           </button>
 
-          <button
-            onClick={openNewModal}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-600/20"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nouveau Compte</span>
-          </button>
+          {canEditChart && (
+            <button
+              onClick={openNewModal}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-600/20"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nouveau Compte</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* STARTER PACKS SECTORIELS */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-              Injecter un Modèle Sectoriel Préconfiguré (Starter Pack)
-            </h3>
+      {canEditChart && (
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                Injecter un Modèle Sectoriel Préconfiguré (Starter Pack)
+              </h3>
+            </div>
+            <span className="text-[10px] text-slate-500">
+              Initialise instantanément une arborescence conforme bidevise.
+            </span>
           </div>
-          <span className="text-[10px] text-slate-500">
-            Initialise instantanément une arborescence conforme bidevise.
-          </span>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button
+              onClick={() => handleSeedStarterPack("GENERAL_COMMERCE")}
+              className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-left transition group cursor-pointer"
+            >
+              <p className="text-xs font-bold text-slate-200 group-hover:text-emerald-400">
+                Commerce Général
+              </p>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Achats, Ventes, Stocks, Caisses HTG/USD & Banques.
+              </p>
+            </button>
+
+            <button
+              onClick={() => handleSeedStarterPack("MICROFINANCE_TRANSFERS")}
+              className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500/40 text-left transition group cursor-pointer"
+            >
+              <p className="text-xs font-bold text-slate-200 group-hover:text-cyan-400">
+                Microfinance & Transferts
+              </p>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Épargne, Microcrédits, Commissions & Clearing (1910/2910).
+              </p>
+            </button>
+
+            <button
+              onClick={() => handleSeedStarterPack("SERVICES_SALONS")}
+              className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-purple-500/40 text-left transition group cursor-pointer"
+            >
+              <p className="text-xs font-bold text-slate-200 group-hover:text-purple-400">
+                Salons & Prestations Services
+              </p>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Prestations coiffure/soins, commissions RH & fournitures.
+              </p>
+            </button>
+          </div>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <button
-            onClick={() => handleSeedStarterPack("GENERAL_COMMERCE")}
-            className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-left transition group cursor-pointer"
-          >
-            <p className="text-xs font-bold text-slate-200 group-hover:text-emerald-400">
-              Commerce Général
-            </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Achats, Ventes, Stocks, Caisses HTG/USD & Banques.
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleSeedStarterPack("MICROFINANCE_TRANSFERS")}
-            className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500/40 text-left transition group cursor-pointer"
-          >
-            <p className="text-xs font-bold text-slate-200 group-hover:text-cyan-400">
-              Microfinance & Transferts
-            </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Épargne, Microcrédits, Commissions & Clearing (1910/2910).
-            </p>
-          </button>
-
-          <button
-            onClick={() => handleSeedStarterPack("SERVICES_SALONS")}
-            className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-purple-500/40 text-left transition group cursor-pointer"
-          >
-            <p className="text-xs font-bold text-slate-200 group-hover:text-purple-400">
-              Salons & Prestations Services
-            </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Prestations coiffure/soins, commissions RH & fournitures.
-            </p>
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* FILTER & SEARCH */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
@@ -300,7 +323,7 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
                 <th className="p-3.5">Devise</th>
                 <th className="p-3.5">Sens Normal</th>
                 <th className="p-3.5">Usage Moteur</th>
-                <th className="p-3.5 text-right">Actions</th>
+                {canEditChart && <th className="p-3.5 text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 text-xs font-mono">
@@ -375,21 +398,23 @@ export const ChartOfAccountsManagement: React.FC<ChartOfAccountsManagementProps>
                         {acc.smartUsage}
                       </span>
                     </td>
-                    <td className="p-3.5 text-right font-sans">
-                      <button
-                        onClick={() => openEditModal(acc)}
-                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition cursor-pointer"
-                      >
-                        Éditer
-                      </button>
-                    </td>
+                    {canEditChart && (
+                      <td className="p-3.5 text-right font-sans">
+                        <button
+                          onClick={() => openEditModal(acc)}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition cursor-pointer"
+                        >
+                          Éditer
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
 
               {filteredAccounts.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500 font-sans text-xs">
+                  <td colSpan={canEditChart ? 8 : 7} className="p-8 text-center text-slate-500 font-sans text-xs">
                     Aucun compte comptable trouvé pour cette recherche.
                   </td>
                 </tr>

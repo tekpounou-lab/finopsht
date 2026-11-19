@@ -159,10 +159,22 @@ export async function authenticateIdentityOnly(
       typeof decodedToken.role === "string" && decodedToken.role.trim()
         ? decodedToken.role.trim().toUpperCase()
         : "";
+    const claimBranchSnake =
+      typeof decodedToken.branch_id === "string" ? decodedToken.branch_id.trim() : "";
+    const claimBranchCamel =
+      typeof decodedToken.branchId === "string" ? decodedToken.branchId.trim() : "";
+    if (claimBranchSnake && claimBranchCamel && claimBranchSnake !== claimBranchCamel) {
+      return res.status(403).json({
+        error: "BRANCH_MISMATCH",
+        message: "Contradictory branch_id and branchId claims in authentication token."
+      });
+    }
+    const claimBranchId = claimBranchSnake || claimBranchCamel || "";
 
     let docBizId = "";
     let docRole = "";
     let docBizStatus = "";
+    let docBranchId = "";
 
     try {
       const firestore = getAdminFirestore();
@@ -218,9 +230,31 @@ export async function authenticateIdentityOnly(
             message: "Unauthorized privileged role in user profile."
           });
         }
+
+        const docBranchSnake =
+          typeof userData.branch_id === "string" ? userData.branch_id.trim() : "";
+        const docBranchCamel =
+          typeof userData.branchId === "string" ? userData.branchId.trim() : "";
+        if (docBranchSnake && docBranchCamel && docBranchSnake !== docBranchCamel) {
+          return res.status(403).json({
+            error: "BRANCH_MISMATCH",
+            message: "Contradictory branch_id and branchId fields in user profile."
+          });
+        }
+        docBranchId = docBranchSnake || docBranchCamel || "";
       }
     } catch (_dbErr) {
-      // Proceed if Firestore profile does not exist yet
+      return res.status(503).json({
+        error: "AUTH_VERIFICATION_UNAVAILABLE",
+        message: "Unable to verify user authorization state against Firestore."
+      });
+    }
+
+    if (claimBranchId && docBranchId && claimBranchId !== docBranchId) {
+      return res.status(403).json({
+        error: "BRANCH_MISMATCH",
+        message: "Conflicting branch bindings between token claims and user profile."
+      });
     }
 
     if (claimBizId && docBizId && claimBizId !== docBizId && docBizStatus !== "CANCELLED") {
@@ -260,13 +294,15 @@ export async function authenticateIdentityOnly(
           ? docRole || "EMPLOYEE"
           : claimRole || "EMPLOYEE";
 
+    const resolvedBranchId = claimBranchId || docBranchId || undefined;
     req.user = {
       uid,
       email,
       emailVerified,
       role,
       business_id,
-      isSuperAdmin
+      isSuperAdmin,
+      ...(resolvedBranchId ? { branch_id: resolvedBranchId, branchId: resolvedBranchId } : {})
     };
 
     next();
@@ -327,9 +363,21 @@ export async function authenticateToken(
       typeof decodedToken.role === "string" && decodedToken.role.trim()
         ? decodedToken.role.trim().toUpperCase()
         : "";
+    const claimBranchSnake =
+      typeof decodedToken.branch_id === "string" ? decodedToken.branch_id.trim() : "";
+    const claimBranchCamel =
+      typeof decodedToken.branchId === "string" ? decodedToken.branchId.trim() : "";
+    if (claimBranchSnake && claimBranchCamel && claimBranchSnake !== claimBranchCamel) {
+      return res.status(403).json({
+        error: "BRANCH_MISMATCH",
+        message: "Contradictory branch_id and branchId claims in authentication token."
+      });
+    }
+    const claimBranchId = claimBranchSnake || claimBranchCamel || "";
 
     let docBizId = "";
     let docRole = "";
+    let docBranchId = "";
     let firestore: ReturnType<typeof getAdminFirestore> | null = null;
 
     try {
@@ -392,9 +440,31 @@ export async function authenticateToken(
             message: "Unauthorized privileged role in user profile."
           });
         }
+
+        const docBranchSnake =
+          typeof userData.branch_id === "string" ? userData.branch_id.trim() : "";
+        const docBranchCamel =
+          typeof userData.branchId === "string" ? userData.branchId.trim() : "";
+        if (docBranchSnake && docBranchCamel && docBranchSnake !== docBranchCamel) {
+          return res.status(403).json({
+            error: "BRANCH_MISMATCH",
+            message: "Contradictory branch_id and branchId fields in user profile."
+          });
+        }
+        docBranchId = docBranchSnake || docBranchCamel || "";
       }
     } catch (_dbErr) {
-      // Firestore lookup warning; proceed to strict validation below
+      return res.status(503).json({
+        error: "AUTH_VERIFICATION_UNAVAILABLE",
+        message: "Unable to verify user authorization state against Firestore."
+      });
+    }
+
+    if (claimBranchId && docBranchId && claimBranchId !== docBranchId) {
+      return res.status(403).json({
+        error: "BRANCH_MISMATCH",
+        message: "Conflicting branch bindings between token claims and user profile."
+      });
     }
 
     // Prevent hybrid attribution when custom claims and Firestore profile disagree on tenant
@@ -467,12 +537,10 @@ export async function authenticateToken(
           });
         }
       } catch (_bizErr) {
-        if (business_id === `biz_${uid}` && !isSuperAdmin) {
-          return res.status(403).json({
-            error: "TENANT_BINDING_REQUIRED",
-            message: "Unprovisioned synthetic tenant identifier rejected."
-          });
-        }
+        return res.status(503).json({
+          error: "AUTH_VERIFICATION_UNAVAILABLE",
+          message: "Unable to verify tenant status against Firestore."
+        });
       }
     }
 
@@ -503,13 +571,44 @@ export async function authenticateToken(
       business_id = headerBiz;
     }
 
+    // Resolve authoritative employee branch_id fallback if not already set on token or user doc
+    let empBranchId = "";
+    if (!docBranchId && !claimBranchId && firestore) {
+      try {
+        const empDoc = await firestore.collection("employees").doc(uid).get();
+        if (empDoc.exists) {
+          const empData = empDoc.data() || {};
+          const empBiz = String(empData.business_id || empData.businessId || "").trim();
+          if (!empBiz || empBiz === business_id) {
+            const ebSnake = typeof empData.branch_id === "string" ? empData.branch_id.trim() : "";
+            const ebCamel = typeof empData.branchId === "string" ? empData.branchId.trim() : "";
+            if (ebSnake && ebCamel && ebSnake !== ebCamel) {
+              return res.status(403).json({
+                error: "BRANCH_MISMATCH",
+                message: "Contradictory branch_id and branchId fields in employee profile."
+              });
+            }
+            empBranchId = ebSnake || ebCamel || "";
+          }
+        }
+      } catch (_empErr) {
+        return res.status(503).json({
+          error: "AUTH_VERIFICATION_UNAVAILABLE",
+          message: "Unable to verify employee branch binding against Firestore."
+        });
+      }
+    }
+
+    const authoritativeBranchId = claimBranchId || docBranchId || empBranchId || undefined;
+
     req.user = {
       uid,
       email,
       emailVerified,
       role: isSuperAdmin && role === "EMPLOYEE" ? "SUPER_ADMIN" : role,
       business_id,
-      isSuperAdmin
+      isSuperAdmin,
+      ...(authoritativeBranchId ? { branch_id: authoritativeBranchId, branchId: authoritativeBranchId } : {})
     };
 
     next();

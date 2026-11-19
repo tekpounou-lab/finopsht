@@ -14,6 +14,8 @@ import {
 
 import FinanceLedger from "../pages/FinanceLedger";
 
+import { isBranchScopedTellerRole } from "../domains/rbac/operationalProfilePolicy";
+
 interface ConnectedFinanceLedgerProps {
   currentRole?: Role;
   current_business_id?: string;
@@ -31,7 +33,7 @@ interface ConnectedFinanceLedgerProps {
 }
 
 export const ConnectedFinanceLedger: React.FC<ConnectedFinanceLedgerProps> = (props) => {
-  const { role } = useAuth();
+  const { role, dbEmployee, dbUser, identity } = useAuth();
   const { 
     business: liveBusiness, 
     branches: liveBranches = [], 
@@ -42,7 +44,18 @@ export const ConnectedFinanceLedger: React.FC<ConnectedFinanceLedgerProps> = (pr
   
   const currentRole = props.currentRole || (role as Role) || "EMPLOYEE";
   const current_business_id = props.current_business_id || liveBusiness?.id || "BIZ_MAIN";
-  const currentBranchId = props.currentBranchId ?? (liveBranches[0]?.id || null);
+  const actorBranchId =
+    (dbEmployee as any)?.branch_id ||
+    (dbEmployee as any)?.branchId ||
+    (dbUser as any)?.branch_id ||
+    (dbUser as any)?.branchId ||
+    (identity?.employee as any)?.branch_id ||
+    (identity?.employee as any)?.branchId ||
+    null;
+  const currentBranchId =
+    props.currentBranchId !== undefined
+      ? props.currentBranchId
+      : actorBranchId ?? (isBranchScopedTellerRole(currentRole) ? null : liveBranches[0]?.id || null);
   const currentBusiness = props.currentBusiness || liveBusiness || ({ id: current_business_id, name: liveBusiness?.name || "Entreprise" } as Business);
   const branches = props.branches || liveBranches || [];
   const departments = props.departments || liveDepartments || [];

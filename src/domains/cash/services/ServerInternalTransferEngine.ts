@@ -14,10 +14,11 @@ import { CashAccountMapping } from "../validation/cashAccountMapping";
 import { FinopsException } from "../../../modules/runtime/FinopsException";
 import { computeServerHMACSignature } from "./ServerTransferIntakeEngine";
 import {
+  isBranchScopedTellerRole,
   ServerProfileVerificationError,
   verifyServerEmployeeOperationalProfile
 } from "../../rbac/serverEmployeeProfileVerifier";
-import { canApproveInternalTransferRole } from "../../rbac/operationalProfilePolicy";
+import { canApproveInternalTransferRole, TELLER_ROLES } from "../../rbac/operationalProfilePolicy";
 
 export interface ServerActorContext {
   uid: string;
@@ -76,7 +77,6 @@ export interface FundSafeServerParams {
 }
 
 export const SUPERVISOR_TRANSFER_ROLES = new Set([
-  "HEAD_TELLER",
   "MANAGER",
   "OWNER",
   "ADMIN",
@@ -132,16 +132,21 @@ export class ServerInternalTransferEngine {
       );
     }
 
+    let verifiedActorBranchId: string | undefined;
     try {
-      await verifyServerEmployeeOperationalProfile({
+      const verifiedActor = await verifyServerEmployeeOperationalProfile({
         adminDb: firestore,
         uid: actor.uid,
         email: actor.email,
         businessId: params.businessId,
+        actorBranchId: actor.branch_id,
+        claimedBranchId: params.branchId,
+        requireBranchScope: true,
         actorRole: initiatorRole,
         isSuperAdmin: initiatorRole === "SUPER_ADMIN",
         capability: "transfer_initiate"
       });
+      verifiedActorBranchId = verifiedActor.branchId;
     } catch (err: any) {
       if (err instanceof ServerProfileVerificationError) {
         throw new FinopsException(err.code, err.message);
@@ -192,7 +197,16 @@ export class ServerInternalTransferEngine {
       );
     }
 
-    const effectiveBranchId = branchId || actor.branch_id || "MAIN_BRANCH";
+    const isTellerScoped = initiatorRole !== "SUPER_ADMIN" && isBranchScopedTellerRole(initiatorRole);
+    const effectiveBranchId = isTellerScoped
+      ? verifiedActorBranchId || actor.branch_id || ""
+      : branchId || verifiedActorBranchId || actor.branch_id || "";
+    if (isTellerScoped && !effectiveBranchId) {
+      throw new FinopsException(
+        "MISSING_BRANCH_SCOPE",
+        `Aucune succursale assignée au guichetier [${initiatorRole}].`
+      );
+    }
     const effectiveOperatorId = actor.uid.trim();
     const effectiveOperatorName = (actor.name || actor.email || actor.uid).trim();
     const effectiveOperatorRole = (actor.role || "TELLER").trim().toUpperCase();
@@ -244,6 +258,12 @@ export class ServerInternalTransferEngine {
         if (srcData.business_id !== businessId) {
           throw new FinopsException("TENANT_ISOLATION_VIOLATION", "Caisse source appartenant à un autre tenant.");
         }
+        if (isTellerScoped && srcData.branch_id && srcData.branch_id !== effectiveBranchId) {
+          throw new FinopsException(
+            "BRANCH_ISOLATION_VIOLATION",
+            `La caisse source [${srcData.id}] appartient à la succursale '${srcData.branch_id}' et non à '${effectiveBranchId}'.`
+          );
+        }
         if (srcData.currency !== currency) {
           throw new FinopsException(
             "CURRENCY_MISMATCH",
@@ -267,6 +287,12 @@ export class ServerInternalTransferEngine {
         const srcData = srcSnap.data() as BranchSafe;
         if (srcData.business_id !== businessId) {
           throw new FinopsException("TENANT_ISOLATION_VIOLATION", "Coffre source appartenant à un autre tenant.");
+        }
+        if (isTellerScoped && srcData.branch_id && srcData.branch_id !== effectiveBranchId) {
+          throw new FinopsException(
+            "BRANCH_ISOLATION_VIOLATION",
+            `Le coffre source [${srcData.id}] appartient à la succursale '${srcData.branch_id}' et non à '${effectiveBranchId}'.`
+          );
         }
         if (srcData.currency !== currency) {
           throw new FinopsException(
@@ -292,6 +318,12 @@ export class ServerInternalTransferEngine {
         if (destData.business_id !== businessId) {
           throw new FinopsException("TENANT_ISOLATION_VIOLATION", "Caisse destination appartenant à un autre tenant.");
         }
+        if (isTellerScoped && destData.branch_id && destData.branch_id !== effectiveBranchId) {
+          throw new FinopsException(
+            "BRANCH_ISOLATION_VIOLATION",
+            `La caisse destination [${destData.id}] appartient à la succursale '${destData.branch_id}' et non à '${effectiveBranchId}'.`
+          );
+        }
         if (destData.currency !== currency) {
           throw new FinopsException(
             "CURRENCY_MISMATCH",
@@ -316,6 +348,12 @@ export class ServerInternalTransferEngine {
         if (destData.business_id !== businessId) {
           throw new FinopsException("TENANT_ISOLATION_VIOLATION", "Coffre destination appartenant à un autre tenant.");
         }
+        if (isTellerScoped && destData.branch_id && destData.branch_id !== effectiveBranchId) {
+          throw new FinopsException(
+            "BRANCH_ISOLATION_VIOLATION",
+            `Le coffre destination [${destData.id}] appartient à la succursale '${destData.branch_id}' et non à '${effectiveBranchId}'.`
+          );
+        }
         if (destData.currency !== currency) {
           throw new FinopsException(
             "CURRENCY_MISMATCH",
@@ -326,6 +364,14 @@ export class ServerInternalTransferEngine {
         destBranchId = destData.branch_id || effectiveBranchId;
       } else if (destinationType === "BANK") {
         destName = "Compte Bancaire Commercial";
+      }
+
+      const resolvedTransferBranchId = sourceBranchId || destBranchId || effectiveBranchId;
+      if (!resolvedTransferBranchId) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          "L'identifiant de succursale (branch_id) est obligatoire pour enregistrer un transfert interne."
+        );
       }
 
       // Default accounts resolution
@@ -358,7 +404,7 @@ export class ServerInternalTransferEngine {
       const transferRecord: InternalTransfer = {
         id: transferId,
         business_id: businessId,
-        branch_id: sourceBranchId || destBranchId || effectiveBranchId,
+        branch_id: resolvedTransferBranchId,
         source_type: sourceType,
         source_id: sourceId,
         source_name: sourceName,
@@ -443,9 +489,9 @@ export class ServerInternalTransferEngine {
 
     const { businessId, approvalNotes, idempotencyKey } = params;
 
-    // Role Permission Check (Step 3 Mandatory Correction: MASTER_HEAD_TELLER strictly denied)
+    // Role Permission Check (P2 Strict Policy: NO teller role may approve or reject internal transfers)
     const normalizedRole = (actor.role || "").trim().toUpperCase();
-    if (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
+    if (TELLER_ROLES.has(normalizedRole) || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
         `Le rôle [${actor.role}] n'est pas habilité à approuver les transferts de trésorerie.`
@@ -458,6 +504,7 @@ export class ServerInternalTransferEngine {
         uid: actor.uid,
         email: actor.email,
         businessId,
+        actorBranchId: actor.branch_id,
         actorRole: normalizedRole,
         isSuperAdmin: normalizedRole === "SUPER_ADMIN",
         capability: "transfer_approve"
@@ -718,12 +765,27 @@ export class ServerInternalTransferEngine {
       }
 
       // 7b. General Ledger Transaction Entry
+      const resolvedGlBranchId =
+        transfer.branch_id ||
+        sourceTillData?.branch_id ||
+        sourceSafeData?.branch_id ||
+        destTillData?.branch_id ||
+        destSafeData?.branch_id ||
+        actor.branch_id ||
+        "";
+      if (!resolvedGlBranchId) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          "L'identifiant de succursale (branch_id) est obligatoire pour comptabiliser un transfert interne."
+        );
+      }
+
       const ledgerTx: LedgerTransaction = {
         id: glTxId,
         businessId,
         business_id: businessId,
-        branchId: transfer.branch_id || actor.branch_id || "MAIN_BRANCH",
-        branch_id: transfer.branch_id || actor.branch_id || "MAIN_BRANCH",
+        branchId: resolvedGlBranchId,
+        branch_id: resolvedGlBranchId,
         departmentId: "treasury",
         department_id: "treasury",
         date: now.slice(0, 10),
@@ -861,7 +923,7 @@ export class ServerInternalTransferEngine {
     const { businessId, rejectionReason, idempotencyKey } = params;
 
     const normalizedRole = (actor.role || "").trim().toUpperCase();
-    if (normalizedRole === "MASTER_HEAD_TELLER" || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
+    if (TELLER_ROLES.has(normalizedRole) || !canApproveInternalTransferRole(normalizedRole) || !SUPERVISOR_TRANSFER_ROLES.has(normalizedRole)) {
       throw new FinopsException(
         "FORBIDDEN_ROLE",
         `Le rôle [${actor.role}] n'est pas habilité à rejeter les transferts de trésorerie.`
@@ -874,6 +936,7 @@ export class ServerInternalTransferEngine {
         uid: actor.uid,
         email: actor.email,
         businessId,
+        actorBranchId: actor.branch_id,
         actorRole: normalizedRole,
         isSuperAdmin: normalizedRole === "SUPER_ADMIN",
         capability: "transfer_approve"
@@ -1017,23 +1080,9 @@ export class ServerInternalTransferEngine {
 
     const transfer = await this.requestTransfer(requestParams, actor);
 
-    // Auto-execute if requested and source is external funding (BANK or EQUITY_INJECTION)
-    const isExternalFunding = sourceType === "BANK" || sourceType === "EQUITY_INJECTION";
-    if (params.autoExecute && isExternalFunding) {
-      // Create distinct actor context for approval if auto-executing, but Maker-Checker requires approver !== initiator.
-      // For external bank/capital injections, auto-execute is allowed by system account or requires separate approver context.
-      // If autoExecute requested, approve with actor
-      try {
-        return await this.approveTransfer(transfer.id, { businessId: params.businessId, approvalNotes: "Auto-exécution alimentation coffre externe" }, actor);
-      } catch (e: any) {
-        // If Maker-Checker blocks self approval on request, return PENDING_APPROVAL transfer for secondary approval
-        if (e instanceof FinopsException && e.code === "MAKER_CHECKER_VIOLATION") {
-          return transfer;
-        }
-        throw e;
-      }
-    }
-
+    // P2 Maker-Checker Enforcement:
+    // fundSafe ALWAYS creates a PENDING_APPROVAL transfer; autoExecute self-approval is strictly eliminated.
+    // Execution requires a distinct authorized checker (approver_id !== initiator_id).
     return transfer;
   }
 

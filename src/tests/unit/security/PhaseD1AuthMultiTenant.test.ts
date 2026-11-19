@@ -769,6 +769,8 @@ describe("Phase D1, D1.1 & D1.2: Authentication, Authorization, IDOR & Multi-Ten
       // Seed user_alpha_001 with authorized TELLER role and 'teller' operational profile
       mockUserDocs.set("user_alpha_001", {
         business_id: "biz_tenant_alpha",
+        branch_id: "BR_ALPHA",
+        branchId: "BR_ALPHA",
         role: "TELLER",
         operational_profile: "teller",
         accountStatus: "ACTIVE"
@@ -776,6 +778,8 @@ describe("Phase D1, D1.1 & D1.2: Authentication, Authorization, IDOR & Multi-Ten
       mockFirestoreStore.set("employees/user_alpha_001", {
         id: "user_alpha_001",
         business_id: "biz_tenant_alpha",
+        branch_id: "BR_ALPHA",
+        branchId: "BR_ALPHA",
         role: "TELLER",
         operational_profile: "teller",
         status: "ACTIVE"

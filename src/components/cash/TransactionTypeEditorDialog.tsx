@@ -188,8 +188,16 @@ export const TransactionTypeEditorDialog: React.FC<TransactionTypeEditorDialogPr
     }
   };
 
+  const canEditTransactionTypes = ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"].includes(
+    (currentRole || "").trim().toUpperCase()
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditTransactionTypes) {
+      toast.error("Autorisation insuffisante pour enregistrer un type de transaction.");
+      return;
+    }
     if (!code || !name) {
       toast.error("Veuillez renseigner le code et le nom du type de transaction.");
       return;

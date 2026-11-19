@@ -345,7 +345,38 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
       ).rejects.toThrow("Séparation des tâches (Maker-Checker)");
     });
 
-    it("should allow approval by a different authorized supervisor", async () => {
+    it("should reject HEAD_TELLER attempting to approve or reject internal transfer (P2 F-01)", async () => {
+      const params: RequestInternalTransferParams = {
+        businessId: BIZ_ID,
+        sourceType: "TILL",
+        sourceId: tillA.id,
+        destinationType: "SAFE",
+        destinationId: safeMain.id,
+        amountCents: 10000_00,
+        currency: "HTG",
+        reason: "Transfer awaiting manager/owner approval"
+      };
+
+      const transfer = await ServerInternalTransferEngine.requestTransfer(params, tellerActor);
+
+      await expect(
+        ServerInternalTransferEngine.approveTransfer(
+          transfer.id,
+          { businessId: BIZ_ID, approvalNotes: "Unauthorized head teller approval" },
+          supervisorActor
+        )
+      ).rejects.toMatchObject({ code: "FORBIDDEN_ROLE" });
+
+      await expect(
+        ServerInternalTransferEngine.rejectTransfer(
+          transfer.id,
+          { businessId: BIZ_ID, rejectionReason: "Unauthorized head teller rejection" },
+          supervisorActor
+        )
+      ).rejects.toMatchObject({ code: "FORBIDDEN_ROLE" });
+    });
+
+    it("should allow approval by a different authorized OWNER/MANAGER supervisor", async () => {
       const params: RequestInternalTransferParams = {
         businessId: BIZ_ID,
         sourceType: "TILL",
@@ -360,15 +391,15 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
       // Initiated by tellerActor
       const transfer = await ServerInternalTransferEngine.requestTransfer(params, tellerActor);
 
-      // Approved by supervisorActor (different user)
+      // Approved by ownerActor (different authorized supervisor)
       const approvedTransfer = await ServerInternalTransferEngine.approveTransfer(
         transfer.id,
         { businessId: BIZ_ID, approvalNotes: "Conforme" },
-        supervisorActor
+        ownerActor
       );
 
       expect(approvedTransfer.status).toBe("EXECUTED");
-      expect(approvedTransfer.approver_id).toBe(supervisorActor.uid);
+      expect(approvedTransfer.approver_id).toBe(ownerActor.uid);
 
       // Verify balances updated atomically
       const updatedTillA = mockStore.get(`cash_tills/${tillA.id}`);
@@ -397,7 +428,7 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
       const approved = await ServerInternalTransferEngine.approveTransfer(
         transfer.id,
         { businessId: BIZ_ID },
-        supervisorActor
+        ownerActor
       );
 
       expect(approved.status).toBe("EXECUTED");
@@ -430,7 +461,7 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
         ServerInternalTransferEngine.approveTransfer(
           transfer.id,
           { businessId: BIZ_ID },
-          supervisorActor
+          ownerActor
         )
       ).rejects.toThrow("Solde insuffisant dans la caisse source");
     });
@@ -475,7 +506,7 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
       const rejected = await ServerInternalTransferEngine.rejectTransfer(
         transfer.id,
         { businessId: BIZ_ID, rejectionReason: "Calcul erroné par le guichetier" },
-        supervisorActor
+        ownerActor
       );
 
       expect(rejected.status).toBe("REJECTED");
@@ -486,7 +517,7 @@ describe("ServerInternalTransferEngine Unit Tests", () => {
         ServerInternalTransferEngine.approveTransfer(
           transfer.id,
           { businessId: BIZ_ID },
-          supervisorActor
+          ownerActor
         )
       ).rejects.toThrow("déjà finalisé");
     });

@@ -49,6 +49,9 @@ export const TransactionTypesManagement: React.FC<TransactionTypesManagementProp
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [editingType, setEditingType] = useState<TransactionTypeItem | null>(null);
 
+  const normalizedRole = (currentRole || "").trim().toUpperCase();
+  const canEditTransactionTypes = ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"].includes(normalizedRole);
+
   const loadTypes = async () => {
     if (!businessId) return;
     try {
@@ -108,16 +111,28 @@ export const TransactionTypesManagement: React.FC<TransactionTypesManagementProp
   }, [types]);
 
   const handleEdit = (type: TransactionTypeItem) => {
+    if (!canEditTransactionTypes) {
+      toast.error("Consultation seule : modification des types réservée au Owner / Manager / Admin.");
+      return;
+    }
     setEditingType(type);
     setShowEditor(true);
   };
 
   const handleCreateNew = () => {
+    if (!canEditTransactionTypes) {
+      toast.error("Consultation seule : création de types réservée au Owner / Manager / Admin.");
+      return;
+    }
     setEditingType(null);
     setShowEditor(true);
   };
 
   const handleDelete = async (type: TransactionTypeItem) => {
+    if (!canEditTransactionTypes) {
+      toast.error("Consultation seule : suppression réservée au Owner / Manager / Admin.");
+      return;
+    }
     if (type.isSystemDefault || type.isProtected) {
       toast.error("Les types de transactions système par défaut ne peuvent pas être supprimés.");
       return;
@@ -158,23 +173,25 @@ export const TransactionTypesManagement: React.FC<TransactionTypesManagementProp
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => setShowBulkImport(true)}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
-          >
-            <Upload className="w-4 h-4 text-teal-400" />
-            <span>Import CSV</span>
-          </button>
+        {canEditTransactionTypes && (
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setShowBulkImport(true)}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
+            >
+              <Upload className="w-4 h-4 text-teal-400" />
+              <span>Import CSV</span>
+            </button>
 
-          <button
-            onClick={handleCreateNew}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-lg shadow-cyan-500/10"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nouveau Type</span>
-          </button>
-        </div>
+            <button
+              onClick={handleCreateNew}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-lg shadow-cyan-500/10"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nouveau Type</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* KPI Cards */}
@@ -298,19 +315,19 @@ export const TransactionTypesManagement: React.FC<TransactionTypesManagementProp
                 <th className="p-3.5">Imputation Crédit</th>
                 <th className="p-3.5">Profils RH Autorisés</th>
                 <th className="p-3.5 text-center">Statut</th>
-                <th className="p-3.5 text-right">Actions</th>
+                {canEditTransactionTypes && <th className="p-3.5 text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-sans">
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500 font-light">
+                  <td colSpan={canEditTransactionTypes ? 8 : 7} className="p-8 text-center text-slate-500 font-light">
                     Chargement du catalogue des types de transactions...
                   </td>
                 </tr>
               ) : filteredTypes.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500 font-light">
+                  <td colSpan={canEditTransactionTypes ? 8 : 7} className="p-8 text-center text-slate-500 font-light">
                     Aucun type de transaction ne correspond à votre recherche.
                   </td>
                 </tr>
@@ -399,26 +416,28 @@ export const TransactionTypesManagement: React.FC<TransactionTypesManagementProp
                       </td>
 
                       {/* Actions */}
-                      <td className="p-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleEdit(item)}
-                            title="Éditer le type et l'imputation"
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          {!item.isSystemDefault && !item.isProtected && (
+                      {canEditTransactionTypes && (
+                        <td className="p-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => handleDelete(item)}
-                              title="Supprimer"
-                              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition cursor-pointer"
+                              onClick={() => handleEdit(item)}
+                              title="Éditer le type et l'imputation"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Edit2 className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                        </div>
-                      </td>
+                            {!item.isSystemDefault && !item.isProtected && (
+                              <button
+                                onClick={() => handleDelete(item)}
+                                title="Supprimer"
+                                className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })

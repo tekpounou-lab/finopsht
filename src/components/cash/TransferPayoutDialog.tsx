@@ -24,6 +24,8 @@ interface TransferPayoutDialogProps {
   branchId: string;
   operatorId: string;
   operatorName: string;
+  operatorRole?: string;
+  operatorBranchId?: string;
   onSuccess?: () => void;
 }
 
@@ -35,6 +37,8 @@ export const TransferPayoutDialog: React.FC<TransferPayoutDialogProps> = ({
   branchId,
   operatorId,
   operatorName,
+  operatorRole,
+  operatorBranchId,
   onSuccess
 }) => {
   const [step, setStep] = useState<"SEARCH" | "CONFIRM" | "SUCCESS">("SEARCH");
@@ -75,7 +79,25 @@ export const TransferPayoutDialog: React.FC<TransferPayoutDialogProps> = ({
     }
   };
 
+  const normalizedRole = (operatorRole || "").trim().toUpperCase();
+  const canExecutePayout = [
+    "SUPER_ADMIN",
+    "OWNER",
+    "ADMIN",
+    "MANAGER",
+    "MASTER_HEAD_TELLER",
+    "HEAD_TELLER",
+    "SENIOR_TELLER",
+    "JUNIOR_TELLER",
+    "TELLER"
+  ].includes(normalizedRole);
+
   const handlePayout = async () => {
+    if (!canExecutePayout) {
+      toast.error("Autorisation insuffisante : ce rôle ne peut pas exécuter de paiement de transfert.");
+      return;
+    }
+
     if (!transfer || !idDocument.trim()) {
       toast.error("Le numéro de la pièce d'identité du bénéficiaire est obligatoire.");
       return;
@@ -92,6 +114,7 @@ export const TransferPayoutDialog: React.FC<TransferPayoutDialogProps> = ({
       const { auth } = await import("../../lib/firebase");
       const currentUser = auth.currentUser;
       const token = currentUser ? await currentUser.getIdToken() : "";
+      const resolvedBranchId = (operatorBranchId || branchId || till.branch_id || "").trim();
 
       if (token) {
         const response = await fetch("/api/cash/transfers/payout", {
@@ -102,7 +125,7 @@ export const TransferPayoutDialog: React.FC<TransferPayoutDialogProps> = ({
           },
           body: JSON.stringify({
             businessId,
-            branchId,
+            branchId: resolvedBranchId,
             transferId: transfer.id,
             tillId: till.id,
             sessionId: till.active_session_id || "",
@@ -117,20 +140,23 @@ export const TransferPayoutDialog: React.FC<TransferPayoutDialogProps> = ({
         }
         result = resData.transfer;
       } else {
-        // Fallback for isolated local test mode
+        // Fallback for isolated local test mode (enforces authenticated role & branch context)
         result = await TransferPayoutEngine.executePayout({
           businessId,
-          branchId,
+          branchId: resolvedBranchId,
           transferId: transfer.id,
           tillId: till.id,
           sessionId: till.active_session_id || "",
           operatorId,
           operatorName,
+          operatorBranchId: resolvedBranchId || undefined,
           idDocument: idDocument.trim(),
           businessDate: new Date().toISOString().split("T")[0]
         }, {
           id: operatorId,
-          name: operatorName
+          name: operatorName,
+          role: normalizedRole,
+          branch_id: resolvedBranchId || undefined
         });
       }
 

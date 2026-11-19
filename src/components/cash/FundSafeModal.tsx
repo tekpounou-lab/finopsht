@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { BranchSafe, CashTill, CurrencyCode } from "../../types/cashManagement";
-import { CashTransferEngine, TransferUserContext } from "../../domains/cash/services/CashTransferEngine";
+import type { TransferUserContext } from "../../domains/cash/services/CashTransferEngine";
+import { auth } from "../../lib/firebase";
+import { normalizeRole, EXECUTIVE_RBAC_ROLES } from "../../domains/rbac/operationalProfilePolicy";
 import {
   Vault,
   Building2,
@@ -9,10 +11,9 @@ import {
   X,
   Coins,
   CheckCircle2,
-  ShieldCheck,
+  ShieldAlert,
   FileCheck,
-  AlertCircle,
-  HelpCircle
+  AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,7 +53,6 @@ export const FundSafeModal: React.FC<FundSafeModalProps> = ({
   const [sourceTillId, setSourceTillId] = useState<string>("");
   const [equityAccountCode, setEquityAccountCode] = useState<string>("3010");
   const [description, setDescription] = useState<string>("");
-  const [autoExecute, setAutoExecute] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -140,12 +140,17 @@ export const FundSafeModal: React.FC<FundSafeModalProps> = ({
   const amountNumber = parseFloat(amountStr) || 0;
   const amountCents = Math.round(amountNumber * 100);
 
-  const canDirectlyExecute = ["OWNER", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(
-    (currentUser.role || "").toUpperCase()
-  );
+  const normalizedRole = normalizeRole(currentUser?.role);
+  const canInitiateSafeFunding = Boolean(normalizedRole && EXECUTIVE_RBAC_ROLES.has(normalizedRole));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canInitiateSafeFunding) {
+      setErrorMessage(
+        `Accès refusé : le rôle (${normalizedRole || "INCONNU"}) n'est pas autorisé à initier une alimentation de coffre.`
+      );
+      return;
+    }
     if (!currentSafe) {
       toast.error("Veuillez sélectionner un coffre-fort destinataire.");
       return;
@@ -170,27 +175,32 @@ export const FundSafeModal: React.FC<FundSafeModalProps> = ({
       return;
     }
 
-    // Resolve source identifier and name
+    // Resolve source type, identifier and name
+    let sourceType: "BANK" | "SAFE" | "EQUITY_INJECTION" | "TILL" = "BANK";
     let sourceId = "";
     let sourceName = "";
 
     if (fundingMode === "BANK_WITHDRAWAL") {
+      sourceType = "BANK";
       sourceId = `BANK_${safeCurrency}_${bankAccountCode}`;
       sourceName =
         safeCurrency === "HTG"
           ? "Compte Bancaire HTG (SOGEBANK / UNIBANK)"
           : "Compte Bancaire USD Commercial";
     } else if (fundingMode === "INTER_SAFE") {
+      sourceType = "SAFE";
       const srcSafe = safes.find((s) => s.id === activeSourceSafeId);
       sourceId = activeSourceSafeId;
       sourceName = srcSafe?.name || "Coffre Source";
     } else if (fundingMode === "OWNER_INJECTION") {
+      sourceType = "EQUITY_INJECTION";
       sourceId = `EQUITY_${equityAccountCode}`;
       sourceName =
         equityAccountCode === "3010"
           ? "Apport Capital Associé / Propriétaire"
           : "Compte Courant Associé";
     } else if (fundingMode === "TILL_RELIEF") {
+      sourceType = "TILL";
       const srcTill = tills.find((t) => t.id === activeSourceTillId);
       sourceId = activeSourceTillId;
       sourceName = srcTill?.name || "Caisse Guichet";
@@ -206,43 +216,52 @@ export const FundSafeModal: React.FC<FundSafeModalProps> = ({
       }`;
 
     try {
-      const result = await CashTransferEngine.fundSafe(
-        businessId,
-        branchId,
-        {
-          safeId: currentSafe.id,
-          safeName: currentSafe.name,
-          currency: safeCurrency,
-          amountCents,
-          fundingCategory: fundingMode,
-          sourceId,
-          sourceName,
-          bankReference: bankReference.trim() || undefined,
-          debitAccountCode: debitAcc.code,
-          debitAccountName: debitAcc.name,
-          creditAccountCode: creditAcc.code,
-          creditAccountName: creditAcc.name,
-          description: desc,
-          autoExecute: autoExecute && canDirectlyExecute
-        },
-        currentUser
-      );
-
-      if (result.status === "EXECUTED") {
-        toast.success(
-          `Alimentation réussie ! ${(amountCents / 100).toLocaleString()} ${safeCurrency} crédités au coffre "${currentSafe.name}" et comptabilisés au Grand Livre.`
-        );
-      } else {
-        toast.info(
-          `Demande d'alimentation de ${(amountCents / 100).toLocaleString()} ${safeCurrency} initiée et transmise à la file Maker-Checker.`
-        );
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : "";
+      if (!token) {
+        throw new Error("Session expirée ou non authentifiée. Veuillez vous reconnecter.");
       }
+
+      const idempotencyKey = `idemp_fund_${currentSafe.id}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const response = await fetch("/api/cash/transfers/internal/request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "x-business-id": businessId,
+          "Idempotency-Key": idempotencyKey
+        },
+        body: JSON.stringify({
+          businessId,
+          branchId: currentSafe.branch_id || currentUser.branch_id || branchId,
+          sourceType,
+          sourceId,
+          destinationType: "SAFE",
+          destinationId: currentSafe.id,
+          amountCents,
+          currency: safeCurrency,
+          reason: desc,
+          bankReference: bankReference.trim() || undefined,
+          fundingCategory: fundingMode,
+          debitAccountCode: debitAcc.code,
+          creditAccountCode: creditAcc.code,
+          idempotencyKey
+        })
+      });
+
+      const resData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(resData.message || resData.error || `Erreur serveur (${response.status})`);
+      }
+
+      toast.info(
+        `Demande d'alimentation de ${(amountCents / 100).toLocaleString()} ${safeCurrency} enregistrée (PENDING_APPROVAL) pour validation Maker-Checker.`
+      );
 
       onFundSuccess();
       onClose();
     } catch (err: any) {
       console.error("[FundSafeModal] Error:", err);
-      setErrorMessage(err.message || "Erreur lors de l'alimentation du coffre.");
+      setErrorMessage(err.message || "Erreur lors de la demande d'alimentation du coffre.");
     } finally {
       setIsSubmitting(false);
     }
@@ -584,24 +603,25 @@ export const FundSafeModal: React.FC<FundSafeModalProps> = ({
             </p>
           </div>
 
-          {/* GOUVERNANCE / MAKER-CHECKER OPTIONS */}
-          {canDirectlyExecute && (
-            <div className="flex items-center gap-2.5 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
-              <input
-                type="checkbox"
-                id="chk_auto_execute"
-                checked={autoExecute}
-                onChange={(e) => setAutoExecute(e.target.checked)}
-                className="w-4 h-4 text-amber-500 rounded bg-slate-950 border-slate-800 cursor-pointer"
-              />
-              <label htmlFor="chk_auto_execute" className="text-xs text-slate-200 cursor-pointer">
+          {/* GOUVERNANCE / MAKER-CHECKER OBLIGATOIRE */}
+          {!canInitiateSafeFunding ? (
+            <div className="flex items-center gap-2.5 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-300">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-red-400" />
+              <span>
+                Accès restreint : seul un rôle dirigeant habilité (Manager / Owner / Admin) peut initier une alimentation de coffre-fort.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2.5 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-slate-200">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
+              <div>
                 <span className="font-semibold text-amber-300">
-                  Exécuter et comptabiliser immédiatement au Grand Livre
+                  Validation Maker-Checker Serveur Obligatoire
                 </span>
                 <span className="block text-[10px] text-slate-400">
-                  Votre rôle ({currentUser.role}) vous accorde l'autorité de validation directe des alimentations de coffre.
+                  La demande est enregistrée en attente (PENDING_APPROVAL) et devra être approuvée par un autre valideur habilité.
                 </span>
-              </label>
+              </div>
             </div>
           )}
 
@@ -617,16 +637,12 @@ export const FundSafeModal: React.FC<FundSafeModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || amountCents <= 0}
+              disabled={!canInitiateSafeFunding || isSubmitting || amountCents <= 0}
               className="px-5 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-amber-900/40 disabled:opacity-50 cursor-pointer"
             >
               <Coins className="w-3.5 h-3.5" />
               <span>
-                {isSubmitting
-                  ? "Comptabilisation..."
-                  : autoExecute && canDirectlyExecute
-                  ? "Alimenter & Enregistrer au GL"
-                  : "Soumettre pour Approbation"}
+                {isSubmitting ? "Transmission serveur..." : "Soumettre pour Approbation"}
               </span>
             </button>
           </div>

@@ -14,6 +14,7 @@ import { FinopsException } from "../../../modules/runtime/FinopsException";
 import {
   canApproveInternalTransferRole,
   EXECUTIVE_RBAC_ROLES,
+  isBranchScopedTellerRole,
   TELLER_ROLES,
   normalizeRole,
   validateRoleOperationalProfileCompatibility
@@ -23,6 +24,8 @@ export interface TransferUserContext {
   id: string;
   name: string;
   role: string; // e.g. 'SENIOR_TELLER', 'HEAD_TELLER', 'MASTER_HEAD_TELLER', 'MANAGER', 'OWNER'
+  branch_id?: string;
+  branchId?: string;
   operational_profile?: string;
 }
 
@@ -100,12 +103,40 @@ export class CashTransferEngine {
       );
     }
 
-    // Verify Mono-Currency Invariant on Source and Destination
+    const cleanBranchId = (branchId || "").trim();
+    const actorBranchId = (user.branch_id || user.branchId || "").trim();
+    if (isBranchScopedTellerRole(initiatorRole)) {
+      const effectiveTellerBranch = actorBranchId || cleanBranchId;
+      if (!effectiveTellerBranch) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          `Le rôle [${initiatorRole}] requiert un branch_id assigné pour initier un transfert.`
+        );
+      }
+      if (cleanBranchId && actorBranchId && cleanBranchId !== actorBranchId) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : l'initiateur de [${actorBranchId}] ne peut pas opérer sur [${cleanBranchId}].`
+        );
+      }
+    }
+
+    // Verify Mono-Currency & Branch/Tenant Invariant on Source and Destination
     const tills = await CashManagementRepository.getTillsByBusiness(businessId);
     const safes = await CashManagementRepository.getSafesByBusiness(businessId);
+    const effectiveTellerBranch = isBranchScopedTellerRole(initiatorRole) ? (actorBranchId || cleanBranchId) : "";
 
     if (source.type === "TILL") {
       const srcTill = tills.find((t) => t.id === source.id);
+      if (srcTill && srcTill.business_id && srcTill.business_id !== businessId) {
+        throw new FinopsException("CROSS_TENANT_ACCESS_DENIED", "Caisse source hors tenant.");
+      }
+      if (effectiveTellerBranch && srcTill?.branch_id && srcTill.branch_id !== effectiveTellerBranch) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : la caisse source [${srcTill.id}] appartient à [${srcTill.branch_id}].`
+        );
+      }
       if (srcTill && srcTill.currency !== currency) {
         throw new FinopsException(
           "CURRENCY_MISMATCH",
@@ -120,6 +151,15 @@ export class CashTransferEngine {
       }
     } else if (source.type === "SAFE") {
       const srcSafe = safes.find((s) => s.id === source.id);
+      if (srcSafe && srcSafe.business_id && srcSafe.business_id !== businessId) {
+        throw new FinopsException("CROSS_TENANT_ACCESS_DENIED", "Coffre source hors tenant.");
+      }
+      if (effectiveTellerBranch && srcSafe?.branch_id && srcSafe.branch_id !== effectiveTellerBranch) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : le coffre source [${srcSafe.id}] appartient à [${srcSafe.branch_id}].`
+        );
+      }
       if (srcSafe && srcSafe.currency !== currency) {
         throw new FinopsException(
           "CURRENCY_MISMATCH",
@@ -136,6 +176,15 @@ export class CashTransferEngine {
 
     if (destination.type === "TILL") {
       const destTill = tills.find((t) => t.id === destination.id);
+      if (destTill && destTill.business_id && destTill.business_id !== businessId) {
+        throw new FinopsException("CROSS_TENANT_ACCESS_DENIED", "Caisse destination hors tenant.");
+      }
+      if (effectiveTellerBranch && destTill?.branch_id && destTill.branch_id !== effectiveTellerBranch) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : la caisse destination [${destTill.id}] appartient à [${destTill.branch_id}].`
+        );
+      }
       if (destTill && destTill.currency !== currency) {
         throw new FinopsException(
           "CURRENCY_MISMATCH",
@@ -144,6 +193,15 @@ export class CashTransferEngine {
       }
     } else if (destination.type === "SAFE") {
       const destSafe = safes.find((s) => s.id === destination.id);
+      if (destSafe && destSafe.business_id && destSafe.business_id !== businessId) {
+        throw new FinopsException("CROSS_TENANT_ACCESS_DENIED", "Coffre destination hors tenant.");
+      }
+      if (effectiveTellerBranch && destSafe?.branch_id && destSafe.branch_id !== effectiveTellerBranch) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Isolement succursale : le coffre destination [${destSafe.id}] appartient à [${destSafe.branch_id}].`
+        );
+      }
       if (destSafe && destSafe.currency !== currency) {
         throw new FinopsException(
           "CURRENCY_MISMATCH",
@@ -249,6 +307,13 @@ export class CashTransferEngine {
     else if (params.fundingCategory === "OWNER_INJECTION") sourceType = "EQUITY_INJECTION";
     else if (params.fundingCategory === "TILL_RELIEF") sourceType = "TILL";
 
+    if (params.autoExecute) {
+      throw new FinopsException(
+        "MAKER_CHECKER_VIOLATION",
+        "Auto-exécution interdite : toute alimentation de coffre doit être créée en attente (PENDING_APPROVAL) et approuvée par un tiers habilité."
+      );
+    }
+
     const transfer = await this.initiateTransfer(
       businessId,
       branchId,
@@ -268,63 +333,8 @@ export class CashTransferEngine {
       }
     );
 
-    // Auto-execution is strictly allowed ONLY for external bank or owner injections (Maker-Checker invariant)
-    const isExternalFunding = sourceType === "BANK" || sourceType === "EQUITY_INJECTION";
-    const canAutoExecute = isExternalFunding && ["OWNER", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(
-      (user.role || "").toUpperCase()
-    );
-
-    if (params.autoExecute && canAutoExecute) {
-      return await this.executeTransferDirectly(transfer, user);
-    }
-
+    // P2 Maker-Checker Enforcement: fundSafe NEVER self-approves or self-executes.
     return transfer;
-  }
-
-  /**
-   * Direct execution helper for Manager/Owner authorized operations (e.g. initial safe capital injection or direct bank fund)
-   */
-  private static async executeTransferDirectly(
-    transfer: InternalTransfer,
-    operator: TransferUserContext
-  ): Promise<InternalTransfer> {
-    const now = new Date().toISOString();
-    const updatedTransfer: InternalTransfer = {
-      ...transfer,
-      status: "EXECUTED",
-      approver_id: operator.id,
-      approver_name: operator.name,
-      approved_at: now,
-      executed_at: now
-    };
-
-    // 1. Update balances
-    await this.applyTransferBalances(updatedTransfer);
-
-    // 2. Post to General Ledger (GL)
-    await this.postGeneralLedgerEntry(updatedTransfer, operator);
-
-    // 3. Save transfer state
-    await CashManagementRepository.saveTransfer(updatedTransfer);
-
-    // 4. Forensic log
-    try {
-      const log = await ForensicLogRepository.createAndSignLog({
-        business_id: transfer.business_id,
-        actorId: operator.id,
-        userName: operator.name,
-        userRole: operator.role,
-        action: "SAFE_FUNDING_EXECUTED_DIRECT",
-        details: `Alimentation coffre ${transfer.destination_name} de ${(transfer.amount_cents / 100).toLocaleString()} ${transfer.currency} depuis ${transfer.source_name} (GL D:${transfer.debit_account_code} / C:${transfer.credit_account_code}).`,
-        afterState: { status: "EXECUTED", amount: transfer.amount_cents },
-        timestamp: now
-      });
-      await ForensicLogRepository.writeForensicLog(log);
-    } catch (fErr) {
-      console.warn("Could not write forensic log for direct execution", fErr);
-    }
-
-    return updatedTransfer;
   }
 
   /**
@@ -538,8 +548,8 @@ export class CashTransferEngine {
         id: glTxId,
         business_id: transfer.business_id,
         businessId: transfer.business_id,
-        branchId: transfer.branch_id || "MAIN_BRANCH",
-        branch_id: transfer.branch_id || "MAIN_BRANCH",
+        branchId: transfer.branch_id || "",
+        branch_id: transfer.branch_id || "",
         departmentId: "treasury",
         department_id: "treasury",
         date: now.slice(0, 10),
@@ -743,7 +753,7 @@ export class CashTransferEngine {
 
     return this.initiateTransfer(
       params.business_id,
-      params.branch_id || srcTill?.branch_id || srcSafe?.branch_id || "MAIN_BRANCH",
+      params.branch_id || srcTill?.branch_id || srcSafe?.branch_id || destTill?.branch_id || destSafe?.branch_id || "",
       { type: sourceType, id: params.source_id, name: sourceName },
       { type: destType, id: params.destination_id, name: destName },
       params.amount_cents,
@@ -753,6 +763,7 @@ export class CashTransferEngine {
         id: params.initiator_id,
         name: params.initiator_name,
         role: params.initiator_role || "",
+        branch_id: params.branch_id,
         operational_profile: params.initiator_profile
       },
       {

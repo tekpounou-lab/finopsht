@@ -72,9 +72,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         { id: "organization", label: "Structure Organisation", icon: Building2, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "AUDITOR"] },
         { id: "personnel", label: "Effectifs & Personnel", icon: Users, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "AUDITOR"] },
-        { id: "attendance", label: "Pointage & Présences", icon: Clock, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "AUDITOR"] },
-        { id: "planning", label: "Planning & Horaires", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "AUDITOR"] },
-        { id: "leaves", label: "Gestion des Congés", icon: Calendar, badge: badgeCounts.leaves, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "attendance", label: "Pointage & Présences", icon: Clock, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "TELLER", "AUDITOR"] },
+        { id: "planning", label: "Planning & Horaires", icon: Briefcase, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "AUDITOR"] },
+        { id: "leaves", label: "Gestion des Congés", icon: Calendar, badge: badgeCounts.leaves, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
@@ -82,9 +82,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Finances & Comptabilité",
       items: [
         { id: "payroll", label: "Moteur de Paie", icon: Landmark, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
-        { id: "ledger", label: "Grand Livre Comptable", icon: BookOpen, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
-        { id: "cash", label: "Caisses & Coffres", icon: Vault, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
-        { id: "reports", label: "Centre des Rapports", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "HEAD_TELLER", "MASTER_HEAD_TELLER", "AUDITOR"] },
+        { id: "ledger", label: "Grand Livre Comptable", icon: BookOpen, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "cash", label: "Caisses & Coffres", icon: Vault, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "reports", label: "Centre des Rapports", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
@@ -98,7 +98,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: "intelligence_group",
       label: "Performance & Décisionnel BI",
       items: [
-        { id: "performance", label: "Performance Intelligence (PIC)", icon: TrendingUp, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "performance", label: "Performance Intelligence (PIC)", icon: TrendingUp, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "ACCOUNTANT", "AUDITOR"] },
         { id: "cfo", label: "Assistant IA CFO", icon: Sparkles, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
@@ -106,8 +106,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: "tools_group",
       label: "Outils & Espace",
       items: [
-        { id: "documents", label: "Gestion Documentaire", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
-        { id: "employeeSpace", label: "Mon Espace Collaborateur", icon: UserCheck, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "documents", label: "Gestion Documentaire", icon: FileText, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"] },
+        { id: "employeeSpace", label: "Mon Espace Collaborateur", icon: UserCheck, roles: ["OWNER", "ADMIN", "SUPER_ADMIN", "MANAGER", "SUPERVISOR", "EMPLOYEE", "JUNIOR_TELLER", "SENIOR_TELLER", "HEAD_TELLER", "MASTER_HEAD_TELLER", "TELLER", "ACCOUNTANT", "AUDITOR"] },
       ],
     },
     {
@@ -134,11 +134,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Filter Categories and Items according to current user's Role
   // Empty categories (0 matching items) are automatically omitted!
   const visibleCategories = useMemo(() => {
-    const roleStr = String(currentRole || "").toUpperCase();
+    const roleStr = String(currentRole || "").trim().toUpperCase();
     return allCategories
       .map((cat) => ({
         ...cat,
-        items: cat.items.filter((item) => !roleStr || item.roles.includes(roleStr)),
+        items: cat.items.filter((item) => Boolean(roleStr) && item.roles.includes(roleStr)),
       }))
       .filter((cat) => cat.items.length > 0);
   }, [allCategories, currentRole]);

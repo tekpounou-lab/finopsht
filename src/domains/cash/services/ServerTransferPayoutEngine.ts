@@ -9,13 +9,14 @@ import {
   ServerOperatorContext
 } from "./ServerTransferIntakeEngine";
 import {
+  isBranchScopedTellerRole,
   ServerProfileVerificationError,
   verifyServerEmployeeOperationalProfile
 } from "../../rbac/serverEmployeeProfileVerifier";
 
 export interface ServerPayoutParams {
   businessId: string;
-  branchId: string;
+  branchId?: string;
   transferId: string;
   tillId: string;
   sessionId: string;
@@ -62,21 +63,35 @@ export class ServerTransferPayoutEngine {
       );
     }
 
+    let verifiedBranchId: string | undefined;
     try {
-      await verifyServerEmployeeOperationalProfile({
+      const verifiedActor = await verifyServerEmployeeOperationalProfile({
         adminDb: firestore,
         uid: operatorContext.uid,
         email: operatorContext.email,
         businessId,
+        actorBranchId: operatorContext.branch_id,
+        claimedBranchId: params.branchId,
+        requireBranchScope: true,
         actorRole: normalizedRole,
         isSuperAdmin: normalizedRole === "SUPER_ADMIN",
         capability: "cash"
       });
+      verifiedBranchId = verifiedActor.branchId;
     } catch (err: any) {
       if (err instanceof ServerProfileVerificationError) {
         throw new FinopsException(err.code, err.message);
       }
       throw err;
+    }
+
+    const isTellerScoped = normalizedRole !== "SUPER_ADMIN" && isBranchScopedTellerRole(normalizedRole);
+    const actorBranchScope = verifiedBranchId || operatorContext.branch_id || "";
+    if (isTellerScoped && !actorBranchScope) {
+      throw new FinopsException(
+        "MISSING_BRANCH_SCOPE",
+        `Aucune succursale assignée au guichetier [${normalizedRole}].`
+      );
     }
 
     if (!transferId || !tillId || !sessionId) {
@@ -165,6 +180,12 @@ export class ServerTransferPayoutEngine {
           `Violation d'isolation multi-tenant : la caisse (${tillId}) n'appartient pas à l'entreprise (${businessId}).`
         );
       }
+      if (isTellerScoped && till.branch_id && till.branch_id !== actorBranchScope) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Accès inter-succursale refusé : la caisse (${tillId}) appartient à '${till.branch_id}', opérateur limité à '${actorBranchScope}'.`
+        );
+      }
       if (till.status !== "OPEN") {
         throw new FinopsException(
           "TILL_NOT_OPEN",
@@ -199,6 +220,12 @@ export class ServerTransferPayoutEngine {
           `Violation d'isolation multi-tenant : la session (${sessionId}) n'appartient pas à l'entreprise (${businessId}).`
         );
       }
+      if (isTellerScoped && session.branch_id && session.branch_id !== actorBranchScope) {
+        throw new FinopsException(
+          "BRANCH_ISOLATION_VIOLATION",
+          `Accès inter-succursale refusé : la session (${sessionId}) appartient à '${session.branch_id}', opérateur limité à '${actorBranchScope}'.`
+        );
+      }
       if (session.status !== "ACTIVE") {
         throw new FinopsException("SESSION_NOT_ACTIVE", "La session de caisse n'est pas active.");
       }
@@ -225,6 +252,16 @@ export class ServerTransferPayoutEngine {
       const txId = `tx_teller_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const glTxId = `gl_${txId}`;
 
+      const resolvedBranchId = isTellerScoped
+        ? actorBranchScope
+        : till.branch_id || session.branch_id || params.branchId || actorBranchScope || "";
+      if (!resolvedBranchId) {
+        throw new FinopsException(
+          "MISSING_BRANCH_SCOPE",
+          "L'identifiant de succursale (branch_id) est obligatoire pour comptabiliser un paiement."
+        );
+      }
+
       const tillAccount = CashAccountMapping.resolveTillAccount(till.currency);
       const clearingCode = CashAccountMapping.ACCOUNTS.TRANSFER_PAYOUT_CLEARING.code;
       const clearingName = CashAccountMapping.ACCOUNTS.TRANSFER_PAYOUT_CLEARING.name;
@@ -234,8 +271,8 @@ export class ServerTransferPayoutEngine {
         id: glTxId,
         businessId,
         business_id: businessId,
-        branchId: params.branchId || till.branch_id || "MAIN_BRANCH",
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branchId: resolvedBranchId,
+        branch_id: resolvedBranchId,
         departmentId: "counter",
         date: businessDate,
         description: `[TRANSFER PAYOUT] ${transfer.reference} - ${transfer.beneficiary_name}`,
@@ -265,7 +302,7 @@ export class ServerTransferPayoutEngine {
       const tellerTx: TellerTransaction = {
         id: txId,
         business_id: businessId,
-        branch_id: params.branchId || till.branch_id || "MAIN_BRANCH",
+        branch_id: resolvedBranchId,
         till_id: till.id,
         session_id: sessionId,
         operator_id: effectiveOperatorId,

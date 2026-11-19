@@ -43,7 +43,8 @@ export type AppTab =
  * Implements deterministic workspace tab mapping according to tenant role authorization
  */
 export function resolveDefaultTabForRole(role: Role | string): AppTab {
-  switch (role) {
+  const normalizedRole = String(role || "").trim().toUpperCase();
+  switch (normalizedRole) {
     case "SUPER_ADMIN":
       return "platform";
     case "OWNER":
@@ -57,6 +58,8 @@ export function resolveDefaultTabForRole(role: Role | string): AppTab {
     case "SENIOR_TELLER":
     case "HEAD_TELLER":
     case "MASTER_HEAD_TELLER":
+    case "TELLER":
+      return "cash";
     case "ACCOUNTANT":
     case "AUDITOR":
       return "ledger";
@@ -70,12 +73,13 @@ export function resolveDefaultTabForRole(role: Role | string): AppTab {
 /**
  * Returns list of authorized tabs for a specific organizational role.
  * Strictly enforces that system health, reliability & DLQ, and disaster recovery
- * are accessible exclusively by SUPER_ADMIN.
+ * are accessible exclusively by SUPER_ADMIN, and tellers remain isolated from GL/BI/PIC/Reports.
  */
 export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
   const commonTabs: AppTab[] = ["notifications", "instructions"];
+  const normalizedRole = String(role || "").trim().toUpperCase();
 
-  switch (role) {
+  switch (normalizedRole) {
     case "SUPER_ADMIN":
       return [
         "platform",
@@ -177,25 +181,12 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
       ];
     case "JUNIOR_TELLER":
     case "SENIOR_TELLER":
-      return [
-        "ledger",
-        "cash",
-        "attendance",
-        "leave",
-        "documents",
-        "employeeSpace",
-        ...commonTabs,
-      ];
     case "HEAD_TELLER":
     case "MASTER_HEAD_TELLER":
+    case "TELLER":
       return [
-        "bi",
-        "ledger",
         "cash",
-        "reports",
         "attendance",
-        "planning",
-        "performance",
         "leave",
         "documents",
         "employeeSpace",
@@ -248,6 +239,6 @@ export function getAuthorizedTabsForRole(role: Role | string): AppTab[] {
         ...commonTabs,
       ];
     default:
-      return ["employeeSpace", ...commonTabs];
+      return [];
   }
 }

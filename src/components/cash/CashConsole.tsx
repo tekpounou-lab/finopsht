@@ -51,17 +51,22 @@ import { EmployeeRepository } from "../../repositories/EmployeeRepository";
 import { Branch, Department } from "../../types/organization";
 import { WorkspaceRepository } from "../../repositories";
 import SearchableSelect from "../ui/SearchableSelect";
+import { PermissionService } from "../../services/PermissionService";
+import {
+  isBranchScopedTellerRole,
+  normalizeRole
+} from "../../domains/rbac/operationalProfilePolicy";
 
 interface CashConsoleProps {
   businessId: string;
   branchId?: string;
-  currentUser: { id: string; name: string; role: string };
+  currentUser: { id: string; name: string; role: string; branch_id?: string; branchId?: string };
   employees?: Employee[];
 }
 
 export const CashConsole: React.FC<CashConsoleProps> = ({
   businessId,
-  branchId = "MAIN_BRANCH",
+  branchId = "",
   currentUser,
   employees = []
 }) => {
@@ -73,6 +78,53 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isAutoGenerating, setIsAutoGenerating] = useState(false);
 
+  // Authoritative RBAC & Branch-Scope Guards (P2 Least-Privilege Remediation)
+  const normalizedUserRole = normalizeRole(currentUser?.role) || "UNASSIGNED";
+  const permissionRoleReady = PermissionService.getRole() !== "UNASSIGNED";
+  const isBranchTeller = isBranchScopedTellerRole(normalizedUserRole);
+  const actorBranchId = (currentUser?.branch_id || currentUser?.branchId || branchId || "").trim();
+  const hasMissingTellerBranch = isBranchTeller && !actorBranchId;
+
+  const canManageSafes =
+    ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"].includes(normalizedUserRole) &&
+    (!permissionRoleReady || PermissionService.can("cash.supervise"));
+
+  const canManageTills =
+    ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "HEAD_TELLER", "MASTER_HEAD_TELLER"].includes(normalizedUserRole) &&
+    (!permissionRoleReady || PermissionService.can("cash.supervise"));
+
+  const canInitiateTransfers =
+    ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "MASTER_HEAD_TELLER", "HEAD_TELLER", "SENIOR_TELLER"].includes(normalizedUserRole) &&
+    (!permissionRoleReady || PermissionService.can("cash.transfer")) &&
+    !hasMissingTellerBranch;
+
+  const canOperateCash =
+    ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "MASTER_HEAD_TELLER", "HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER"].includes(normalizedUserRole) &&
+    (!permissionRoleReady || PermissionService.can("cash.operate")) &&
+    !hasMissingTellerBranch;
+
+  const canViewAccountingConfigTabs =
+    ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT", "AUDITOR"].includes(normalizedUserRole) &&
+    !isBranchTeller &&
+    normalizedUserRole !== "MASTER_HEAD_TELLER";
+
+  const canOperateSpecificTill = useCallback(
+    (till: CashTill): boolean => {
+      if (!canOperateCash) return false;
+      const tillBranch = (till.branch_id || (till as any).branchId || "").trim();
+      if (isBranchTeller && (!actorBranchId || tillBranch !== actorBranchId)) {
+        return false;
+      }
+      if (["JUNIOR_TELLER", "SENIOR_TELLER", "TELLER"].includes(normalizedUserRole)) {
+        if (till.assigned_teller_id && till.assigned_teller_id !== currentUser?.id) {
+          return false;
+        }
+      }
+      return true;
+    },
+    [canOperateCash, isBranchTeller, actorBranchId, normalizedUserRole, currentUser?.id]
+  );
+
   // Company employees, branches and departments for till & safe assignment/filtering
   const [companyEmployees, setCompanyEmployees] = useState<Employee[]>(employees);
   const [companyBranches, setCompanyBranches] = useState<Branch[]>([]);
@@ -83,7 +135,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [currencyFilter, setCurrencyFilter] = useState<"ALL" | CurrencyCode>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "OPEN" | "CLOSED">("ALL");
-  const [branchFilter, setBranchFilter] = useState<string>("ALL");
+  const [branchFilter, setBranchFilter] = useState<string>(isBranchTeller && actorBranchId ? actorBranchId : "ALL");
   const [departmentFilter, setDepartmentFilter] = useState<string>("ALL");
   const [employeeFilter, setEmployeeFilter] = useState<string>("ALL");
 
@@ -91,9 +143,56 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   const [safesPage, setSafesPage] = useState(1);
   const [pageSize, setPageSize] = useState(6);
 
+  useEffect(() => {
+    if (isBranchTeller && actorBranchId) {
+      setBranchFilter(actorBranchId);
+    }
+  }, [isBranchTeller, actorBranchId]);
+
+  useEffect(() => {
+    if (!canViewAccountingConfigTabs && (activeTab === "CHART_OF_ACCOUNTS" || activeTab === "TRANSACTION_TYPES")) {
+      setActiveTab("OPERATIONS");
+    }
+  }, [canViewAccountingConfigTabs, activeTab]);
+
+  // Fail-closed branch-scoped base datasets for branch-scoped tellers
+  const scopedTills = useMemo(() => {
+    if (hasMissingTellerBranch) return [];
+    if (isBranchTeller && actorBranchId) {
+      return tills.filter((till) => (till.branch_id || (till as any).branchId || "").trim() === actorBranchId);
+    }
+    return tills;
+  }, [tills, isBranchTeller, hasMissingTellerBranch, actorBranchId]);
+
+  const scopedSafes = useMemo(() => {
+    if (hasMissingTellerBranch) return [];
+    if (isBranchTeller && actorBranchId) {
+      return safes.filter((safe) => (safe.branch_id || (safe as any).branchId || "").trim() === actorBranchId);
+    }
+    return safes;
+  }, [safes, isBranchTeller, hasMissingTellerBranch, actorBranchId]);
+
+  const scopedTransfers = useMemo(() => {
+    if (hasMissingTellerBranch) return [];
+    if (isBranchTeller && actorBranchId) {
+      const branchEntityIds = new Set<string>([
+        ...scopedTills.map((t) => t.id),
+        ...scopedSafes.map((s) => s.id)
+      ]);
+      return transfers.filter((tr) => {
+        const transferBranch = ((tr as any).branch_id || (tr as any).branchId || "").trim();
+        if (transferBranch) {
+          return transferBranch === actorBranchId;
+        }
+        return branchEntityIds.has(tr.source_id) || branchEntityIds.has(tr.destination_id);
+      });
+    }
+    return transfers;
+  }, [transfers, isBranchTeller, hasMissingTellerBranch, actorBranchId, scopedTills, scopedSafes]);
+
   // Filtered Tills (by code/number, name, employee/teller, branch, department, currency, status)
   const filteredTills = useMemo(() => {
-    return tills.filter((till) => {
+    return scopedTills.filter((till) => {
       if (currencyFilter !== "ALL" && till.currency !== currencyFilter) {
         return false;
       }
@@ -101,7 +200,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
         return false;
       }
       if (branchFilter !== "ALL") {
-        const tillBranch = till.branch_id || (till as any).branchId || "MAIN_BRANCH";
+        const tillBranch = (till.branch_id || (till as any).branchId || "").trim();
         if (tillBranch !== branchFilter) return false;
       }
       if (departmentFilter !== "ALL") {
@@ -131,16 +230,16 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       }
       return true;
     });
-  }, [tills, currencyFilter, statusFilter, branchFilter, departmentFilter, employeeFilter, searchQuery, companyEmployees]);
+  }, [scopedTills, currencyFilter, statusFilter, branchFilter, departmentFilter, employeeFilter, searchQuery, companyEmployees]);
 
   // Filtered Safes (by code/number, name, manager, branch, department, currency)
   const filteredSafes = useMemo(() => {
-    return safes.filter((safe) => {
+    return scopedSafes.filter((safe) => {
       if (currencyFilter !== "ALL" && safe.currency !== currencyFilter) {
         return false;
       }
       if (branchFilter !== "ALL") {
-        const safeBranch = safe.branch_id || (safe as any).branchId || "MAIN_BRANCH";
+        const safeBranch = (safe.branch_id || (safe as any).branchId || "").trim();
         if (safeBranch !== branchFilter) return false;
       }
       if (departmentFilter !== "ALL") {
@@ -165,7 +264,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       }
       return true;
     });
-  }, [safes, currencyFilter, branchFilter, departmentFilter, employeeFilter, searchQuery]);
+  }, [scopedSafes, currencyFilter, branchFilter, departmentFilter, employeeFilter, searchQuery]);
 
   // Reset pagination when search query, filters, or page size changes
   useEffect(() => {
@@ -243,6 +342,15 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   }, [companyEmployees]);
 
   const branchFilterOptions = useMemo(() => {
+    if (isBranchTeller && actorBranchId) {
+      const assigned = companyBranches.find((b) => b.id === actorBranchId);
+      return [
+        {
+          id: actorBranchId,
+          name: assigned ? `${assigned.name} (${assigned.code || assigned.id})` : actorBranchId
+        }
+      ];
+    }
     return [
       { id: "ALL", name: `Toutes les Succursales (${companyBranches.length || 1})` },
       ...companyBranches.map((b) => ({
@@ -250,7 +358,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
         name: `${b.name} (${b.code || b.id})`
       }))
     ];
-  }, [companyBranches]);
+  }, [companyBranches, isBranchTeller, actorBranchId]);
 
   const departmentFilterOptions = useMemo(() => {
     return [
@@ -315,13 +423,17 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   const createBranchOptions = useMemo(() => {
     if (companyBranches.length === 0) {
-      return [{ id: branchId, name: `Succursale Principale (${branchId})` }];
+      return actorBranchId ? [{ id: actorBranchId, name: `Succursale (${actorBranchId})` }] : [];
     }
-    return companyBranches.map((b) => ({
+    const baseBranches =
+      isBranchTeller && actorBranchId
+        ? companyBranches.filter((b) => b.id === actorBranchId)
+        : companyBranches;
+    return baseBranches.map((b) => ({
       id: b.id,
       name: `${b.name} (${b.code || b.id})`
     }));
-  }, [companyBranches, branchId]);
+  }, [companyBranches, actorBranchId, isBranchTeller]);
 
   const createDeptOptions = useMemo(() => {
     return companyDepartments.map((d) => ({
@@ -355,9 +467,13 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   // Open Edit Till Modal
   const handleOpenEditTill = (till: CashTill) => {
+    if (!canManageTills) {
+      toast.error("Autorisation insuffisante : vous ne pouvez pas modifier la configuration des caisses.");
+      return;
+    }
     setEditingTill(till);
     setEditTillName(till.name);
-    setEditTillBranchId(till.branch_id || branchId);
+    setEditTillBranchId(till.branch_id || actorBranchId || "");
     setEditTillDeptId(till.department_id || "");
     setEditTillTellerId(till.assigned_teller_id || "");
     setEditTillStatus(till.status === "LOCKED" ? "LOCKED" : till.status === "OPEN" ? "OPEN" : "CLOSED");
@@ -366,6 +482,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   // Save Edit Till
   const handleSaveEditTill = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageTills) {
+      toast.error("Autorisation insuffisante : action refusée.");
+      return;
+    }
     if (!editingTill) return;
     if (!editTillName.trim()) {
       toast.error("Veuillez saisir un libellé pour la caisse.");
@@ -415,6 +535,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   // Quick Suspend / Reactivate Till
   const handleToggleTillSuspension = async (till: CashTill) => {
+    if (!canManageTills) {
+      toast.error("Autorisation insuffisante : suspension de caisse non autorisée.");
+      return;
+    }
     const newStatus = till.status === "LOCKED" ? "CLOSED" : "LOCKED";
     const actionLabel = newStatus === "LOCKED" ? "suspendue / verrouillée" : "réactivée";
     try {
@@ -429,9 +553,13 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   // Open Edit Safe Modal
   const handleOpenEditSafe = (safe: BranchSafe) => {
+    if (!canManageSafes) {
+      toast.error("Autorisation insuffisante : modification des coffres réservée au Manager / Owner.");
+      return;
+    }
     setEditingSafe(safe);
     setEditSafeName(safe.name);
-    setEditSafeBranchId(safe.branch_id || branchId);
+    setEditSafeBranchId(safe.branch_id || actorBranchId || "");
     setEditSafeDeptId(safe.department_id || "");
     setEditSafeManagerName(safe.manager_name || "");
     setEditSafeMinLimit(safe.min_limit_cents ? safe.min_limit_cents / 100 : 50000);
@@ -442,6 +570,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   // Save Edit Safe
   const handleSaveEditSafe = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageSafes) {
+      toast.error("Autorisation insuffisante : action refusée.");
+      return;
+    }
     if (!editingSafe) return;
     if (!editSafeName.trim()) {
       toast.error("Veuillez saisir un libellé pour le coffre-fort.");
@@ -478,6 +610,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   // Quick Suspend / Reactivate Safe
   const handleToggleSafeSuspension = async (safe: BranchSafe) => {
+    if (!canManageSafes) {
+      toast.error("Autorisation insuffisante : suspension des coffres réservée au Manager / Owner.");
+      return;
+    }
     const newStatus = (safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "ACTIVE" : "LOCKED";
     const actionLabel = newStatus === "LOCKED" ? "suspendu / verrouillé" : "réactivé";
     try {
@@ -505,12 +641,16 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   );
 
   const handleOpenCreateTill = () => {
+    if (!canManageTills) {
+      toast.error("Autorisation insuffisante : création de caisse réservée aux superviseurs et gestionnaires.");
+      return;
+    }
     const defaultEmp = eligibleEmployeesForCreateTill.length > 0 ? eligibleEmployeesForCreateTill[0] : null;
     const empId = defaultEmp?.id || "";
     const empName = defaultEmp ? (defaultEmp.name || defaultEmp.displayName || "") : "";
     setSelectedTellerId(empId);
     setTillTellerName(empName);
-    setSelectedTillBranchId(defaultEmp?.branchId || defaultEmp?.branch_id || branchId);
+    setSelectedTillBranchId(defaultEmp?.branchId || defaultEmp?.branch_id || actorBranchId || companyBranches[0]?.id || "");
     setSelectedTillDeptId(defaultEmp?.departmentId || defaultEmp?.department_id || (companyDepartments[0]?.id || ""));
     setTillName(generateAutomaticTillCode(tillCurrency, empName));
     setIsCreateTillOpen(true);
@@ -527,13 +667,21 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   );
 
   const handleOpenCreateSafe = () => {
-    setSelectedSafeBranchId(companyBranches[0]?.id || branchId);
+    if (!canManageSafes) {
+      toast.error("Autorisation insuffisante : création de coffre réservée au Manager / Owner.");
+      return;
+    }
+    setSelectedSafeBranchId(actorBranchId || companyBranches[0]?.id || "");
     setSelectedSafeDeptId(companyDepartments[0]?.id || "");
     setSafeName(generateAutomaticSafeCode(safeCurrency));
     setIsCreateSafeOpen(true);
   };
 
   const handleOpenFundSafe = (safe?: BranchSafe) => {
+    if (!canManageSafes) {
+      toast.error("Autorisation insuffisante : l'alimentation directe de coffre est réservée au Manager / Owner / Admin.");
+      return;
+    }
     setPreselectedSafeForFunding(safe || null);
     setIsFundSafeOpen(true);
   };
@@ -599,11 +747,11 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
         "SUPER_ADMIN"
       ].includes(normalizedUserRole);
 
-      if (tillsData.length === 0 && canAutoProvisionTills) {
+      if (tillsData.length === 0 && canManageTills && !hasMissingTellerBranch) {
         try {
           const autoResult = await CashManagementRepository.autoProvisionTillsForBusiness(
             businessId,
-            branchId,
+            actorBranchId || undefined,
             employees
           );
           if (autoResult.tills.length > 0) {
@@ -625,18 +773,22 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [businessId, branchId, employees, currentUser?.role]);
+  }, [businessId, actorBranchId, employees, canManageTills, hasMissingTellerBranch]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
   const handleAutoGenerateTills = async () => {
+    if (!canManageTills || hasMissingTellerBranch) {
+      toast.error("Autorisation insuffisante pour générer les caisses.");
+      return;
+    }
     setIsAutoGenerating(true);
     try {
       const result = await CashManagementRepository.autoProvisionTillsForBusiness(
         businessId,
-        branchId,
+        actorBranchId || undefined,
         companyEmployees
       );
       toast.success(
@@ -652,6 +804,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
   };
 
   const handleReassignTeller = async () => {
+    if (!canManageTills) {
+      toast.error("Autorisation insuffisante pour réassigner une caisse.");
+      return;
+    }
     if (!reassigningTill || !selectedReassignTellerId) return;
     const emp = companyEmployees.find((e) => e.id === selectedReassignTellerId);
     if (!emp) return;
@@ -672,6 +828,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   const handleCreateTill = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageTills) {
+      toast.error("Autorisation insuffisante : création de caisse refusée.");
+      return;
+    }
     if (!tillName.trim()) {
       toast.error("Veuillez saisir un code / libellé pour la caisse.");
       return;
@@ -695,8 +855,23 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       toast.error(eligibility.reason || "Seul un rôle caissier au profil 'teller' peut recevoir une caisse.");
       return;
     }
+    const resolvedTillBranchId = (
+      selectedTillBranchId ||
+      assignedEmployee.branchId ||
+      assignedEmployee.branch_id ||
+      actorBranchId ||
+      ""
+    ).trim();
+    if (!resolvedTillBranchId) {
+      toast.error("Veuillez sélectionner une succursale valide pour la caisse.");
+      return;
+    }
+    if (isBranchTeller && actorBranchId && resolvedTillBranchId !== actorBranchId) {
+      toast.error("Un chef caissier ne peut créer une caisse que dans sa succursale assignée.");
+      return;
+    }
     const assignedName = assignedEmployee.name || assignedEmployee.displayName || `Employé ${assignedEmployee.id}`;
-    const selectedBranch = companyBranches.find((b) => b.id === selectedTillBranchId);
+    const selectedBranch = companyBranches.find((b) => b.id === resolvedTillBranchId);
     const selectedDept = companyDepartments.find((d) => d.id === selectedTillDeptId);
 
     setIsSavingTill(true);
@@ -704,7 +879,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       const newTill: CashTill = {
         id: `till_${businessId}_${Date.now()}`,
         business_id: businessId,
-        branch_id: selectedTillBranchId || assignedEmployee.branchId || assignedEmployee.branch_id || branchId,
+        branch_id: resolvedTillBranchId,
         branch_name: selectedBranch?.name,
         department_id: selectedTillDeptId || assignedEmployee.departmentId || assignedEmployee.department_id,
         department_name: selectedDept?.name,
@@ -733,11 +908,20 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
   const handleCreateSafe = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageSafes) {
+      toast.error("Autorisation insuffisante : création de coffre refusée.");
+      return;
+    }
     if (!safeName.trim()) {
       toast.error("Veuillez saisir un libellé pour le coffre-fort.");
       return;
     }
-    const selectedBranch = companyBranches.find((b) => b.id === selectedSafeBranchId);
+    const resolvedSafeBranchId = (selectedSafeBranchId || actorBranchId || "").trim();
+    if (!resolvedSafeBranchId) {
+      toast.error("Veuillez sélectionner une succursale valide pour le coffre-fort.");
+      return;
+    }
+    const selectedBranch = companyBranches.find((b) => b.id === resolvedSafeBranchId);
     const selectedDept = companyDepartments.find((d) => d.id === selectedSafeDeptId);
 
     setIsSavingSafe(true);
@@ -745,7 +929,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       const newSafe: BranchSafe = {
         id: `safe_${businessId}_${Date.now()}`,
         business_id: businessId,
-        branch_id: selectedSafeBranchId || branchId,
+        branch_id: resolvedSafeBranchId,
         branch_name: selectedBranch?.name,
         department_id: selectedSafeDeptId,
         department_name: selectedDept?.name,
@@ -770,21 +954,21 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
     }
   };
 
-  // Total cash held in active tills
-  const totalTillsHtgCents = tills
+  // Total cash held in scoped tills
+  const totalTillsHtgCents = scopedTills
     .filter((t) => t.currency === "HTG")
     .reduce((acc, t) => acc + (t.balance_cents || 0), 0);
 
-  const totalTillsUsdCents = tills
+  const totalTillsUsdCents = scopedTills
     .filter((t) => t.currency === "USD")
     .reduce((acc, t) => acc + (t.balance_cents || 0), 0);
 
-  // Total cash held in safes
-  const totalSafesHtgCents = safes
+  // Total cash held in scoped safes
+  const totalSafesHtgCents = scopedSafes
     .filter((s) => s.currency === "HTG")
     .reduce((acc, s) => acc + (s.balance_cents || 0), 0);
 
-  const totalSafesUsdCents = safes
+  const totalSafesUsdCents = scopedSafes
     .filter((s) => s.currency === "USD")
     .reduce((acc, s) => acc + (s.balance_cents || 0), 0);
 
@@ -818,50 +1002,72 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin text-amber-400" : ""}`} />
           </button>
 
-          <button
-            onClick={handleAutoGenerateTills}
-            disabled={isAutoGenerating}
-            className="px-3.5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
-            title="Générer automatiquement et assigner les caisses aux employés de l'entreprise"
-          >
-            <Sparkles className={`w-4 h-4 ${isAutoGenerating ? "animate-spin" : ""}`} />
-            <span>{isAutoGenerating ? "Génération..." : "Générer Caisses Employés"}</span>
-          </button>
+          {canManageTills && !hasMissingTellerBranch && (
+            <>
+              <button
+                onClick={handleAutoGenerateTills}
+                disabled={isAutoGenerating}
+                className="px-3.5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                title="Générer automatiquement et assigner les caisses aux employés de l'entreprise"
+              >
+                <Sparkles className={`w-4 h-4 ${isAutoGenerating ? "animate-spin" : ""}`} />
+                <span>{isAutoGenerating ? "Génération..." : "Générer Caisses Employés"}</span>
+              </button>
 
-          <button
-            onClick={handleOpenCreateTill}
-            className="px-3.5 py-2.5 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nouvelle Caisse</span>
-          </button>
+              <button
+                onClick={handleOpenCreateTill}
+                className="px-3.5 py-2.5 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Nouvelle Caisse</span>
+              </button>
+            </>
+          )}
 
-          <button
-            onClick={handleOpenCreateSafe}
-            className="px-3.5 py-2.5 bg-amber-700/80 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nouveau Coffre</span>
-          </button>
+          {canManageSafes && (
+            <>
+              <button
+                onClick={handleOpenCreateSafe}
+                className="px-3.5 py-2.5 bg-amber-700/80 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Nouveau Coffre</span>
+              </button>
 
-          <button
-            onClick={() => handleOpenFundSafe()}
-            className="px-3.5 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-amber-900/30 cursor-pointer"
-            title="Alimenter un coffre-fort depuis la banque ou virement interne avec écriture Grand Livre"
-          >
-            <Coins className="w-4 h-4" />
-            <span>Alimenter Coffre</span>
-          </button>
+              <button
+                onClick={() => handleOpenFundSafe()}
+                className="px-3.5 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-amber-900/30 cursor-pointer"
+                title="Alimenter un coffre-fort depuis la banque ou virement interne avec écriture Grand Livre"
+              >
+                <Coins className="w-4 h-4" />
+                <span>Alimenter Coffre</span>
+              </button>
+            </>
+          )}
 
-          <button
-            onClick={() => setIsTransferDialogOpen(true)}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-blue-600/20"
-          >
-            <ArrowRightLeft className="w-4 h-4" />
-            <span>Nouveau Transfert</span>
-          </button>
+          {canInitiateTransfers && (
+            <button
+              onClick={() => setIsTransferDialogOpen(true)}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-blue-600/20"
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+              <span>Nouveau Transfert</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {hasMissingTellerBranch && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-2xl p-4 flex items-start gap-3 text-xs">
+          <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold text-red-200">Périmètre Succursale Manquant (Mode Fail-Closed)</p>
+            <p className="mt-0.5">
+              Aucune succursale valide n'est assignée à votre profil caissier. L'accès aux caisses, coffres et transferts est bloqué jusqu'à l'attribution d'une succursale par un administrateur.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* TAB NAVIGATION */}
       <div className="flex items-center gap-2 bg-slate-900/60 p-1.5 rounded-2xl border border-slate-800">
@@ -877,29 +1083,33 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
           <span>Sessions Caisses & Coffres</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab("CHART_OF_ACCOUNTS")}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === "CHART_OF_ACCOUNTS"
-              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
-              : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent"
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Plan Comptable & Charte des Comptes</span>
-        </button>
+        {canViewAccountingConfigTabs && (
+          <>
+            <button
+              onClick={() => setActiveTab("CHART_OF_ACCOUNTS")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === "CHART_OF_ACCOUNTS"
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent"
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Plan Comptable & Charte des Comptes</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab("TRANSACTION_TYPES")}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === "TRANSACTION_TYPES"
-              ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-sm"
-              : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent"
-          }`}
-        >
-          <Building2 className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Types de Transactions & Imputation</span>
-        </button>
+            <button
+              onClick={() => setActiveTab("TRANSACTION_TYPES")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === "TRANSACTION_TYPES"
+                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent"
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Types de Transactions & Imputation</span>
+            </button>
+          </>
+        )}
 
         <button
           onClick={() => setActiveTab("EXCHANGE_RATES")}
@@ -915,9 +1125,21 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
       </div>
 
       {activeTab === "CHART_OF_ACCOUNTS" ? (
-        <ChartOfAccountsManagement businessId={businessId} currentRole={currentUser.role} />
+        canViewAccountingConfigTabs ? (
+          <ChartOfAccountsManagement businessId={businessId} currentRole={currentUser.role} />
+        ) : (
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 text-center text-xs text-rose-300">
+            Accès refusé : le Plan Comptable n'est pas accessible pour ce rôle.
+          </div>
+        )
       ) : activeTab === "TRANSACTION_TYPES" ? (
-        <TransactionTypesManagement businessId={businessId} currentRole={currentUser.role} />
+        canViewAccountingConfigTabs ? (
+          <TransactionTypesManagement businessId={businessId} currentRole={currentUser.role} />
+        ) : (
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 text-center text-xs text-rose-300">
+            Accès refusé : la gestion des Types de Transactions n'est pas accessible pour ce rôle.
+          </div>
+        )
       ) : activeTab === "EXCHANGE_RATES" ? (
         <TodayRatesEditor businessId={businessId} currentUser={currentUser} />
       ) : (
@@ -927,7 +1149,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-1">
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
                 <span>Liquidités Caisses (HTG)</span>
-                <span className="text-[10px] text-emerald-400 font-mono">{tills.filter(t => t.currency === "HTG").length} caisse(s)</span>
+                <span className="text-[10px] text-emerald-400 font-mono">{scopedTills.filter(t => t.currency === "HTG").length} caisse(s)</span>
               </div>
               <div className="text-xl font-bold font-mono text-emerald-400">
                 {(totalTillsHtgCents / 100).toLocaleString()} HTG
@@ -938,7 +1160,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-1">
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
                 <span>Liquidités Caisses (USD)</span>
-                <span className="text-[10px] text-emerald-400 font-mono">{tills.filter(t => t.currency === "USD").length} caisse(s)</span>
+                <span className="text-[10px] text-emerald-400 font-mono">{scopedTills.filter(t => t.currency === "USD").length} caisse(s)</span>
               </div>
               <div className="text-xl font-bold font-mono text-emerald-400">
                 ${(totalTillsUsdCents / 100).toLocaleString()} USD
@@ -949,7 +1171,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-1">
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
                 <span>Réserves Coffres (HTG)</span>
-                <span className="text-[10px] text-amber-400 font-mono">{safes.filter(s => s.currency === "HTG").length} coffre(s)</span>
+                <span className="text-[10px] text-amber-400 font-mono">{scopedSafes.filter(s => s.currency === "HTG").length} coffre(s)</span>
               </div>
               <div className="text-xl font-bold font-mono text-amber-400">
                 {(totalSafesHtgCents / 100).toLocaleString()} HTG
@@ -960,7 +1182,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-1">
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
                 <span>Réserves Coffres (USD)</span>
-                <span className="text-[10px] text-amber-400 font-mono">{safes.filter(s => s.currency === "USD").length} coffre(s)</span>
+                <span className="text-[10px] text-amber-400 font-mono">{scopedSafes.filter(s => s.currency === "USD").length} coffre(s)</span>
               </div>
               <div className="text-xl font-bold font-mono text-amber-400">
                 ${(totalSafesUsdCents / 100).toLocaleString()} USD
@@ -1023,7 +1245,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
 
                   {/* QUICK CREATION ACTIONS */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    {(cashSubView === "TILLS" || cashSubView === "ALL") && (
+                    {canManageTills && !hasMissingTellerBranch && (cashSubView === "TILLS" || cashSubView === "ALL") && (
                       <button
                         onClick={handleOpenCreateTill}
                         className="px-3 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
@@ -1032,7 +1254,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                         <span>Nouvelle Caisse</span>
                       </button>
                     )}
-                    {(cashSubView === "SAFES" || cashSubView === "ALL") && (
+                    {canManageSafes && (cashSubView === "SAFES" || cashSubView === "ALL") && (
                       <button
                         onClick={handleOpenCreateSafe}
                         className="px-3 py-1.5 bg-amber-700/80 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
@@ -1145,7 +1367,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                           <Building2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                           <span>Succursale</span>
                         </label>
-                        {branchFilter !== "ALL" && (
+                        {!isBranchTeller && branchFilter !== "ALL" && (
                           <button
                             onClick={() => setBranchFilter("ALL")}
                             className="text-slate-500 hover:text-slate-300 p-0.5 cursor-pointer"
@@ -1158,8 +1380,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                       <SearchableSelect
                         options={branchFilterOptions}
                         value={branchFilter}
-                        onChange={(val) => setBranchFilter(val)}
-                        placeholder="Toutes les Succursales..."
+                        onChange={(val) => {
+                          if (!isBranchTeller) setBranchFilter(val);
+                        }}
+                        placeholder={isBranchTeller ? (actorBranchId || "Succursale assignée...") : "Toutes les Succursales..."}
                       />
                     </div>
 
@@ -1259,43 +1483,49 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      onClick={handleOpenCreateTill}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Ajouter une Caisse</span>
-                    </button>
+                    {canManageTills && !hasMissingTellerBranch && (
+                      <button
+                        onClick={handleOpenCreateTill}
+                        className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Ajouter une Caisse</span>
+                      </button>
+                    )}
                   </div>
 
-                  {tills.length === 0 ? (
+                  {scopedTills.length === 0 ? (
                     <div className="text-center py-10 px-4 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 space-y-3">
                       <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-2xl w-fit mx-auto">
                         <Users className="w-8 h-8" />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold text-slate-200">Aucune Caisse Active dans la Base</h3>
+                        <h3 className="text-sm font-bold text-slate-200">Aucune Caisse Active dans le Périmètre</h3>
                         <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-                          Générez et assignez automatiquement les tiroirs-caisses (HTG & USD) pour l'ensemble des employés actifs présents dans la base de l'entreprise.
+                          {canManageTills && !hasMissingTellerBranch
+                            ? "Générez et assignez automatiquement les tiroirs-caisses (HTG & USD) pour l'ensemble des employés actifs."
+                            : "Aucune caisse active n'est disponible dans votre périmètre autorisé."}
                         </p>
                       </div>
-                      <div className="flex items-center justify-center gap-3 pt-2 flex-wrap">
-                        <button
-                          onClick={handleAutoGenerateTills}
-                          disabled={isAutoGenerating}
-                          className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition cursor-pointer disabled:opacity-50"
-                        >
-                          <Sparkles className={`w-4 h-4 ${isAutoGenerating ? "animate-spin" : ""}`} />
-                          <span>{isAutoGenerating ? "Génération & Assignation..." : "Générer & Assigner Automatiquement"}</span>
-                        </button>
-                        <button
-                          onClick={handleOpenCreateTill}
-                          className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition border border-slate-700 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Création Manuelle</span>
-                        </button>
-                      </div>
+                      {canManageTills && !hasMissingTellerBranch && (
+                        <div className="flex items-center justify-center gap-3 pt-2 flex-wrap">
+                          <button
+                            onClick={handleAutoGenerateTills}
+                            disabled={isAutoGenerating}
+                            className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition cursor-pointer disabled:opacity-50"
+                          >
+                            <Sparkles className={`w-4 h-4 ${isAutoGenerating ? "animate-spin" : ""}`} />
+                            <span>{isAutoGenerating ? "Génération & Assignation..." : "Générer & Assigner Automatiquement"}</span>
+                          </button>
+                          <button
+                            onClick={handleOpenCreateTill}
+                            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition border border-slate-700 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Création Manuelle</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : filteredTills.length === 0 ? (
                     <div className="text-center py-10 px-4 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 space-y-3">
@@ -1356,33 +1586,35 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                                       </span>
                                     )}
                                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono" title="Succursale rattachée">
-                                      {till.branch_name || companyBranches.find((b) => b.id === till.branch_id)?.name || till.branch_id || branchId}
+                                      {till.branch_name || companyBranches.find((b) => b.id === till.branch_id)?.name || till.branch_id || "Succursale non assignée"}
                                     </span>
                                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-mono" title="Département organisationnel">
                                       {till.department_name || companyDepartments.find((d) => d.id === till.department_id)?.name || assignedEmp?.departmentId || "Dépt. Guichet"}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                    <button
-                                      onClick={() => handleOpenEditTill(till)}
-                                      className="text-[10px] text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
-                                      title="Modifier le nom, succursale, département et statut de la caisse"
-                                    >
-                                      <Edit3 className="w-3 h-3" />
-                                      <span>Éditer / Réaffecter</span>
-                                    </button>
-                                    <span className="text-slate-700 text-[10px]">•</span>
-                                    <button
-                                      onClick={() => handleToggleTillSuspension(till)}
-                                      className={`text-[10px] flex items-center gap-1 cursor-pointer font-medium hover:underline ${
-                                        till.status === "LOCKED" ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"
-                                      }`}
-                                      title={till.status === "LOCKED" ? "Réactiver cette caisse" : "Suspendre / verrouiller cette caisse"}
-                                    >
-                                      {till.status === "LOCKED" ? <PlayCircle className="w-3 h-3" /> : <PauseCircle className="w-3 h-3" />}
-                                      <span>{till.status === "LOCKED" ? "Réactiver" : "Suspendre"}</span>
-                                    </button>
-                                  </div>
+                                  {canManageTills && (
+                                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                      <button
+                                        onClick={() => handleOpenEditTill(till)}
+                                        className="text-[10px] text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                                        title="Modifier le nom, succursale, département et statut de la caisse"
+                                      >
+                                        <Edit3 className="w-3 h-3" />
+                                        <span>Éditer / Réaffecter</span>
+                                      </button>
+                                      <span className="text-slate-700 text-[10px]">•</span>
+                                      <button
+                                        onClick={() => handleToggleTillSuspension(till)}
+                                        className={`text-[10px] flex items-center gap-1 cursor-pointer font-medium hover:underline ${
+                                          till.status === "LOCKED" ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"
+                                        }`}
+                                        title={till.status === "LOCKED" ? "Réactiver cette caisse" : "Suspendre / verrouiller cette caisse"}
+                                      >
+                                        {till.status === "LOCKED" ? <PlayCircle className="w-3 h-3" /> : <PauseCircle className="w-3 h-3" />}
+                                        <span>{till.status === "LOCKED" ? "Réactiver" : "Suspendre"}</span>
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
 
                                 <span
@@ -1407,49 +1639,55 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                                 </div>
                               </div>
 
-                              <div className="pt-2 flex flex-col sm:flex-row gap-2">
-                                {isOpen && (
-                                  <div className="flex-1 flex flex-col gap-2">
-                                    <button
-                                      onClick={() => setSelectedTillForTransaction(till)}
-                                      className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                                    >
-                                      <Coins className="w-3.5 h-3.5" />
-                                      <span>Opérations Guichet</span>
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setSelectedTillForPayout(till);
-                                        setIsTransferPayoutOpen(true);
-                                      }}
-                                      className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                                    >
-                                      <Banknote className="w-3.5 h-3.5" />
-                                      <span>Payer Transfert</span>
-                                    </button>
-                                  </div>
-                                )}
-                                <button
-                                  onClick={() => setSelectedTillForSession(till)}
-                                  className={`${isOpen ? "flex-1" : "w-full"} py-2 px-3 rounded-lg text-xs font-medium transition flex items-center justify-center gap-2 border cursor-pointer ${
-                                    isOpen
-                                      ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30"
-                                      : "bg-emerald-600 hover:bg-emerald-500 text-white border-transparent"
-                                  }`}
-                                >
-                                  {isOpen ? (
-                                    <>
-                                      <Lock className="w-3.5 h-3.5" />
-                                      <span>Contrôle & Clôture</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Unlock className="w-3.5 h-3.5" />
-                                      <span>Ouvrir une Session</span>
-                                    </>
+                              {canOperateSpecificTill(till) ? (
+                                <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                                  {isOpen && (
+                                    <div className="flex-1 flex flex-col gap-2">
+                                      <button
+                                        onClick={() => setSelectedTillForTransaction(till)}
+                                        className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                                      >
+                                        <Coins className="w-3.5 h-3.5" />
+                                        <span>Opérations Guichet</span>
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setSelectedTillForPayout(till);
+                                          setIsTransferPayoutOpen(true);
+                                        }}
+                                        className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                                      >
+                                        <Banknote className="w-3.5 h-3.5" />
+                                        <span>Payer Transfert</span>
+                                      </button>
+                                    </div>
                                   )}
-                                </button>
-                              </div>
+                                  <button
+                                    onClick={() => setSelectedTillForSession(till)}
+                                    className={`${isOpen ? "flex-1" : "w-full"} py-2 px-3 rounded-lg text-xs font-medium transition flex items-center justify-center gap-2 border cursor-pointer ${
+                                      isOpen
+                                        ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30"
+                                        : "bg-emerald-600 hover:bg-emerald-500 text-white border-transparent"
+                                    }`}
+                                  >
+                                    {isOpen ? (
+                                      <>
+                                        <Lock className="w-3.5 h-3.5" />
+                                        <span>Contrôle & Clôture</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Unlock className="w-3.5 h-3.5" />
+                                        <span>Ouvrir une Session</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="pt-2 text-[10px] text-slate-500 font-mono text-center border-t border-slate-800/60">
+                                  Consultation uniquement
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -1538,29 +1776,35 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                       </h2>
                     </div>
 
-                    <button
-                      onClick={() => setIsCreateSafeOpen(true)}
-                      className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Ajouter un Coffre</span>
-                    </button>
-                  </div>
-
-                  {safes.length === 0 ? (
-                    <div className="text-center py-8 px-4 bg-slate-950/60 rounded-xl border border-dashed border-slate-800">
-                      <Vault className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                      <h3 className="text-xs font-bold text-slate-300">Aucun Coffre-Fort Enregistré</h3>
-                      <p className="text-[11px] text-slate-500 mt-1 max-w-sm mx-auto">
-                        Configurez un coffre principal (Niveau 1) ou de succursale (Niveau 2) pour sécuriser vos transferts et approvisionnements.
-                      </p>
+                    {canManageSafes && (
                       <button
-                        onClick={() => setIsCreateSafeOpen(true)}
-                        className="mt-3 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                        onClick={handleOpenCreateSafe}
+                        className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Créer un Coffre</span>
+                        <span>Ajouter un Coffre</span>
                       </button>
+                    )}
+                  </div>
+
+                  {scopedSafes.length === 0 ? (
+                    <div className="text-center py-8 px-4 bg-slate-950/60 rounded-xl border border-dashed border-slate-800">
+                      <Vault className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <h3 className="text-xs font-bold text-slate-300">Aucun Coffre-Fort Dans le Périmètre</h3>
+                      <p className="text-[11px] text-slate-500 mt-1 max-w-sm mx-auto">
+                        {canManageSafes
+                          ? "Configurez un coffre principal (Niveau 1) ou de succursale (Niveau 2) pour sécuriser vos transferts et approvisionnements."
+                          : "Aucun coffre-fort disponible dans votre succursale autorisée."}
+                      </p>
+                      {canManageSafes && (
+                        <button
+                          onClick={handleOpenCreateSafe}
+                          className="mt-3 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Créer un Coffre</span>
+                        </button>
+                      )}
                     </div>
                   ) : filteredSafes.length === 0 ? (
                     <div className="text-center py-10 px-4 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 space-y-3">
@@ -1619,38 +1863,40 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                                   <p className="text-[11px] text-slate-400 mt-0.5 truncate flex items-center gap-1.5 flex-wrap">
                                     <span>Responsable : <span className="text-slate-200 font-medium">{safe.manager_name || "Manager / Head Teller"}</span></span>
                                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono" title="Succursale rattachée">
-                                      {safe.branch_name || companyBranches.find((b) => b.id === safe.branch_id)?.name || safe.branch_id || branchId}
+                                      {safe.branch_name || companyBranches.find((b) => b.id === safe.branch_id)?.name || safe.branch_id || "Succursale non assignée"}
                                     </span>
                                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono" title="Département organisationnel">
                                       {safe.department_name || companyDepartments.find((d) => d.id === safe.department_id)?.name || safe.department_id || "Dépt. Trésorerie"}
                                     </span>
                                   </p>
-                                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                    <button
-                                      onClick={() => handleOpenEditSafe(safe)}
-                                      className="text-[10px] text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
-                                      title="Modifier les plafonds, responsables, succursale, département du coffre"
-                                    >
-                                      <Edit3 className="w-3 h-3" />
-                                      <span>Éditer / Modifier</span>
-                                    </button>
-                                    <span className="text-slate-700 text-[10px]">•</span>
-                                    <button
-                                      onClick={() => handleToggleSafeSuspension(safe)}
-                                      className={`text-[10px] flex items-center gap-1 cursor-pointer font-medium hover:underline ${
-                                        (safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"
-                                      }`}
-                                      title={(safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "Réactiver ce coffre-fort" : "Suspendre / verrouiller ce coffre-fort"}
-                                    >
-                                      {(safe.status === "LOCKED" || safe.status === "SUSPENDED") ? <PlayCircle className="w-3 h-3" /> : <PauseCircle className="w-3 h-3" />}
-                                      <span>{(safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "Réactiver" : "Suspendre"}</span>
-                                    </button>
-                                    {(safe.status === "LOCKED" || safe.status === "SUSPENDED") && (
-                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-bold uppercase shrink-0">
-                                        SUSPENDU
-                                      </span>
-                                    )}
-                                  </div>
+                                  {canManageSafes && (
+                                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                      <button
+                                        onClick={() => handleOpenEditSafe(safe)}
+                                        className="text-[10px] text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                                        title="Modifier les plafonds, responsables, succursale, département du coffre"
+                                      >
+                                        <Edit3 className="w-3 h-3" />
+                                        <span>Éditer / Modifier</span>
+                                      </button>
+                                      <span className="text-slate-700 text-[10px]">•</span>
+                                      <button
+                                        onClick={() => handleToggleSafeSuspension(safe)}
+                                        className={`text-[10px] flex items-center gap-1 cursor-pointer font-medium hover:underline ${
+                                          (safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"
+                                        }`}
+                                        title={(safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "Réactiver ce coffre-fort" : "Suspendre / verrouiller ce coffre-fort"}
+                                      >
+                                        {(safe.status === "LOCKED" || safe.status === "SUSPENDED") ? <PlayCircle className="w-3 h-3" /> : <PauseCircle className="w-3 h-3" />}
+                                        <span>{(safe.status === "LOCKED" || safe.status === "SUSPENDED") ? "Réactiver" : "Suspendre"}</span>
+                                      </button>
+                                      {(safe.status === "LOCKED" || safe.status === "SUSPENDED") && (
+                                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-bold uppercase shrink-0">
+                                          SUSPENDU
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                                 <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md shrink-0">
                                   {safe.currency}
@@ -1681,16 +1927,18 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                                 <span>Max : {((safe.max_limit_cents || 0) / 100).toLocaleString()} {safe.currency}</span>
                               </div>
 
-                              <div className="pt-1">
-                                <button
-                                  onClick={() => handleOpenFundSafe(safe)}
-                                  className="w-full py-2 px-3 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                                  title="Alimenter ce coffre-fort depuis la banque ou virement interne"
-                                >
-                                  <Coins className="w-3.5 h-3.5" />
-                                  <span>Alimenter le Coffre (Banque / GL)</span>
-                                </button>
-                              </div>
+                              {canManageSafes && (
+                                <div className="pt-1">
+                                  <button
+                                    onClick={() => handleOpenFundSafe(safe)}
+                                    className="w-full py-2 px-3 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                    title="Alimenter ce coffre-fort depuis la banque ou virement interne"
+                                  >
+                                    <Coins className="w-3.5 h-3.5" />
+                                    <span>Alimenter le Coffre (Banque / GL)</span>
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -1768,7 +2016,7 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
             {/* RIGHT COLUMN: APPROVAL QUEUE & RECENT TRANSFERS */}
             <div className="space-y-6">
               <ApprovalQueueWidget
-                transfers={transfers}
+                transfers={scopedTransfers}
                 currentUser={currentUser}
                 onTransferUpdated={loadData}
               />
@@ -1782,10 +2030,10 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
                 </div>
 
                 <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                  {transfers.length === 0 ? (
-                    <p className="text-xs text-slate-500 text-center py-6">Aucun transfert enregistré dans la base.</p>
+                  {scopedTransfers.length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-6">Aucun transfert enregistré dans votre périmètre.</p>
                   ) : (
-                    transfers.map((t) => (
+                    scopedTransfers.map((t) => (
                       <div key={t.id} className="bg-slate-950 border border-slate-800/80 rounded-lg p-3 space-y-1 text-xs">
                         <div className="flex items-center justify-between">
                           <span className="font-semibold text-white">{t.source_name} ➔ {t.destination_name}</span>
@@ -1819,29 +2067,29 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
           </div>
 
           {/* MODALS */}
-          {selectedTillForSession && (
+          {selectedTillForSession && canOperateSpecificTill(selectedTillForSession) && (
             <TillSessionModal
               isOpen={Boolean(selectedTillForSession)}
               onClose={() => setSelectedTillForSession(null)}
               till={selectedTillForSession}
               currentSession={sessions.find((s) => s.id === selectedTillForSession.active_session_id)}
-              currentUser={currentUser}
+              currentUser={{ ...currentUser, branch_id: actorBranchId || currentUser.branch_id }}
               onSessionUpdated={loadData}
             />
           )}
 
-          {selectedTillForTransaction && (
+          {selectedTillForTransaction && canOperateSpecificTill(selectedTillForTransaction) && (
             <TellerTransactionModal
               isOpen={Boolean(selectedTillForTransaction)}
               onClose={() => setSelectedTillForTransaction(null)}
               till={selectedTillForTransaction}
               currentSession={sessions.find((s) => s.id === selectedTillForTransaction.active_session_id)}
-              currentUser={currentUser}
+              currentUser={{ ...currentUser, branch_id: actorBranchId || currentUser.branch_id }}
               onTransactionSuccess={loadData}
             />
           )}
 
-          {isTransferPayoutOpen && selectedTillForPayout && (
+          {isTransferPayoutOpen && selectedTillForPayout && canOperateSpecificTill(selectedTillForPayout) && (
             <TransferPayoutDialog
               isOpen={isTransferPayoutOpen}
               onClose={() => {
@@ -1850,22 +2098,24 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
               }}
               till={selectedTillForPayout}
               businessId={businessId}
-              branchId={branchId}
+              branchId={selectedTillForPayout.branch_id || actorBranchId}
               operatorId={currentUser.id}
               operatorName={currentUser.name}
+              operatorRole={currentUser.role}
+              operatorBranchId={actorBranchId}
               onSuccess={loadData}
             />
           )}
 
-          {isTransferDialogOpen && (
+          {isTransferDialogOpen && canInitiateTransfers && (
             <InternalTransferDialog
               isOpen={isTransferDialogOpen}
               onClose={() => setIsTransferDialogOpen(false)}
               businessId={businessId}
-              branchId={branchId}
-              tills={tills}
-              safes={safes}
-              currentUser={currentUser}
+              branchId={actorBranchId}
+              tills={scopedTills}
+              safes={scopedSafes}
+              currentUser={{ ...currentUser, branch_id: actorBranchId || currentUser.branch_id }}
               onTransferCreated={loadData}
             />
           )}
@@ -2618,20 +2868,22 @@ export const CashConsole: React.FC<CashConsoleProps> = ({
           )}
 
           {/* FUND SAFE MODAL */}
-          <FundSafeModal
-            isOpen={isFundSafeOpen}
-            onClose={() => {
-              setIsFundSafeOpen(false);
-              setPreselectedSafeForFunding(null);
-            }}
-            businessId={businessId}
-            branchId={branchId}
-            safes={safes}
-            tills={tills}
-            preselectedSafe={preselectedSafeForFunding}
-            currentUser={currentUser}
-            onFundSuccess={loadData}
-          />
+          {canManageSafes && (
+            <FundSafeModal
+              isOpen={isFundSafeOpen}
+              onClose={() => {
+                setIsFundSafeOpen(false);
+                setPreselectedSafeForFunding(null);
+              }}
+              businessId={businessId}
+              branchId={actorBranchId}
+              safes={scopedSafes}
+              tills={scopedTills}
+              preselectedSafe={preselectedSafeForFunding}
+              currentUser={currentUser}
+              onFundSuccess={loadData}
+            />
+          )}
         </>
       )}
     </div>

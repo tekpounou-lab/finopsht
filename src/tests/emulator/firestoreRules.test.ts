@@ -54,8 +54,8 @@ describe("FIRESTORE SECURITY RULES — FINANCIAL COLLECTIONS LOCKDOWN", () => {
     }
   });
 
-  it("1. Unauthenticated users cannot read or write customer_transfers", async () => {
-    if (!testEnv) return;
+  it("1. Unauthenticated users cannot read or write customer_transfers", async (ctx) => {
+    if (!testEnv) ctx.skip();
     const unauthDb = testEnv.unauthenticatedContext().firestore();
     await assertFails(unauthDb.collection("customer_transfers").get());
     await assertFails(
@@ -68,8 +68,8 @@ describe("FIRESTORE SECURITY RULES — FINANCIAL COLLECTIONS LOCKDOWN", () => {
     );
   });
 
-  it("2. Direct client SDK writes to customer_transfers are DENIED for authenticated tellers", async () => {
-    if (!testEnv) return;
+  it("2. Direct client SDK writes to customer_transfers are DENIED for authenticated tellers", async (ctx) => {
+    if (!testEnv) ctx.skip();
     const tellerDb = testEnv
       .authenticatedContext("usr_teller_100", {
         businessId: "biz_001",
@@ -97,8 +97,8 @@ describe("FIRESTORE SECURITY RULES — FINANCIAL COLLECTIONS LOCKDOWN", () => {
     );
   });
 
-  it("3. Direct client SDK writes to payout_idempotency_locks are DENIED", async () => {
-    if (!testEnv) return;
+  it("3. Direct client SDK writes to payout_idempotency_locks are DENIED", async (ctx) => {
+    if (!testEnv) ctx.skip();
     const tellerDb = testEnv
       .authenticatedContext("usr_teller_100", {
         businessId: "biz_001",
@@ -114,8 +114,8 @@ describe("FIRESTORE SECURITY RULES — FINANCIAL COLLECTIONS LOCKDOWN", () => {
     );
   });
 
-  it("4. Direct client SDK writes to teller_transactions and forensic_logs are DENIED", async () => {
-    if (!testEnv) return;
+  it("4. Direct client SDK writes to teller_transactions and forensic_logs are DENIED", async (ctx) => {
+    if (!testEnv) ctx.skip();
     const tellerDb = testEnv
       .authenticatedContext("usr_teller_100", {
         businessId: "biz_001",
@@ -140,8 +140,30 @@ describe("FIRESTORE SECURITY RULES — FINANCIAL COLLECTIONS LOCKDOWN", () => {
     );
   });
 
-  it("5. Cross-tenant reads are DENIED", async () => {
-    if (!testEnv) return;
+  it("5. Cross-tenant reads are DENIED (customer_transfers, audit_logs, users, employees)", async (ctx) => {
+    if (!testEnv) ctx.skip();
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await adminDb.collection("customer_transfers").doc("trf_tenant_b").set({
+        business_id: "biz_tenant_b",
+        status: "READY_FOR_PAYOUT"
+      });
+      await adminDb.collection("audit_logs").doc("log_tenant_b").set({
+        business_id: "biz_tenant_b",
+        action: "SENSITIVE_OP"
+      });
+      await adminDb.collection("users").doc("usr_tenant_b").set({
+        businessId: "biz_tenant_b",
+        email: "b@example.com",
+        role: "OWNER"
+      });
+      await adminDb.collection("employees").doc("emp_tenant_b").set({
+        businessId: "biz_tenant_b",
+        email: "emp_b@example.com",
+        role: "EMPLOYEE"
+      });
+    });
+
     const tenantADb = testEnv
       .authenticatedContext("usr_tenant_a", {
         businessId: "biz_tenant_a",
@@ -149,9 +171,82 @@ describe("FIRESTORE SECURITY RULES — FINANCIAL COLLECTIONS LOCKDOWN", () => {
       })
       .firestore();
 
-    // Attempting to read tenant B transfer document
+    await assertFails(tenantADb.collection("customer_transfers").doc("trf_tenant_b").get());
+    await assertFails(tenantADb.collection("audit_logs").doc("log_tenant_b").get());
+    await assertFails(tenantADb.collection("users").doc("usr_tenant_b").get());
+    await assertFails(tenantADb.collection("employees").doc("emp_tenant_b").get());
+  });
+
+  it("6. Internal transfers and branch_safes client tampering are DENIED for tellers", async (ctx) => {
+    if (!testEnv) ctx.skip();
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await adminDb.collection("branch_safes").doc("safe_01").set({
+        business_id: "biz_001",
+        branch_id: "br_01",
+        balance: 10000
+      });
+    });
+
+    const headTellerDb = testEnv
+      .authenticatedContext("usr_ht_01", {
+        businessId: "biz_001",
+        branch_id: "br_01",
+        role: "HEAD_TELLER"
+      })
+      .firestore();
+
     await assertFails(
-      tenantADb.collection("customer_transfers").doc("trf_tenant_b").get()
+      headTellerDb.collection("internal_transfers").doc("itr_forged_01").set({
+        business_id: "biz_001",
+        amount: 5000,
+        status: "COMPLETED"
+      })
+    );
+    await assertFails(
+      headTellerDb.collection("branch_safes").doc("safe_01").update({
+        balance: 999999
+      })
+    );
+  });
+
+  it("7. Cross-tenant exchange_rates writes and cross-branch till mutations are DENIED", async (ctx) => {
+    if (!testEnv) ctx.skip();
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await adminDb.collection("cash_tills").doc("till_br2").set({
+        business_id: "biz_001",
+        branch_id: "br_02",
+        current_balance_htg: 1000
+      });
+    });
+
+    const tenantAdminADb = testEnv
+      .authenticatedContext("usr_admin_a", {
+        businessId: "biz_tenant_a",
+        role: "ADMIN"
+      })
+      .firestore();
+
+    await assertFails(
+      tenantAdminADb.collection("exchange_rates").doc("rate_b").set({
+        businessId: "biz_tenant_b",
+        rate: 150
+      })
+    );
+
+    const br1TellerDb = testEnv
+      .authenticatedContext("usr_teller_br1", {
+        businessId: "biz_001",
+        branch_id: "br_01",
+        role: "SENIOR_TELLER"
+      })
+      .firestore();
+
+    await assertFails(
+      br1TellerDb.collection("cash_tills").doc("till_br2").update({
+        current_balance_htg: 2500
+      })
     );
   });
 });

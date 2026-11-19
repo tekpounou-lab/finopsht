@@ -1,5 +1,5 @@
 import { collection, doc, getDoc, getDocs, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../lib/firebase";
+import { auth, db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { ForensicLogRepository } from "./ForensicLogRepository";
 
 export type PaymentGatewayType = "stripe" | "moncash" | "natcash" | "bank_transfer";
@@ -200,11 +200,17 @@ export class SubscriptionPlanRepository {
   private static collectionName = "subscription_plans";
 
   /**
-   * Seeds default subscription plans into Firestore collection `subscription_plans` if not already present.
+   * Seeds default subscription plans into Firestore collection `subscription_plans` (Super Admin only).
    */
   static async seedDefaultPlans(): Promise<SubscriptionPlanDocument[]> {
-    console.log("[SubscriptionPlanRepository] Seeding subscription plans in Firestore...");
-    
+    if (!auth?.currentUser) {
+      handleFirestoreError(
+        new Error("Missing or insufficient permissions: Super Admin authentication is required to seed subscription_plans."),
+        OperationType.WRITE,
+        this.collectionName
+      );
+    }
+
     for (const plan of DEFAULT_SUBSCRIPTION_PLANS) {
       try {
         const docRef = doc(db, this.collectionName, plan.id);
@@ -213,22 +219,22 @@ export class SubscriptionPlanRepository {
           updatedAt: serverTimestamp()
         }, { merge: true });
       } catch (err) {
-        console.error(`[SubscriptionPlanRepository] Failed to seed plan ${plan.id}:`, err);
+        handleFirestoreError(err, OperationType.WRITE, `${this.collectionName}/${plan.id}`);
       }
     }
 
-    return DEFAULT_SUBSCRIPTION_PLANS;
+    return [...DEFAULT_SUBSCRIPTION_PLANS].sort((a, b) => a.priceUsd - b.priceUsd);
   }
 
   /**
    * Fetches all subscription plans stored in Firestore `subscription_plans`.
-   * Automatically seeds if collection is empty.
+   * Falls back read-only to DEFAULT_SUBSCRIPTION_PLANS when collection is empty without performing unauthorized client writes.
    */
   static async getAllPlans(): Promise<SubscriptionPlanDocument[]> {
     try {
       const snap = await getDocs(collection(db, this.collectionName));
       if (snap.empty) {
-        return await this.seedDefaultPlans();
+        return [...DEFAULT_SUBSCRIPTION_PLANS].sort((a, b) => a.priceUsd - b.priceUsd);
       }
 
       const plans: SubscriptionPlanDocument[] = [];
@@ -250,7 +256,7 @@ export class SubscriptionPlanRepository {
       return plans;
     } catch (error) {
       console.warn("[SubscriptionPlanRepository] Error fetching subscription_plans, fallback to defaults:", error);
-      return DEFAULT_SUBSCRIPTION_PLANS;
+      return [...DEFAULT_SUBSCRIPTION_PLANS].sort((a, b) => a.priceUsd - b.priceUsd);
     }
   }
 

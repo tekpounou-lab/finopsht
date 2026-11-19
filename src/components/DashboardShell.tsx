@@ -24,6 +24,8 @@ import EmployeeProfileDialog from "./staff/EmployeeProfileDialog";
 import { db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { sanitizeAndEnrichLedgerTransaction } from "../services/AccountingEngine";
+import { isBranchScopedTellerRole } from "../domains/rbac/operationalProfilePolicy";
+import { PermissionService } from "../services/PermissionService";
 
 // Subcomponents - Lazy loaded for performance & code splitting
 const AttendanceLedger = lazyWithRetry(() => import("../pages/AttendanceLedger"));
@@ -116,8 +118,20 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
     );
   }, [liveBusiness, identity, dbUser, dbEmployee]);
 
+  const actorAssignedBranchId = useMemo(() => {
+    return (
+      (dbEmployee as any)?.branch_id ||
+      (dbEmployee as any)?.branchId ||
+      (dbUser as any)?.branch_id ||
+      (dbUser as any)?.branchId ||
+      (identity?.employee as any)?.branch_id ||
+      (identity?.employee as any)?.branchId ||
+      null
+    );
+  }, [dbEmployee, dbUser, identity]);
+
   // 1. Navigation Hook with normalized tab mapping
-  const { activeTab, setActiveTab } = useNavigation(currentRole, initialTab);
+  const { activeTab, setActiveTab, isTabAuthorized } = useNavigation(currentRole, initialTab);
   const normalizedActiveTab = normalizeTab(activeTab);
 
   // 2. Quick Actions / Command Palette Hook
@@ -128,7 +142,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
     setSearchQuery,
     filteredActions,
     executeAction,
-  } = useQuickActions(setActiveTab);
+  } = useQuickActions(setActiveTab, currentRole);
 
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -198,6 +212,29 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 </div>
               }
             >
+            {(() => {
+              const hasPermissionInit = PermissionService.getRole() !== "UNASSIGNED";
+              const permissionGateDenied =
+                hasPermissionInit &&
+                ((normalizedActiveTab === "cash" && !PermissionService.can("cash.view")) ||
+                  (normalizedActiveTab === "ledger" && !PermissionService.can("accounting.view") && !PermissionService.can("ledger.view")) ||
+                  (normalizedActiveTab === "reports" && !PermissionService.can("view_reports")) ||
+                  (normalizedActiveTab === "payroll" && !PermissionService.can("payroll.view") && !PermissionService.can("view_payroll")) ||
+                  (normalizedActiveTab === "dashboard" && !PermissionService.can("bi.read") && !PermissionService.can("read_bi") && !PermissionService.can("view_dashboard")));
+
+              if ((normalizedActiveTab !== "onboarding" && !isTabAuthorized(normalizedActiveTab)) || permissionGateDenied) {
+                return (
+                  <AccessDenied
+                    title="Module Non Autorisé"
+                    message={`Votre rôle (${currentRole}) ne dispose pas des autorisations requises pour accéder à ce module.`}
+                  />
+                );
+              }
+              return null;
+            })()}
+
+            {(normalizedActiveTab === "onboarding" || isTabAuthorized(normalizedActiveTab)) && (
+            <>
             {(normalizedActiveTab === "platform" || normalizedActiveTab === "tenants" || normalizedActiveTab === "superadmin") && (
               currentRole === "SUPER_ADMIN" ? (
                 <SuperAdminPlatform initialTab={initialSubTab === "PENDING" ? "pending" : "tenants"} />
@@ -375,6 +412,9 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
             {(normalizedActiveTab === "ledger" || normalizedActiveTab === "reports" || normalizedActiveTab === "cash") && (
               <ConnectedFinanceLedger
+                currentBranchId={
+                  actorAssignedBranchId || (isBranchScopedTellerRole(currentRole) ? null : liveBranches[0]?.id || null)
+                }
                 initialView={
                   normalizedActiveTab === "reports"
                     ? "REPORT_CENTER"
@@ -390,7 +430,7 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                 currentRole={currentRole}
                 currentUser={{ name: authUser?.displayName || "Administrateur", id: authUser?.uid || "usr_1" }}
                 current_business_id={resolvedBusinessId}
-                currentBranchId={liveBranches[0]?.id || null}
+                currentBranchId={actorAssignedBranchId || (isBranchScopedTellerRole(currentRole) ? null : liveBranches[0]?.id || null)}
                 isOffline={false}
                 employees={employees}
                 attendanceRecords={attendanceRecords}
@@ -588,6 +628,8 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
 
             {normalizedActiveTab === "onboarding" && (
               <EnterpriseSetupWizard />
+            )}
+            </>
             )}
           </Suspense>
         </EnterpriseErrorBoundary>
