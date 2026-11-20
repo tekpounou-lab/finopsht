@@ -35,6 +35,65 @@ export interface IdentityContextState {
 
 const IdentityContext = createContext<IdentityContextState | null>(null);
 
+export function resolvePermissionBootstrapInput(snapshot: IdentitySnapshot | null | undefined) {
+  if (!snapshot) return null;
+  const bizSnapshot: any = snapshot.businessSnapshot;
+  const bizAny: any = snapshot.business;
+
+  const featureFlags = {
+    ...(bizSnapshot?.data?.settings?.featureFlags || {}),
+    ...(bizSnapshot?.featureFlags || {}),
+    ...(snapshot.featureFlags || {}),
+  };
+
+  const resolvedPlan =
+    snapshot.subscription?.plan ||
+    bizAny?.subscription?.plan ||
+    bizAny?.plan ||
+    bizSnapshot?.subscription?.plan ||
+    bizSnapshot?.data?.settings?.subscription?.plan ||
+    "TRIAL";
+
+  const resolvedStatus =
+    snapshot.subscription?.status ||
+    bizAny?.subscription?.status ||
+    bizSnapshot?.subscription?.status ||
+    bizSnapshot?.data?.settings?.subscription?.status ||
+    "ACTIVE";
+
+  const roleModuleMatrix =
+    bizSnapshot?.data?.settings?.roleModuleMatrix ||
+    bizSnapshot?.settings?.roleModuleMatrix ||
+    bizSnapshot?.roleModuleMatrix;
+
+  return {
+    role: snapshot.role,
+    permissions: snapshot.permissions || [],
+    featureFlags,
+    subscriptionPlan: String(resolvedPlan).toUpperCase(),
+    subscriptionStatus: String(resolvedStatus).toUpperCase(),
+    businessId: snapshot.business?.id || null,
+    roleModuleMatrix,
+  };
+}
+
+function initPermissionsFromSnapshot(snapshot: IdentitySnapshot | null | undefined): void {
+  if (!snapshot) return;
+  if (snapshot.onboardingStatus === "COMPLETED" || snapshot.role === "SUPER_ADMIN") {
+    const input = resolvePermissionBootstrapInput(snapshot);
+    if (!input) return;
+    PermissionService.init(
+      input.role,
+      input.permissions,
+      input.featureFlags as any,
+      input.subscriptionPlan,
+      input.subscriptionStatus,
+      input.businessId,
+      input.roleModuleMatrix
+    );
+  }
+}
+
 export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<FirebaseUser | null>(() => auth.currentUser);
   const resolvedUidRef = React.useRef<string | null>(null);
@@ -50,17 +109,8 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   
   const [identity, setIdentity] = useState<IdentitySnapshot | null>(() => {
     const hydrated = EnterpriseIdentityOrchestrator.getHydratedSessionSnapshot(auth.currentUser?.uid);
-    if (hydrated && (hydrated.onboardingStatus === "COMPLETED" || hydrated.role === "SUPER_ADMIN")) {
-      const bizSnapshot: any = hydrated.businessSnapshot;
-      PermissionService.init(
-        hydrated.role,
-        hydrated.permissions || [],
-        bizSnapshot?.featureFlags || bizSnapshot?.data?.settings?.featureFlags || {},
-        bizSnapshot?.subscription?.plan || "STARTER",
-        bizSnapshot?.subscription?.status || "ACTIVE",
-        hydrated.business?.id,
-        bizSnapshot?.data?.settings?.roleModuleMatrix || bizSnapshot?.settings?.roleModuleMatrix || bizSnapshot?.roleModuleMatrix
-      );
+    if (hydrated) {
+      initPermissionsFromSnapshot(hydrated);
     }
     return hydrated;
   });
@@ -125,18 +175,7 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return;
       }
 
-      if (snapshot.onboardingStatus === "COMPLETED" || snapshot.role === "SUPER_ADMIN") {
-        const bizSnapshot: any = snapshot.businessSnapshot;
-        PermissionService.init(
-          snapshot.role,
-          snapshot.permissions || [],
-          bizSnapshot?.featureFlags || bizSnapshot?.data?.settings?.featureFlags || {},
-          bizSnapshot?.subscription?.plan || "STARTER",
-          bizSnapshot?.subscription?.status || "ACTIVE",
-          snapshot.business?.id,
-          bizSnapshot?.data?.settings?.roleModuleMatrix || bizSnapshot?.settings?.roleModuleMatrix || bizSnapshot?.roleModuleMatrix
-        );
-      }
+      initPermissionsFromSnapshot(snapshot);
 
       setIdentity(snapshot);
       setStage("READY");
@@ -204,18 +243,7 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setIdentity(cached);
           setStage("READY");
           resolvedUidRef.current = u.uid;
-          if (cached.onboardingStatus === "COMPLETED" || cached.role === "SUPER_ADMIN") {
-            const bizSnapshot: any = cached.businessSnapshot;
-            PermissionService.init(
-              cached.role,
-              cached.permissions || [],
-              bizSnapshot?.featureFlags || bizSnapshot?.data?.settings?.featureFlags || {},
-              bizSnapshot?.subscription?.plan || "STARTER",
-              bizSnapshot?.subscription?.status || "ACTIVE",
-              cached.business?.id,
-              bizSnapshot?.data?.settings?.roleModuleMatrix || bizSnapshot?.settings?.roleModuleMatrix || bizSnapshot?.roleModuleMatrix
-            );
-          }
+          initPermissionsFromSnapshot(cached);
           setLoading(false);
           // Background revalidation if stale or needed
           if (!cached.lastResolvedAt || (Date.now() - new Date(cached.lastResolvedAt).getTime() > 60000)) {
@@ -232,18 +260,7 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // 3. Keep static PermissionService synchronized
   useEffect(() => {
-    if (identity && (identity.onboardingStatus === "COMPLETED" || identity.role === "SUPER_ADMIN")) {
-      const bizSnapshot: any = identity.businessSnapshot;
-      PermissionService.init(
-        identity.role,
-        identity.permissions || [],
-        bizSnapshot?.featureFlags || bizSnapshot?.data?.settings?.featureFlags || {},
-        bizSnapshot?.subscription?.plan || "STARTER",
-        bizSnapshot?.subscription?.status || "ACTIVE",
-        identity.business?.id,
-        bizSnapshot?.data?.settings?.roleModuleMatrix || bizSnapshot?.settings?.roleModuleMatrix || bizSnapshot?.roleModuleMatrix
-      );
-    }
+    initPermissionsFromSnapshot(identity);
   }, [identity]);
 
   // 3b. SWR Tenant cache update events
@@ -258,6 +275,8 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             ...prev,
             business: context.business || prev.business,
             businessSnapshot: context.businessSnapshot || prev.businessSnapshot,
+            subscription: context.subscription ?? prev.subscription,
+            featureFlags: context.featureFlags ?? prev.featureFlags,
             permissions: context.permissions && context.permissions.length > 0 ? context.permissions : prev.permissions,
           };
         });

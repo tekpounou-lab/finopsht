@@ -134,10 +134,21 @@ export const TENANT_ERP_CAPABILITIES = new Set([
   "view_accounting",
   "accounting.view",
   "accounting.read",
+  "chart_of_accounts.view",
+  "accounting.coa.view",
   "ledger.view",
   "ledger.read",
   "ledger.write",
+  "journal.create_draft",
+  "journal.edit_draft",
   "journal.post",
+  "journal.reverse",
+  "ledger.reverse",
+  "reverse_ledger",
+  "journal.delete",
+  "ledger.delete",
+  "accounting.period.close",
+  "period.close",
 
   // CRM, Leads, Invoices
   "manage_crm",
@@ -191,6 +202,7 @@ export const TENANT_ERP_CAPABILITIES = new Set([
   "audit.read",
   "view_reports",
   "export_reports",
+  "reports.export",
   "view_dashboard",
 
   // Cash & Till Operations
@@ -624,7 +636,13 @@ class PermissionServiceClass {
     // Read-only state checks for expired/suspended subscriptions
     if (this.subscriptionStatus === "EXPIRED" || this.subscriptionStatus === "BLOCKED") {
       // Allow only non-mutating view actions
-      const isReadAction = actionLower.startsWith("view") || actionLower.startsWith("read") || actionLower.includes("get") || actionLower.includes("list");
+      const isReadAction =
+        actionLower.startsWith("view") ||
+        actionLower.startsWith("read") ||
+        actionLower.endsWith(".view") ||
+        actionLower.endsWith(".read") ||
+        actionLower.includes("get") ||
+        actionLower.includes("list");
       if (!isReadAction) {
         this.capabilityCache[actionLower] = false;
         return false;
@@ -647,9 +665,15 @@ class PermissionServiceClass {
     if (
       actionLower === "accounting.view" ||
       actionLower === "accounting.read" ||
-      actionLower === "view_accounting"
+      actionLower === "view_accounting" ||
+      actionLower === "chart_of_accounts.view" ||
+      actionLower === "accounting.coa.view"
     ) {
-      if (!this.hasModule("accounting")) {
+      if (
+        !this.hasModule("accounting") ||
+        (!this.hasRoleModuleAccess(this.activeRole || undefined, "accounting") &&
+          !this.hasRoleModuleAccess(this.activeRole || undefined, "ledger"))
+      ) {
         this.capabilityCache[actionLower] = false;
         return false;
       }
@@ -658,11 +682,25 @@ class PermissionServiceClass {
       actionLower === "ledger.view" ||
       actionLower === "ledger.read" ||
       actionLower === "ledger.write" ||
+      actionLower === "journal.create_draft" ||
+      actionLower === "journal.edit_draft" ||
       actionLower === "journal.post" ||
+      actionLower === "journal.reverse" ||
+      actionLower === "ledger.reverse" ||
+      actionLower === "reverse_ledger" ||
+      actionLower === "journal.delete" ||
+      actionLower === "ledger.delete" ||
+      actionLower === "accounting.period.close" ||
+      actionLower === "period.close" ||
       actionLower === "view_ledger" ||
       actionLower === "write_ledger"
     ) {
-      if (!this.hasModule("ledger") || !this.hasModule("accounting")) {
+      if (
+        !this.hasModule("ledger") ||
+        !this.hasModule("accounting") ||
+        (!this.hasRoleModuleAccess(this.activeRole || undefined, "ledger") &&
+          !this.hasRoleModuleAccess(this.activeRole || undefined, "accounting"))
+      ) {
         this.capabilityCache[actionLower] = false;
         return false;
       }
@@ -683,13 +721,25 @@ class PermissionServiceClass {
         "transfer.reject",
         "write_ledger",
         "ledger.write",
+        "journal.create_draft",
+        "journal.edit_draft",
         "journal.post",
+        "journal.reverse",
+        "ledger.reverse",
+        "reverse_ledger",
+        "journal.delete",
+        "ledger.delete",
+        "accounting.period.close",
+        "period.close",
         "view_ledger",
         "ledger.view",
         "ledger.read",
         "view_accounting",
         "accounting.view",
         "accounting.read",
+        "chart_of_accounts.view",
+        "accounting.coa.view",
+        "reports.export",
         "view_payroll",
         "manage_payroll",
         "lock_payroll",
@@ -765,7 +815,9 @@ class PermissionServiceClass {
     if (this.activeRole === "AUDITOR") {
       const AUDITOR_MUTATION_CAPS = new Set([
         "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve", "transfer.reject",
-        "write_ledger", "ledger.write", "journal.post",
+        "write_ledger", "ledger.write", "journal.create_draft", "journal.edit_draft", "journal.post",
+        "journal.reverse", "ledger.reverse", "reverse_ledger", "journal.delete", "ledger.delete",
+        "accounting.period.close", "period.close",
         "manage_employees", "invite_employees", "delete_employees", "employees.suspend", "employee.suspend",
         "employees.reactivate", "employee.reactivate", "employee.create", "employee.update", "employee.import", "employee.delete",
         "manage_branches", "create_branch", "branch.create", "branch.update",
@@ -811,9 +863,30 @@ class PermissionServiceClass {
       }
     }
 
+    // Ledger deletion is immutable across all tenant roles (enforced in Firestore rules & accounting policy)
+    if (actionLower === "journal.delete" || actionLower === "ledger.delete") {
+      this.capabilityCache[actionLower] = false;
+      return false;
+    }
+
+    // Restricted accounting operations MUST NEVER be granted automatically by module access or blanket OWNER shortcut
+    const RESTRICTED_ACCOUNTING_OPS = new Set([
+      "journal.create_draft",
+      "journal.edit_draft",
+      "journal.post",
+      "ledger.write",
+      "write_ledger",
+      "journal.reverse",
+      "ledger.reverse",
+      "reverse_ledger",
+      "accounting.period.close",
+      "period.close"
+    ]);
+
     // Business OWNER possesses authorized access to legitimate tenant ERP capabilities
-    // provided module, subscription, and explicit denial checks passed above
-    if (this.activeRole === "OWNER") {
+    // provided module, subscription, and explicit denial checks passed above,
+    // EXCEPT restricted accounting mutations which require explicit capability grants.
+    if (this.activeRole === "OWNER" && !RESTRICTED_ACCOUNTING_OPS.has(actionLower)) {
       this.capabilityCache[actionLower] = true;
       return true;
     }
@@ -901,13 +974,59 @@ class PermissionServiceClass {
         // Accounting / General Ledger Operations
         case "accounting.view":
         case "accounting.read":
+        case "view_accounting":
         case "ledger.view":
         case "ledger.read":
-          result = this.permissions.includes("view_ledger") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "ACCOUNTANT", "CONTROLLER"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "accounting") || this.hasRoleModuleAccess(this.activeRole || undefined, "ledger");
+        case "view_ledger":
+        case "chart_of_accounts.view":
+        case "accounting.coa.view":
+          result =
+            this.permissions.includes("view_ledger") ||
+            this.permissions.includes("view_accounting") ||
+            ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "ACCOUNTANT", "CONTROLLER", "AUDITOR"].includes(this.activeRole || "") ||
+            this.hasRoleModuleAccess(this.activeRole || undefined, "accounting") ||
+            this.hasRoleModuleAccess(this.activeRole || undefined, "ledger");
+          break;
+        case "export_reports":
+        case "reports.export":
+          result =
+            this.permissions.includes("export_reports") ||
+            this.permissions.includes("reports.export") ||
+            ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "ACCOUNTANT", "CONTROLLER", "AUDITOR"].includes(this.activeRole || "");
+          break;
+        case "journal.create_draft":
+        case "journal.edit_draft":
+          result =
+            this.permissions.includes("journal.create_draft") ||
+            this.permissions.includes("journal.edit_draft") ||
+            this.permissions.includes("write_ledger") ||
+            this.permissions.includes("ledger.write");
           break;
         case "ledger.write":
+        case "write_ledger":
         case "journal.post":
-          result = this.permissions.includes("write_ledger");
+          result =
+            this.permissions.includes("write_ledger") ||
+            this.permissions.includes("ledger.write") ||
+            this.permissions.includes("journal.post");
+          break;
+        case "journal.reverse":
+        case "ledger.reverse":
+        case "reverse_ledger":
+          result =
+            this.permissions.includes("journal.reverse") ||
+            this.permissions.includes("ledger.reverse") ||
+            this.permissions.includes("reverse_ledger");
+          break;
+        case "journal.delete":
+        case "ledger.delete":
+          result = false;
+          break;
+        case "accounting.period.close":
+        case "period.close":
+          result =
+            this.permissions.includes("accounting.period.close") ||
+            this.permissions.includes("period.close");
           break;
 
         // Observability & System
@@ -1100,16 +1219,18 @@ class PermissionServiceClass {
       }
     }
 
-    // 5. Explicit Admin-defined Matrix rule (Highest authority within tenant)
+    // 5. Business OWNER possesses sovereign access over enabled business modules
+    // (after platform-only and ADV-17B-02 subscription/feature gates above).
+    // A stale roleModuleMatrix entry cannot lock out OWNER from their enabled tenant modules.
+    if (effectiveRole === "OWNER") return true;
+
+    // 6. Explicit Admin-defined Matrix rule for delegated tenant roles
     if (this.roleModuleMatrix && this.roleModuleMatrix[effectiveRole]) {
       const explicitSetting = this.roleModuleMatrix[effectiveRole][modLower];
       if (explicitSetting !== undefined) {
         return Boolean(explicitSetting);
       }
     }
-
-    // 6. Business OWNER possesses sovereign control over permitted business modules of their enterprise
-    if (effectiveRole === "OWNER") return true;
 
     // 7. Canonical ERP Role Defaults
     const defaultAllowedRoles: Record<string, string[]> = {
@@ -1121,8 +1242,8 @@ class PermissionServiceClass {
       leave: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
       attendance: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "HR_MANAGER", "TEAM_LEADER", "EMPLOYEE"],
       payroll: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "PAYROLL_MANAGER"],
-      ledger: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
-      accounting: ["SUPER_ADMIN", "OWNER", "ADMIN", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+      ledger: ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "CONTROLLER", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
+      accounting: ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "CONTROLLER", "DIRECTOR", "MANAGER", "ACCOUNTANT", "AUDITOR"],
       crm: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER", "ACCOUNTANT"],
       leads: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],
       prospects: ["SUPER_ADMIN", "OWNER", "ADMIN", "MANAGER"],

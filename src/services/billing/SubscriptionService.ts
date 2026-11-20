@@ -6,6 +6,7 @@ import { ForensicLogRepository } from "../../repositories/ForensicLogRepository"
 import { PermissionService } from "../PermissionService";
 import { BusinessResolver } from "../business/BusinessResolver";
 import { FeatureResolver } from "../FeatureResolver";
+import { OptimizedResolver } from "../identity/OptimizedResolver";
 import { EventBus } from "../../modules/runtime/EventBus";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
 
@@ -123,11 +124,24 @@ export class SubscriptionService {
     }, { merge: true });
 
     // d) Features are already synced inside syncSubscriptionWithPlan, but ensure explicit call
-    await FeatureRepository.syncFeaturesWithPlan(businessId, featuresEnabled);
+    const syncedFeatures = await FeatureRepository.syncFeaturesWithPlan(businessId, featuresEnabled);
+
+    // e) Best-effort update to business_snapshots so snapshot-based hydrators stay aligned
+    await setDoc(doc(db, "business_snapshots", businessId), {
+      subscription: {
+        plan: upperPlanId,
+        status: "ACTIVE",
+        userLimit,
+        updatedAt: nowIso
+      },
+      featureFlags: syncedFeatures,
+      updatedAt: serverTimestamp()
+    }, { merge: true }).catch(() => {});
 
     // 4. Cache Invalidation
     FeatureResolver.clearCache(businessId);
     BusinessResolver.invalidateCache(businessId);
+    OptimizedResolver.invalidateTenantCache(businessId);
 
     // 5. Event Emissions
     try {

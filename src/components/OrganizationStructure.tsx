@@ -549,6 +549,8 @@ export default function OrganizationStructure(props: OrganizationStructureProps)
           isOpen={isBulkImportOpen}
           initialType={bulkImportInitialType}
           currentBusiness={currentBusiness}
+          currentRole={currentRole}
+          currentUser={currentUser}
           branches={businessBranches}
           departments={businessDepts}
           existingEmployees={employees}

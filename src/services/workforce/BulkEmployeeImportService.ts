@@ -7,9 +7,24 @@ import {
   Department, 
   Role 
 } from "../../types";
-import { DepartmentNormalizer } from "../../domains/organization/services/DepartmentNormalizer";
-import { BranchNormalizer } from "../../domains/organization/services/BranchNormalizer";
-import { DepartmentAliasEngine } from "../../domains/organization/services/DepartmentAliasEngine";
+import {
+  resolveOrCreateBranch,
+  resolveBranchPlanSync
+} from "../../domains/organization/services/BranchResolutionService";
+import {
+  resolveOrCreateDepartment,
+  resolveDepartmentPlanSync
+} from "../../domains/organization/services/DepartmentResolutionService";
+import {
+  BulkImportActorContext,
+  BulkImportPermissionVerdict,
+  OrgImportContext,
+  OrgResolutionError,
+  ResolveBranchResult,
+  ResolveDepartmentResult,
+  evaluateBulkImportActorPermissions,
+  stripUndefinedFields
+} from "../../domains/organization/services/orgResolutionShared";
 import { EmployeeRepository } from "../../repositories/EmployeeRepository";
 import { EventBus } from "../../modules/runtime/EventBus";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
@@ -17,9 +32,87 @@ import { CacheInvalidationService } from "../performance/CacheInvalidationServic
 import { toDateOnly } from "../../utils/dateNormalization";
 import {
   CanonicalOperationalProfile,
+  TELLER_ROLES,
   extractRawOperationalProfileFromRecord,
   validateRoleOperationalProfileCompatibility
 } from "../../domains/rbac/operationalProfilePolicy";
+
+export {
+  resolveOrCreateBranch,
+  resolveOrCreateDepartment,
+  evaluateBulkImportActorPermissions,
+  OrgResolutionError
+};
+export type {
+  BulkImportActorContext,
+  BulkImportPermissionVerdict,
+  OrgImportContext,
+  ResolveBranchResult,
+  ResolveDepartmentResult
+};
+
+export const EMPLOYEE_IMPORT_TEMPLATE_COLUMNS = [
+  "displayName",
+  "email",
+  "phone",
+  "position",
+  "role",
+  "contract_type",
+  "pay_regime",
+  "salary_base_htg",
+  "commission_rate",
+  "branch_name",
+  "department_name",
+  "hire_date"
+] as const;
+
+export function generateEmployeeImportTemplateCsv(): string {
+  const headers = EMPLOYEE_IMPORT_TEMPLATE_COLUMNS.join(",");
+  const sampleRows = [
+    "Rodson Charles,rodson.example@finops.ht,50936907553,Barber,EMPLOYEE,cdd,Commission,0,0.45,Bureau Central,Barber Shop,2026-01-01",
+    "Sheelove Pierre,sheelove.example@finops.ht,50944411183,Caisse,EMPLOYEE,cdd,Hybrid,20000,0.05,Bureau Central,Transfer,2026-01-01",
+    "Esther Marcellus,esther.example@finops.ht,50939218951,Caisse,SUPERVISOR,cdd,Hybrid,14000,0.05,Bureau Central,Supervision,2026-01-01",
+    "Roseline Jean,roseline.example@finops.ht,50947515151,Nail Tech,EMPLOYEE,cdd,Fixe,8500,,Bureau Central,Logistic & Securite,2026-01-01",
+    "Josela Jeudi,josela.example@finops.ht,50947007167,Nail Tech,MANAGER,cdd,Hybrid,0,0,Bureau Central,Administration,2026-01-01"
+  ];
+  return `${headers}\n${sampleRows.join("\n")}`;
+}
+
+function inferOperationalProfileFromPosition(
+  role: Role,
+  position: string,
+  departmentName?: string
+): CanonicalOperationalProfile | undefined {
+  if (TELLER_ROLES.has(role)) {
+    return "teller";
+  }
+  if (role === "EMPLOYEE") {
+    const context = `${position} ${departmentName || ""}`
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    const serviceKeywords = [
+      "barber",
+      "nail",
+      "coiff",
+      "esthet",
+      "salon",
+      "spa",
+      "manic",
+      "pedic",
+      "beaute",
+      "technic",
+      "tech",
+      "service",
+      "polyvalent"
+    ];
+    if (serviceKeywords.some((kw) => context.includes(kw))) {
+      return "polyvalent";
+    }
+    return "vendeur";
+  }
+  return undefined;
+}
 
 
 export interface ParsedEmployeeRow {
@@ -50,6 +143,8 @@ export interface ParsedEmployeeRow {
   registrationId?: string;
 
   // Resolution metadata
+  branchResolutionStatus: "EXISTING" | "NEW" | "BLOCKED";
+  departmentResolutionStatus: "EXISTING" | "NEW" | "BLOCKED";
   isNewBranch: boolean;
   isNewDepartment: boolean;
   isValid: boolean;
@@ -95,9 +190,13 @@ function getRecordValue(record: Record<string, any>, aliases: string[]): any {
       if (val !== undefined && val !== null && val !== "") return val;
     }
 
-    // Prefix or substring match for truncated headers (e.g. pay_regim, salary_base_h, commission_rat)
+    // Prefix match ONLY for genuinely truncated headers (e.g. pay_regim, salary_base_h, commission_rat)
     for (const [canonKey, origKey] of normalizedKeyMap.entries()) {
-      if (canonKey.length >= 4 && (canonKey.startsWith(canonAlias) || canonAlias.startsWith(canonKey))) {
+      if (
+        canonKey.length >= 6 &&
+        canonKey.length >= Math.floor(canonAlias.length * 0.65) &&
+        (canonKey.startsWith(canonAlias) || canonAlias.startsWith(canonKey))
+      ) {
         const val = record[origKey];
         if (val !== undefined && val !== null && val !== "") return val;
       }
@@ -110,7 +209,7 @@ function getRecordValue(record: Record<string, any>, aliases: string[]): any {
 /**
  * Robust numeric parser for salaries with currencies, separators, spaces, and commas.
  */
-function parseSalaryBaseHtg(rawVal: any, defaultVal = 28000): number {
+function parseSalaryBaseHtg(rawVal: any, defaultVal = 0): number {
   if (rawVal === undefined || rawVal === null || rawVal === "") {
     return defaultVal;
   }
@@ -157,14 +256,15 @@ function parseSalaryBaseHtg(rawVal: any, defaultVal = 28000): number {
 }
 
 /**
- * Robust parser for commission rates (handles e.g. "4.5%", "4,5%", 4.5, 0.045, "5 %").
+ * Robust parser for commission rates (handles e.g. "4.5%", "4,5%", 4.5, 0.045, "5 %", 0).
  */
 function parseCommissionRate(rawVal: any): number | undefined {
   if (rawVal === undefined || rawVal === null || rawVal === "") {
     return undefined;
   }
   if (typeof rawVal === "number") {
-    if (isNaN(rawVal) || rawVal <= 0) return undefined;
+    if (isNaN(rawVal) || rawVal < 0) return undefined;
+    if (rawVal === 0) return 0;
     return rawVal > 0 && rawVal <= 1 ? Number((rawVal * 100).toFixed(4)) : rawVal;
   }
   const str = String(rawVal).trim();
@@ -175,7 +275,8 @@ function parseCommissionRate(rawVal: any): number | undefined {
 
   clean = clean.replace(/,/g, ".");
   const parsed = parseFloat(clean);
-  if (isNaN(parsed) || parsed <= 0) return undefined;
+  if (isNaN(parsed) || parsed < 0) return undefined;
+  if (parsed === 0) return 0;
 
   // Convert decimal representation (e.g. 0.045 from Excel formatting) to percentage (4.5%)
   return parsed > 0 && parsed <= 1 ? Number((parsed * 100).toFixed(4)) : parsed;
@@ -217,18 +318,33 @@ function parsePayRegime(
 export interface BulkImportResolutionPlan {
   businessId: string;
   parsedRows: ParsedEmployeeRow[];
+  blockedRows: ParsedEmployeeRow[];
+  branchesToReuse: Branch[];
   branchesToCreate: Branch[];
+  departmentsToReuse: Department[];
   departmentsToCreate: Department[];
+  actorAuthorization?: BulkImportPermissionVerdict;
   validationErrors: string[];
   warnings: string[];
   summary: {
     totalRows: number;
     validRows: number;
+    blockedRowsCount: number;
+    reusedBranchesCount: number;
     newBranchesCount: number;
+    reusedDepartmentsCount: number;
     newDepartmentsCount: number;
+    reusedBranchesNames: string[];
     newBranchesNames: string[];
+    reusedDepartmentsNames: string[];
     newDepartmentsNames: string[];
   };
+}
+
+export interface BulkImportPlanOptions {
+  actor?: BulkImportActorContext | null;
+  branchCache?: Map<string, Branch>;
+  departmentCache?: Map<string, Department>;
 }
 
 export type BulkImportStatus = "PENDING" | "RUNNING" | "SUCCESS" | "PARTIAL_FAILURE" | "FAILED";
@@ -240,6 +356,8 @@ export interface BulkImportExecutionResult {
   importedEmployeesCount: number;
   createdBranchesCount: number;
   createdDepartmentsCount: number;
+  reusedBranchesCount?: number;
+  reusedDepartmentsCount?: number;
   createdBranches: Branch[];
   createdDepartments: Department[];
   createdEmployees: Employee[];
@@ -248,6 +366,10 @@ export interface BulkImportExecutionResult {
   createdContracts: EmployeeContract[];
   committedBatchesCount?: number;
   totalBatchesCount?: number;
+  committedEmployeesCount?: number;
+  metaCommitted?: boolean;
+  failedBatchIndex?: number;
+  canRetryIdempotently?: boolean;
   logs: string[];
   error?: string;
   correlationId?: string;
@@ -278,28 +400,55 @@ export function generateDeterministicImportId(prefix: string, businessId: string
 
 export class BulkEmployeeImportService {
   /**
-   * Analyzes raw imported records from XLSX / CSV and resolves
-   * branch and department links (auto-creating missing ones).
+   * Analyzes raw imported records from XLSX / CSV / TSV and resolves
+   * branch and department links deterministically with strict tenant isolation & RBAC checks.
+   * NEVER writes to Firestore and NEVER falls back to arbitrary default branches/departments.
    */
   public static resolveImportPlan(
     businessId: string,
     rawRecords: any[],
     existingBranches: Branch[],
     existingDepartments: Department[],
-    activeStaff: Employee[]
+    activeStaff: Employee[],
+    options?: BulkImportPlanOptions
   ): BulkImportResolutionPlan {
     const parsedRows: ParsedEmployeeRow[] = [];
     const generalValidationErrors: string[] = [];
     const warnings: string[] = [];
 
-    const branchesToCreateMap = new Map<string, Branch>();
-    const departmentsToCreateMap = new Map<string, Department>();
+    const branchCache = options?.branchCache ?? new Map<string, Branch>();
+    const departmentCache = options?.departmentCache ?? new Map<string, Department>();
+
+    const plannedNewBranchesById = new Map<string, Branch>();
+    const reusedBranchesById = new Map<string, Branch>();
+    const plannedNewDeptsById = new Map<string, Department>();
+    const reusedDeptsById = new Map<string, Department>();
 
     const seenEmailsInFile = new Set<string>();
+
+    let actorAuthorization: BulkImportPermissionVerdict | undefined;
+    if (options && "actor" in options) {
+      actorAuthorization = evaluateBulkImportActorPermissions(options.actor, businessId);
+      if (!actorAuthorization.allowedToImportEmployees) {
+        generalValidationErrors.push(
+          `${actorAuthorization.denialCode || "UNAUTHORIZED_IMPORT_ROLE"}: ${
+            actorAuthorization.denialReason || "Importation refusée par la politique RBAC."
+          }`
+        );
+      }
+    }
 
     for (let idx = 0; idx < rawRecords.length; idx++) {
       const record = rawRecords[idx];
       const rowErrors: string[] = [];
+
+      if (actorAuthorization && !actorAuthorization.allowedToImportEmployees) {
+        rowErrors.push(
+          `${actorAuthorization.denialCode || "UNAUTHORIZED_IMPORT_ROLE"}: ${
+            actorAuthorization.denialReason || "Importation refusée par la politique RBAC."
+          }`
+        );
+      }
 
       // 1. Extract Identity & Personal Info
       const rawName = getRecordValue(record, [
@@ -319,9 +468,14 @@ export class BulkEmployeeImportService {
       const phone = (rawPhone || "N/A").toString().trim();
 
       const rawPosition = getRecordValue(record, [
-        "position", "poste", "title", "role_title", "titre", "job", "job_title", "fonction"
+        "position", "poste", "title", "titre", "job", "job_title", "fonction"
       ]);
+      const hasPositionField = rawPosition !== undefined && String(rawPosition).trim() !== "";
       const position = (rawPosition || "Agent").toString().trim();
+
+      const rawDeptHint = getRecordValue(record, [
+        "department_name", "departmentName", "departement", "departement_name", "department"
+      ]);
 
       // 2. Resolve Role & Operational Profile (strict separation, fail-closed)
       const rawRoleInput = getRecordValue(record, [
@@ -372,13 +526,32 @@ export class BulkEmployeeImportService {
           ])
         : directProfileInfo.rawValue;
 
+      const hasExplicitProfileField =
+        directProfileInfo.hasValue ||
+        directProfileInfo.rawValue !== undefined ||
+        aliasProfileVal !== undefined;
+
+      let effectiveProfileInput = aliasProfileVal;
+      let inferredFromTemplatePosition = false;
+      if (roleValid && !hasExplicitProfileField && hasPositionField) {
+        const inferred = inferOperationalProfileFromPosition(
+          role,
+          position,
+          rawDeptHint ? String(rawDeptHint) : undefined
+        );
+        if (inferred) {
+          effectiveProfileInput = inferred;
+          inferredFromTemplatePosition = true;
+        }
+      }
+
       let resolvedOperationalProfile: CanonicalOperationalProfile | null = null;
       if (directProfileInfo.conflict) {
         rowErrors.push(
           "CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence entre operational_profile et operationalProfile."
         );
       } else if (roleValid) {
-        const compat = validateRoleOperationalProfileCompatibility(role, aliasProfileVal, {
+        const compat = validateRoleOperationalProfileCompatibility(role, effectiveProfileInput, {
           allowLegacyBarberAlias: true,
           allowMissingForExecutiveOrOversight: true
         });
@@ -389,6 +562,10 @@ export class BulkEmployeeImportService {
           if (compat.legacyAliasApplied) {
             warnings.push(
               `Ligne ${idx + 1} (${name}): Profil hérité 'barber' converti automatiquement en 'vendeur'.`
+            );
+          } else if (inferredFromTemplatePosition && resolvedOperationalProfile) {
+            warnings.push(
+              `Ligne ${idx + 1} (${name}): Profil opérationnel '${resolvedOperationalProfile}' déduit du poste '${position}'.`
             );
           }
         }
@@ -403,7 +580,6 @@ export class BulkEmployeeImportService {
       const contractType: "cdi" | "cdd" | "freelance" = 
         rawContract === "cdd" ? "cdd" : (rawContract === "freelance" ? "freelance" : "cdi");
 
-      // Extract raw salary and commission first
       const rawSalaryInput = getRecordValue(record, [
         "salary_base_htg", "salary_base_h", "salary_base", "salarybasehtg", "salarybase", 
         "salary_htg", "salaryhtg", "base_salary", "basesalary", "baseSalary", "salaryBaseHtg", 
@@ -411,7 +587,7 @@ export class BulkEmployeeImportService {
         "salaire", "salary", "base_htg", "basehtg", "salaire_mensuel", "monthly_salary", 
         "salaire_fixe", "salaire_brut", "base"
       ]);
-      const baseSalary = parseSalaryBaseHtg(rawSalaryInput, 28000);
+      const baseSalary = parseSalaryBaseHtg(rawSalaryInput, 0);
 
       const rawCommissionInput = getRecordValue(record, [
         "commission_rate", "commission_rat", "commission_ra", "commissionrate", "commissionRate", 
@@ -431,224 +607,112 @@ export class BulkEmployeeImportService {
       const { payRegime, paymentModel } = parsePayRegime(rawPayRegimeInput, commissionRate, baseSalary);
 
       const rawHireDate = getRecordValue(record, [
-
         "hire_date", "hiredate", "hireDate", "date_embauche", "date_recrutement", 
         "date_entree", "date_start", "start_date", "embauche"
       ]);
       const hireDate = rawHireDate ? toDateOnly(rawHireDate) || rawHireDate.toString().trim() : undefined;
 
-
-      // 4. Resolve / Auto-Create Branch
+      // 4. Resolve / Auto-Plan Branch (ZERO silent arbitrary fallback)
       const rawBranchInput = (getRecordValue(record, [
         "branch_name", "branchname", "branchName", "succursale", "succursale_name", 
         "succursale_id", "branch", "branch_id", "branchId", "site", "agence"
-      ]) || "").toString().trim();
+      ]) ?? "").toString();
 
       const rawBranchCode = (getRecordValue(record, [
         "branch_code", "branchCode", "succursale_code", "code_succursale", "code_branche"
-      ]) || "").toString().trim();
+      ]) ?? "").toString().trim();
 
       let resolvedBranchId = "";
-      let resolvedBranchName = "";
+      let resolvedBranchName = rawBranchInput.trim();
       let isNewBranch = false;
+      let branchResolutionStatus: "EXISTING" | "NEW" | "BLOCKED" = "BLOCKED";
+      let resolvedBranchObj: Branch | null = null;
 
-      if (rawBranchInput) {
-        const normBranch = BranchNormalizer.normalize(rawBranchInput);
-        const canonBranch = BranchNormalizer.getCanonicalId(rawBranchInput);
-        const codeUpper = rawBranchCode ? rawBranchCode.toUpperCase() : canonBranch.substring(0, 10).toUpperCase();
+      try {
+        const branchResult = resolveBranchPlanSync({
+          businessId,
+          branchName: rawBranchInput,
+          branchCode: rawBranchCode || undefined,
+          existingBranches,
+          branchCache,
+          actor: options && "actor" in options ? options.actor : undefined
+        });
 
-        // Check in existing branches
-        const matchExisting = existingBranches.find(b => 
-          b.id === rawBranchInput ||
-          (b.code && b.code.toUpperCase() === codeUpper) ||
-          (b.name && BranchNormalizer.normalize(b.name) === normBranch) ||
-          (b.name && BranchNormalizer.getCanonicalId(b.name) === canonBranch) ||
-          ((b as any).aliases && ((b as any).aliases as string[]).some((a: string) => BranchNormalizer.getCanonicalId(a) === canonBranch))
-        );
+        resolvedBranchObj = branchResult.branch;
+        resolvedBranchId = branchResult.branch.id;
+        resolvedBranchName = branchResult.branch.name;
 
-        if (matchExisting) {
-          resolvedBranchId = matchExisting.id;
-          resolvedBranchName = matchExisting.name;
-        } else if (branchesToCreateMap.has(canonBranch)) {
-          const planned = branchesToCreateMap.get(canonBranch)!;
-          resolvedBranchId = planned.id;
-          resolvedBranchName = planned.name;
-          isNewBranch = true;
-        } else {
-          // Auto-generate missing branch
-          const newBranchId = `b_auto_${canonBranch}_${Math.random().toString(36).substring(2, 7)}`;
-          const newBranchName = rawBranchInput;
-          const newBranchObj: Branch = {
-            id: newBranchId,
-            business_id: businessId,
-            name: newBranchName,
-            code: codeUpper || canonBranch.substring(0, 6).toUpperCase(),
-            status: "ACTIVE",
-            is_active: true,
-            address: "Adresse Principale",
-            location: newBranchName,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
+        const createdInThisPlan = branchResult.created || plannedNewBranchesById.has(branchResult.branch.id);
+        isNewBranch = createdInThisPlan;
+        branchResolutionStatus = createdInThisPlan ? "NEW" : "EXISTING";
 
-          branchesToCreateMap.set(canonBranch, newBranchObj);
-          resolvedBranchId = newBranchId;
-          resolvedBranchName = newBranchName;
-          isNewBranch = true;
+        if (branchResult.created) {
+          plannedNewBranchesById.set(branchResult.branch.id, branchResult.branch);
         }
-      } else {
-        // Fallback branch if no branch specified in row
-        if (existingBranches.length > 0) {
-          resolvedBranchId = existingBranches[0].id;
-          resolvedBranchName = existingBranches[0].name;
-        } else if (branchesToCreateMap.size > 0) {
-          const firstPlanned = Array.from(branchesToCreateMap.values())[0];
-          resolvedBranchId = firstPlanned.id;
-          resolvedBranchName = firstPlanned.name;
-          isNewBranch = true;
-        } else {
-          const defaultBranchId = `b_auto_central_${Math.random().toString(36).substring(2, 7)}`;
-          const defaultBranch: Branch = {
-            id: defaultBranchId,
-            business_id: businessId,
-            name: "Bureau Central",
-            code: "BC",
-            status: "ACTIVE",
-            is_active: true,
-            address: "Adresse Principale",
-            location: "Bureau Central",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          branchesToCreateMap.set("bureaucentral", defaultBranch);
-          resolvedBranchId = defaultBranchId;
-          resolvedBranchName = "Bureau Central";
-          isNewBranch = true;
+      } catch (err: any) {
+        branchResolutionStatus = "BLOCKED";
+        isNewBranch = false;
+        const code = err instanceof OrgResolutionError ? err.code : "BRANCH_RESOLUTION_ERROR";
+        const msg = err?.message || "Succursale invalide ou non résolue.";
+        if (!rowErrors.some((e) => e.startsWith(code))) {
+          rowErrors.push(`${code}: ${msg}`);
         }
       }
 
-      // 5. Resolve / Auto-Create Department
-      const rawDeptInput = (
-        record.department_name || 
-        record.departmentName || 
-        record.departement || 
-        record.departement_name || 
-        record.department || 
-        record.department_id || 
-        record.departmentId || 
-        ""
-      ).toString().trim();
+      // 5. Resolve / Auto-Plan Department (ZERO silent arbitrary fallback, deterministic branch link)
+      const rawDeptInput = (getRecordValue(record, [
+        "department_name", "departmentName", "departement", "departement_name",
+        "department", "department_id", "departmentId"
+      ]) ?? "").toString();
 
-      const rawDeptCode = (
-        record.department_code || 
-        record.departmentCode || 
-        record.departement_code || 
-        ""
-      ).toString().trim();
+      const rawDeptCode = (getRecordValue(record, [
+        "department_code", "departmentCode", "departement_code"
+      ]) ?? "").toString().trim();
 
       let resolvedDeptId = "";
-      let resolvedDeptName = "";
+      let resolvedDeptName = rawDeptInput.trim();
       let isNewDepartment = false;
+      let departmentResolutionStatus: "EXISTING" | "NEW" | "BLOCKED" = "BLOCKED";
+      let resolvedDeptObj: Department | null = null;
 
-      if (rawDeptInput) {
-        const normDept = DepartmentNormalizer.normalize(rawDeptInput);
-        const canonDept = DepartmentNormalizer.getCanonicalId(rawDeptInput);
-        const deptCodeUpper = rawDeptCode ? rawDeptCode.toUpperCase() : canonDept.substring(0, 10).toUpperCase();
+      try {
+        const deptResult = resolveDepartmentPlanSync({
+          businessId,
+          departmentName: rawDeptInput,
+          branchId: resolvedBranchId || undefined,
+          departmentCode: rawDeptCode || undefined,
+          existingDepartments,
+          departmentCache,
+          actor: options && "actor" in options ? options.actor : undefined
+        });
 
-        // Check with DepartmentAliasEngine & direct match
-        const matchExistingDept = DepartmentAliasEngine.resolveDepartment(existingDepartments, rawDeptInput) ||
-          existingDepartments.find(d => 
-            d.id === rawDeptInput ||
-            (d.code && d.code.toUpperCase() === deptCodeUpper) ||
-            (d.normalized_name && d.normalized_name === normDept) ||
-            (d.name && DepartmentNormalizer.getCanonicalId(d.name) === canonDept)
-          );
+        resolvedDeptObj = deptResult.department;
+        resolvedDeptId = deptResult.department.id;
+        resolvedDeptName = deptResult.department.name;
 
-        if (matchExistingDept) {
-          resolvedDeptId = matchExistingDept.id;
-          resolvedDeptName = matchExistingDept.name;
-        } else if (departmentsToCreateMap.has(canonDept)) {
-          const planned = departmentsToCreateMap.get(canonDept)!;
-          resolvedDeptId = planned.id;
-          resolvedDeptName = planned.name;
-          isNewDepartment = true;
-        } else {
-          // Auto-generate missing department
-          const newDeptId = `d_auto_${canonDept}_${Math.random().toString(36).substring(2, 7)}`;
-          const newDeptName = rawDeptInput;
-          const newDeptObj: Department = {
-            id: newDeptId,
-            business_id: businessId,
-            branch_id: resolvedBranchId,
-            branchId: resolvedBranchId,
-            name: newDeptName,
-            normalized_name: normDept,
-            code: deptCodeUpper || canonDept.substring(0, 8).toUpperCase(),
-            status: "ACTIVE",
-            is_active: true,
-            budget: 50000, // Safe default positive budget
-            aliases: [canonDept, rawDeptInput.toLowerCase()],
-            source: "BULK_IMPORT",
-            is_system_generated: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
+        const createdInThisPlan = deptResult.created || plannedNewDeptsById.has(deptResult.department.id);
+        isNewDepartment = createdInThisPlan;
+        departmentResolutionStatus = createdInThisPlan ? "NEW" : "EXISTING";
 
-          departmentsToCreateMap.set(canonDept, newDeptObj);
-          resolvedDeptId = newDeptId;
-          resolvedDeptName = newDeptName;
-          isNewDepartment = true;
+        if (deptResult.created) {
+          plannedNewDeptsById.set(deptResult.department.id, deptResult.department);
         }
-      } else {
-        // Fallback department
-        if (existingDepartments.length > 0) {
-          resolvedDeptId = existingDepartments[0].id;
-          resolvedDeptName = existingDepartments[0].name;
-        } else if (departmentsToCreateMap.size > 0) {
-          const firstPlanned = Array.from(departmentsToCreateMap.values())[0];
-          resolvedDeptId = firstPlanned.id;
-          resolvedDeptName = firstPlanned.name;
-          isNewDepartment = true;
-        } else {
-          const defaultDeptId = `d_auto_admin_${Math.random().toString(36).substring(2, 7)}`;
-          const defaultDept: Department = {
-            id: defaultDeptId,
-            business_id: businessId,
-            branch_id: resolvedBranchId,
-            branchId: resolvedBranchId,
-            name: "Administration",
-            normalized_name: "administration",
-            code: "ADMIN",
-            status: "ACTIVE",
-            is_active: true,
-            budget: 50000,
-            aliases: ["administration", "admin"],
-            source: "BULK_IMPORT",
-            is_system_generated: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          departmentsToCreateMap.set("administration", defaultDept);
-          resolvedDeptId = defaultDeptId;
-          resolvedDeptName = "Administration";
-          isNewDepartment = true;
+      } catch (err: any) {
+        departmentResolutionStatus = "BLOCKED";
+        isNewDepartment = false;
+        const code = err instanceof OrgResolutionError ? err.code : "DEPARTMENT_RESOLUTION_ERROR";
+        const msg = err?.message || "Département invalide ou non résolu.";
+        if (!rowErrors.some((e) => e.startsWith(code))) {
+          rowErrors.push(`${code}: ${msg}`);
         }
       }
 
       let resolvedEmployeeId: string | undefined = undefined;
       let resolvedRegistrationId: string | undefined = undefined;
 
-      // 6. Validate Row Integrity
+      // 6. Validate Row Integrity (Email & Duplicates)
       if (!email || !email.includes("@")) {
-        rowErrors.push(`Format d'email invalide: "${rawEmail || 'vide'}"`);
+        rowErrors.push(`Format d'email invalide: "${rawEmail || "vide"}"`);
       } else {
         const rawEmpId = (getRecordValue(record, [
           "id", "employee_id", "employeeId", "matricule", "code_employe", "personnel_id", "personnelId"
@@ -679,6 +743,21 @@ export class BulkEmployeeImportService {
         resolvedRegistrationId = rawRegistrationId || undefined;
       }
 
+      const rowValid = rowErrors.length === 0 && branchResolutionStatus !== "BLOCKED" && departmentResolutionStatus !== "BLOCKED";
+
+      if (rowValid) {
+        if (resolvedBranchObj) {
+          if (!isNewBranch) {
+            reusedBranchesById.set(resolvedBranchObj.id, resolvedBranchObj);
+          }
+        }
+        if (resolvedDeptObj) {
+          if (!isNewDepartment) {
+            reusedDeptsById.set(resolvedDeptObj.id, resolvedDeptObj);
+          }
+        }
+      }
+
       if (rowErrors.length > 0) {
         generalValidationErrors.push(`Ligne ${idx + 1} (${name}): ${rowErrors.join(", ")}`);
       }
@@ -705,42 +784,130 @@ export class BulkEmployeeImportService {
         departmentName: resolvedDeptName,
         employeeId: resolvedEmployeeId,
         registrationId: resolvedRegistrationId,
+        branchResolutionStatus,
+        departmentResolutionStatus,
         isNewBranch,
         isNewDepartment,
-        isValid: rowErrors.length === 0,
+        isValid: rowValid,
         validationErrors: rowErrors
       });
     }
 
-    const branchesToCreate = Array.from(branchesToCreateMap.values());
-    const departmentsToCreate = Array.from(departmentsToCreateMap.values());
+    // Only commit new branches/departments that are actually referenced by valid employee rows (no orphan creation)
+    const validBranchIds = new Set(parsedRows.filter((r) => r.isValid && r.branchId).map((r) => r.branchId));
+    const validDeptIds = new Set(parsedRows.filter((r) => r.isValid && r.departmentId).map((r) => r.departmentId));
+
+    const branchesToCreate = Array.from(plannedNewBranchesById.values()).filter((b) => validBranchIds.has(b.id));
+    const departmentsToCreate = Array.from(plannedNewDeptsById.values()).filter((d) => validDeptIds.has(d.id));
+    const branchesToReuse = Array.from(reusedBranchesById.values());
+    const departmentsToReuse = Array.from(reusedDeptsById.values());
+    const blockedRows = parsedRows.filter((r) => !r.isValid);
+    const validRowsCount = parsedRows.length - blockedRows.length;
 
     return {
       businessId,
       parsedRows,
+      blockedRows,
+      branchesToReuse,
       branchesToCreate,
+      departmentsToReuse,
       departmentsToCreate,
-      validationErrors: generalValidationErrors,
+      actorAuthorization,
+      validationErrors: Array.from(new Set(generalValidationErrors)),
       warnings,
       summary: {
         totalRows: parsedRows.length,
-        validRows: parsedRows.filter(r => r.isValid).length,
+        validRows: validRowsCount,
+        blockedRowsCount: blockedRows.length,
+        reusedBranchesCount: branchesToReuse.length,
         newBranchesCount: branchesToCreate.length,
+        reusedDepartmentsCount: departmentsToReuse.length,
         newDepartmentsCount: departmentsToCreate.length,
-        newBranchesNames: branchesToCreate.map(b => b.name),
-        newDepartmentsNames: departmentsToCreate.map(d => d.name)
+        reusedBranchesNames: branchesToReuse.map((b) => b.name),
+        newBranchesNames: branchesToCreate.map((b) => b.name),
+        reusedDepartmentsNames: departmentsToReuse.map((d) => d.name),
+        newDepartmentsNames: departmentsToCreate.map((d) => d.name)
       }
     };
   }
 
   /**
-   * Executes the atomic creation of missing branches, departments,
-   * employees, invitations, badges, and contracts.
+   * Executes the creation of missing branches, departments,
+   * employees, invitations, badges, and contracts with RBAC re-verification,
+   * undefined-field sanitization, and accurate partial-failure telemetry.
    */
   public static async executeImportPlan(
     plan: BulkImportResolutionPlan,
-    actor?: { uid: string; name?: string; role?: Role }
+    actor?: BulkImportActorContext | null
   ): Promise<BulkImportExecutionResult> {
+    if (actor !== undefined) {
+      const verdict = evaluateBulkImportActorPermissions(actor, plan.businessId);
+      if (!verdict.allowedToImportEmployees) {
+        return {
+          status: "FAILED",
+          success: false,
+          importedEmployeesCount: 0,
+          createdBranchesCount: 0,
+          createdDepartmentsCount: 0,
+          reusedBranchesCount: 0,
+          reusedDepartmentsCount: 0,
+          createdBranches: [],
+          createdDepartments: [],
+          createdEmployees: [],
+          createdInvitations: [],
+          createdBadges: [],
+          createdContracts: [],
+          logs: [verdict.denialReason || "Importation refusée par la politique RBAC."],
+          error: verdict.denialReason || "Importation refusée par la politique RBAC.",
+          errorCode: verdict.denialCode || "UNAUTHORIZED_IMPORT_ROLE",
+          errorCategory: "PERMISSION",
+          failedStep: "AUTHORIZATION"
+        };
+      }
+      if (plan.branchesToCreate.length > 0 && !verdict.canCreateBranch) {
+        const msg = "Permission 'branch.create' requise pour créer les nouvelles succursales du lot.";
+        return {
+          status: "FAILED",
+          success: false,
+          importedEmployeesCount: 0,
+          createdBranchesCount: 0,
+          createdDepartmentsCount: 0,
+          createdBranches: [],
+          createdDepartments: [],
+          createdEmployees: [],
+          createdInvitations: [],
+          createdBadges: [],
+          createdContracts: [],
+          logs: [msg],
+          error: msg,
+          errorCode: "UNAUTHORIZED_BRANCH_CREATION",
+          errorCategory: "PERMISSION",
+          failedStep: "AUTHORIZATION"
+        };
+      }
+      if (plan.departmentsToCreate.length > 0 && !verdict.canCreateDepartment) {
+        const msg = "Permission 'department.create' requise pour créer les nouveaux départements du lot.";
+        return {
+          status: "FAILED",
+          success: false,
+          importedEmployeesCount: 0,
+          createdBranchesCount: 0,
+          createdDepartmentsCount: 0,
+          createdBranches: [],
+          createdDepartments: [],
+          createdEmployees: [],
+          createdInvitations: [],
+          createdBadges: [],
+          createdContracts: [],
+          logs: [msg],
+          error: msg,
+          errorCode: "UNAUTHORIZED_DEPARTMENT_CREATION",
+          errorCategory: "PERMISSION",
+          failedStep: "AUTHORIZATION"
+        };
+      }
+    }
+
     const validRows = plan.parsedRows.filter(r => r.isValid);
     if (validRows.length === 0) {
       return {
@@ -756,7 +923,10 @@ export class BulkEmployeeImportService {
         createdBadges: [],
         createdContracts: [],
         logs: ["Aucune ligne valide à intégrer."],
-        error: "Aucune ligne valide à intégrer."
+        error: plan.validationErrors[0] || "Aucune ligne valide à intégrer.",
+        errorCode: "NO_VALID_ROWS",
+        errorCategory: "VALIDATION",
+        failedStep: "VALIDATION"
       };
     }
 
@@ -766,7 +936,6 @@ export class BulkEmployeeImportService {
     const createdContracts: EmployeeContract[] = [];
     const logs: string[] = [];
 
-    // Track auto-created branches & departments
     if (plan.branchesToCreate.length > 0) {
       logs.push(`Création de ${plan.branchesToCreate.length} nouvelle(s) succursale(s) : ${plan.branchesToCreate.map(b => b.name).join(", ")}`);
     }
@@ -774,8 +943,17 @@ export class BulkEmployeeImportService {
       logs.push(`Création de ${plan.departmentsToCreate.length} nouveau(x) département(s) : ${plan.departmentsToCreate.map(d => d.name).join(", ")}`);
     }
 
-    // Build entities with deterministic identities (Priority: stable ID > registration ID > normalized email)
-    // NOTE: Fallback to normalized email deterministic identity. Email change = identity change.
+    const sanitizedBranches = plan.branchesToCreate.map((b) => stripUndefinedFields({
+      ...b,
+      business_id: plan.businessId,
+      businessId: plan.businessId
+    }));
+    const sanitizedDepts = plan.departmentsToCreate.map((d) => stripUndefinedFields({
+      ...d,
+      business_id: plan.businessId,
+      businessId: plan.businessId
+    }));
+
     for (const row of validRows) {
       const stableId = row.employeeId || (row.registrationId ? `emp_${row.registrationId}` : undefined);
       const empId = stableId || generateDeterministicImportId("emp", plan.businessId, row.email);
@@ -790,16 +968,20 @@ export class BulkEmployeeImportService {
           }
         : {};
 
-      const newEmp: Employee = {
+      const newEmp: Employee = stripUndefinedFields({
         id: empId,
         business_id: plan.businessId,
+        businessId: plan.businessId,
         branchId: row.branchId,
         branch_id: row.branchId,
+        branchName: row.branchName,
         branch_name: row.branchName,
         departmentId: row.departmentId,
         department_id: row.departmentId,
+        departmentName: row.departmentName,
         department_name: row.departmentName,
         name: row.name,
+        displayName: row.name,
         email: row.email,
         normalizedEmail: row.email.toLowerCase().trim(),
         role: row.role,
@@ -812,19 +994,21 @@ export class BulkEmployeeImportService {
         onboardingComplete: false,
         contractType: row.contractType,
         payRegime: row.payRegime,
-        hireDate: row.hireDate,
+        ...(row.hireDate ? { hireDate: row.hireDate } : {}),
+        badgeId,
         isActive: true,
+        is_active: true,
         status: "ACTIVE",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      };
+      }) as Employee;
 
       if (row.commissionRate !== undefined && !isNaN(row.commissionRate)) {
         newEmp.commissionRate = row.commissionRate;
         newEmp.commission_rate = row.commissionRate > 1 ? row.commissionRate / 100 : row.commissionRate;
       }
 
-      const newInvite: Invitation = {
+      const newInvite: Invitation = stripUndefinedFields({
         id: inviteId,
         employeeId: empId,
         business_id: plan.businessId,
@@ -842,10 +1026,10 @@ export class BulkEmployeeImportService {
         branch_name: row.branchName,
         departmentId: row.departmentId,
         department_name: row.departmentName,
-        commissionRate: newEmp.commissionRate,
+        ...(newEmp.commissionRate !== undefined ? { commissionRate: newEmp.commissionRate } : {}),
         status: "PENDING",
         invitedAt: new Date().toISOString()
-      };
+      }) as Invitation;
 
       const badgeSig = `HMAC::${btoa(empId + plan.businessId).substring(0, 16).toUpperCase()}`;
       const badgePayload = {
@@ -857,8 +1041,8 @@ export class BulkEmployeeImportService {
         signature: badgeSig
       };
 
-      const newBadge: EmployeeBadge = {
-        id: `bad_${empId}`,
+      const newBadge: EmployeeBadge = stripUndefinedFields({
+        id: badgeId,
         employeeId: empId,
         business_id: plan.businessId,
         branchId: row.branchId,
@@ -869,9 +1053,9 @@ export class BulkEmployeeImportService {
         issuedAt: new Date().toISOString(),
         signature: badgeSig,
         qrPayload: JSON.stringify(badgePayload)
-      };
+      }) as EmployeeBadge;
 
-      const newContract: EmployeeContract = {
+      const newContract: EmployeeContract = stripUndefinedFields({
         id: contractId,
         employeeId: empId,
         business_id: plan.businessId,
@@ -879,10 +1063,10 @@ export class BulkEmployeeImportService {
         contractType: row.contractType,
         payRegime: row.payRegime,
         salaryBaseHtg: row.baseSalary,
-        commissionRate: newEmp.commissionRate || null,
+        commissionRate: newEmp.commissionRate ?? null,
         generatedAt: new Date().toISOString(),
         status: "active"
-      };
+      }) as EmployeeContract;
 
       createdEmployees.push(newEmp);
       createdInvitations.push(newInvite);
@@ -895,21 +1079,22 @@ export class BulkEmployeeImportService {
     let totalBatches = 0;
 
     try {
-      // 1. Commit all entities sequentially via EmployeeRepository in chunks of max 45 employees
-      // CLIENT PRE-FETCH PROTECTION ONLY: Concurrency collision protection is enforced via deterministic document ID setDoc (idempotent write) combined with client-side active employee pre-fetch validation.
       const batchResult = await EmployeeRepository.createBulkImportBatch(
         createdEmployees,
         createdInvitations,
         createdBadges,
         createdContracts,
-        plan.branchesToCreate,
-        plan.departmentsToCreate
+        sanitizedBranches,
+        sanitizedDepts
       );
       committedBatches = batchResult.committedBatches;
       totalBatches = batchResult.totalBatches;
+      const committedEmpCount =
+        typeof (batchResult as any).committedEmployeesCount === "number"
+          ? (batchResult as any).committedEmployeesCount
+          : createdEmployees.length;
 
-      // 2. Publish Domain Events
-      for (const branch of plan.branchesToCreate) {
+      for (const branch of sanitizedBranches) {
         EventBus.publish(EventBus.createEvent({
           correlationId: `bulk_branch_${branch.id}`,
           businessId: plan.businessId,
@@ -920,7 +1105,7 @@ export class BulkEmployeeImportService {
         }));
       }
 
-      for (const dept of plan.departmentsToCreate) {
+      for (const dept of sanitizedDepts) {
         EventBus.publish(EventBus.createEvent({
           correlationId: `bulk_dept_${dept.id}`,
           businessId: plan.businessId,
@@ -938,53 +1123,69 @@ export class BulkEmployeeImportService {
         aggregate: "EMPLOYEE",
         type: "EmployeesBulkImported",
         payload: {
-          importedEmployeesCount: createdEmployees.length,
-          createdBranchesCount: plan.branchesToCreate.length,
-          createdDepartmentsCount: plan.departmentsToCreate.length
+          importedEmployeesCount: committedEmpCount,
+          createdBranchesCount: sanitizedBranches.length,
+          createdDepartmentsCount: sanitizedDepts.length
         }
       }));
 
-      // Orchestrator Telemetry
       try {
         await finopsEventOrchestrator.emit("WORKFORCE", plan.businessId, {
           action: "WORKFORCE_MASS_IMPORTED",
-          importedRows: createdEmployees.length,
-          createdBranches: plan.branchesToCreate.length,
-          createdDepartments: plan.departmentsToCreate.length,
+          importedRows: committedEmpCount,
+          createdBranches: sanitizedBranches.length,
+          createdDepartments: sanitizedDepts.length,
           triggeredBy: actor?.role || "UNASSIGNED"
         });
       } catch (orchErr) {
         console.warn("[BulkEmployeeImportService] Orchestrator notification warning:", orchErr);
       }
 
-      // Sweep local cache
       try {
         CacheInvalidationService.sweepLocal(plan.businessId);
       } catch (cacheErr) {
         console.warn("[BulkEmployeeImportService] Cache sweep warning:", cacheErr);
       }
 
-      logs.push(`Intégration réussie : ${createdEmployees.length} collaborateurs, ${plan.branchesToCreate.length} succursales, et ${plan.departmentsToCreate.length} départements enregistrés (${committedBatches} lots validés).`);
+      logs.push(`Intégration réussie : ${committedEmpCount} collaborateurs, ${sanitizedBranches.length} succursales, et ${sanitizedDepts.length} départements enregistrés (${committedBatches} lots validés).`);
 
       return {
         status: "SUCCESS",
         success: true,
-        importedEmployeesCount: createdEmployees.length,
-        createdBranchesCount: plan.branchesToCreate.length,
-        createdDepartmentsCount: plan.departmentsToCreate.length,
-        createdBranches: plan.branchesToCreate,
-        createdDepartments: plan.departmentsToCreate,
+        importedEmployeesCount: committedEmpCount,
+        createdBranchesCount: sanitizedBranches.length,
+        createdDepartmentsCount: sanitizedDepts.length,
+        reusedBranchesCount: plan.branchesToReuse.length,
+        reusedDepartmentsCount: plan.departmentsToReuse.length,
+        createdBranches: sanitizedBranches,
+        createdDepartments: sanitizedDepts,
         createdEmployees,
         createdInvitations,
         createdBadges,
         createdContracts,
         committedBatchesCount: committedBatches,
         totalBatchesCount: totalBatches,
+        committedEmployeesCount: committedEmpCount,
+        metaCommitted: true,
         logs
       };
     } catch (err: any) {
       const rawMsg = err?.message || (typeof err === "string" ? err : "") || "Erreur inconnue";
       const errCode = err?.code || (err?.name === "FinopsException" ? (err as any).code : undefined);
+      const batchProgress = err?.batchProgress as
+        | {
+            committedBatches?: number;
+            totalBatches?: number;
+            committedEmployeesCount?: number;
+            metaCommitted?: boolean;
+            failedBatchIndex?: number;
+          }
+        | undefined;
+
+      if (batchProgress) {
+        committedBatches = batchProgress.committedBatches ?? committedBatches;
+        totalBatches = batchProgress.totalBatches ?? totalBatches;
+      }
 
       let category: BulkImportErrorCategory = "INTERNAL";
       let stableCode = "ERR_BULK_IMPORT_INTERNAL";
@@ -994,10 +1195,18 @@ export class BulkEmployeeImportService {
         category = "SEAT_LIMIT";
         stableCode = "ERR_SEAT_LIMIT_EXCEEDED";
         userMessage = rawMsg;
-      } else if (rawMsg.toLowerCase().includes("permission") || rawMsg.toLowerCase().includes("insufficient") || errCode === "permission-denied") {
+      } else if (
+        errCode === "FORBIDDEN_TENANT_ACCESS" ||
+        errCode === "CROSS_TENANT_ORG_REFERENCE" ||
+        rawMsg.toLowerCase().includes("permission") ||
+        rawMsg.toLowerCase().includes("insufficient") ||
+        errCode === "permission-denied"
+      ) {
         category = "PERMISSION";
         stableCode = "ERR_FIRESTORE_PERMISSION_DENIED";
-        userMessage = "Permissions insuffisantes pour enregistrer les collaborateurs dans cette entreprise.";
+        userMessage = rawMsg.includes("FORBIDDEN_TENANT_ACCESS")
+          ? rawMsg
+          : "Permissions insuffisantes pour enregistrer les collaborateurs dans cette entreprise.";
       } else if (rawMsg.includes("budget actif") || rawMsg.includes("Erreur de validation") || errCode === "VALIDATION_ERROR" || errCode === "SCHEMA_VALIDATION_ERROR") {
         category = "VALIDATION";
         stableCode = "ERR_VALIDATION_FAILED";
@@ -1016,7 +1225,13 @@ export class BulkEmployeeImportService {
       }
 
       const correlationId = `bulk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const failedStep = committedBatches === 0 ? "METADATA_OR_VALIDATION" : `CHUNK_BATCH_${committedBatches + 1}`;
+      const metaCommitted = Boolean(batchProgress?.metaCommitted);
+      const committedEmployeesCount = batchProgress?.committedEmployeesCount ?? 0;
+      const isPartial = metaCommitted || committedEmployeesCount > 0 || committedBatches > 0;
+      const failedStep =
+        committedBatches === 0 && !metaCommitted
+          ? "METADATA_OR_VALIDATION"
+          : `CHUNK_BATCH_${batchProgress?.failedBatchIndex ?? committedBatches + 1}`;
 
       console.error(`[BulkEmployeeImportService] Import failed [correlationId=${correlationId}, code=${stableCode}, step=${failedStep}, category=${category}]:`, {
         correlationId,
@@ -1026,28 +1241,42 @@ export class BulkEmployeeImportService {
         message: rawMsg,
         processedRows: validRows.length,
         committedBatches,
-        totalBatches
+        totalBatches,
+        committedEmployeesCount,
+        metaCommitted
       });
 
-      const isPartial = committedBatches > 0;
       const status: BulkImportStatus = isPartial ? "PARTIAL_FAILURE" : "FAILED";
-      const importedCount = isPartial ? Math.min(createdEmployees.length, committedBatches * 45) : 0;
 
       return {
         status,
         success: false,
-        importedEmployeesCount: importedCount,
-        createdBranchesCount: isPartial ? plan.branchesToCreate.length : 0,
-        createdDepartmentsCount: isPartial ? plan.departmentsToCreate.length : 0,
-        createdBranches: isPartial ? plan.branchesToCreate : [],
-        createdDepartments: isPartial ? plan.departmentsToCreate : [],
-        createdEmployees: isPartial ? createdEmployees.slice(0, importedCount) : [],
-        createdInvitations: isPartial ? createdInvitations.slice(0, importedCount) : [],
-        createdBadges: isPartial ? createdBadges.slice(0, importedCount) : [],
-        createdContracts: isPartial ? createdContracts.slice(0, importedCount) : [],
+        importedEmployeesCount: committedEmployeesCount,
+        createdBranchesCount: metaCommitted ? sanitizedBranches.length : 0,
+        createdDepartmentsCount: metaCommitted ? sanitizedDepts.length : 0,
+        reusedBranchesCount: plan.branchesToReuse.length,
+        reusedDepartmentsCount: plan.departmentsToReuse.length,
+        createdBranches: metaCommitted ? sanitizedBranches : [],
+        createdDepartments: metaCommitted ? sanitizedDepts : [],
+        createdEmployees: createdEmployees.slice(0, committedEmployeesCount),
+        createdInvitations: createdInvitations.slice(0, committedEmployeesCount),
+        createdBadges: createdBadges.slice(0, committedEmployeesCount),
+        createdContracts: createdContracts.slice(0, committedEmployeesCount),
         committedBatchesCount: committedBatches,
         totalBatchesCount: totalBatches,
-        logs: [...logs, `Échec de l'intégration (${status}) [${stableCode}] : ${userMessage}`],
+        committedEmployeesCount,
+        metaCommitted,
+        failedBatchIndex: batchProgress?.failedBatchIndex,
+        canRetryIdempotently: true,
+        logs: [
+          ...logs,
+          `Échec de l'intégration (${status}) [${stableCode}] : ${userMessage}`,
+          ...(isPartial
+            ? [
+                `État partiel vérifié : ${committedEmployeesCount}/${createdEmployees.length} collaborateurs engagés, réessai idempotent sûr disponible.`
+              ]
+            : [])
+        ],
         error: userMessage,
         correlationId,
         errorCode: stableCode,

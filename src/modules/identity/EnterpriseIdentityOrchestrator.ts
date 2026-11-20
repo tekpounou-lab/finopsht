@@ -423,6 +423,15 @@ export class EnterpriseIdentityOrchestrator {
 
         snapshot.business = tenantResult.business;
         snapshot.businessSnapshot = tenantResult.businessSnapshot;
+        snapshot.subscription =
+          tenantResult.subscription ||
+          (tenantResult.businessSnapshot as any)?.subscription ||
+          (tenantResult.business as any)?.subscription ||
+          null;
+        snapshot.featureFlags =
+          tenantResult.featureFlags ||
+          (tenantResult.businessSnapshot as any)?.featureFlags ||
+          null;
         snapshot.permissions = tenantResult.permissions || [];
 
         // 3. Non-blocking background reconciliation

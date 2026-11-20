@@ -347,12 +347,53 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
     else setPermissions([]);
   }, [identity?.role]);
 
-  // Synchronize roleModuleMatrix dynamically with PermissionService
+  // Synchronize roleModuleMatrix and tenant subscription/features dynamically with PermissionService
   useEffect(() => {
+    const activeRole = PermissionService.getRole();
+    const activeBizId = business?.id || identity?.business?.id || null;
+    if (activeRole && activeRole !== "UNASSIGNED" && activeBizId) {
+      const nextPlan =
+        identity?.subscription?.plan ||
+        (business as any)?.subscription?.plan ||
+        (business as any)?.plan ||
+        settings?.subscription?.plan;
+      const nextStatus =
+        identity?.subscription?.status ||
+        (business as any)?.subscription?.status ||
+        settings?.subscription?.status;
+      const nextFeatures =
+        identity?.featureFlags ||
+        (business as any)?.featureFlags ||
+        settings?.featureFlags;
+
+      if (nextPlan || nextFeatures) {
+        PermissionService.init(
+          activeRole,
+          PermissionService.getPermissions(),
+          (nextFeatures || PermissionService.getFeatures()) as any,
+          nextPlan || PermissionService.getSubscriptionPlan(),
+          nextStatus || PermissionService.getSubscriptionStatus(),
+          activeBizId,
+          settings?.roleModuleMatrix || PermissionService.getRoleModuleMatrix()
+        );
+        return;
+      }
+    }
+
     if (settings?.roleModuleMatrix) {
       PermissionService.setRoleModuleMatrix(settings.roleModuleMatrix);
     }
-  }, [settings?.roleModuleMatrix]);
+  }, [
+    business,
+    identity?.business?.id,
+    identity?.subscription?.plan,
+    identity?.subscription?.status,
+    identity?.featureFlags,
+    settings?.roleModuleMatrix,
+    settings?.subscription?.plan,
+    settings?.subscription?.status,
+    settings?.featureFlags
+  ]);
 
   // Enterprise Application State Machine integration on Lifecycle
   useEffect(() => {

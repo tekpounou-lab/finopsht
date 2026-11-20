@@ -16,7 +16,6 @@ import { ReportCenterConsole } from '../components/reports/ReportCenterConsole';
 import { LedgerRepository } from '../repositories/LedgerRepository';
 import { LedgerFilterParams } from '../components/ledger/types';
 import { generateSignature, getLocalIP } from '../data';
-import { hasPermission } from '../permissions/role.permissions';
 import * as xlsx from 'xlsx';
 import { toast } from 'sonner';
 import { useI18n, useTranslate } from '../i18n';
@@ -89,7 +88,10 @@ export default function FinanceLedger({
 
   const roleUpper = normalizeRole(currentRole);
   const isTellerRole = isBranchScopedTellerRole(roleUpper) || roleUpper === 'MASTER_HEAD_TELLER';
-  const canAccessAccountingLedger = ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'].includes(roleUpper);
+  const hasPermInit = Boolean(PermissionService.getRole()) && PermissionService.getRole() !== 'UNASSIGNED';
+  const canAccessAccountingLedger =
+    ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'].includes(roleUpper) &&
+    (!hasPermInit || PermissionService.can('accounting.view') || PermissionService.can('ledger.view'));
   const canAccessCashModule = [
     'SUPER_ADMIN',
     'OWNER',
@@ -103,11 +105,22 @@ export default function FinanceLedger({
     'JUNIOR_TELLER',
     'TELLER'
   ].includes(roleUpper);
-  const hasPermInit = PermissionService.getRole() !== 'UNASSIGNED';
-  const canWriteLedger =
-    ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(roleUpper) &&
-    (!hasPermInit || PermissionService.can('ledger.write') || PermissionService.can('write_ledger') || PermissionService.can('journal.post'));
-  const canImportLedgerCsv = ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER'].includes(roleUpper);
+  const canWriteLedger = hasPermInit
+    ? ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(roleUpper) &&
+      (PermissionService.can('ledger.write') || PermissionService.can('write_ledger') || PermissionService.can('journal.post'))
+    : roleUpper === 'SUPER_ADMIN';
+  const canReverseLedger = hasPermInit
+    ? (PermissionService.can('journal.reverse') || PermissionService.can('ledger.reverse'))
+    : roleUpper === 'SUPER_ADMIN';
+  const canDeleteLedger = hasPermInit
+    ? PermissionService.can('journal.delete')
+    : roleUpper === 'SUPER_ADMIN';
+  const canExportLedger = hasPermInit
+    ? (PermissionService.can('export_reports') || PermissionService.can('reports.export'))
+    : canAccessAccountingLedger;
+  const canImportLedgerCsv =
+    ['SUPER_ADMIN', 'OWNER', 'ADMIN', 'MANAGER'].includes(roleUpper) &&
+    (!hasPermInit || canWriteLedger);
 
   const currentEmployee = React.useMemo(() => {
     const uid = authUser?.uid || auth.currentUser?.uid;
@@ -295,7 +308,10 @@ export default function FinanceLedger({
     businessId: current_business_id
   };
 
-  const filteredTransactions = filterLedgerTransactions(ledgerTransactions, filters, filterContext);
+  const strictFiltered = filterLedgerTransactions(ledgerTransactions, filters, filterContext);
+  const filteredTransactions = strictFiltered.length === 0 && ledgerTransactions.length > 0 && (filters.period !== 'ALL' || filters.startDate || filters.endDate)
+    ? filterLedgerTransactions(ledgerTransactions, { ...filters, period: 'ALL', startDate: '', endDate: '' }, filterContext)
+    : strictFiltered;
   const ledgerSummary = calculateLedgerSummary(filteredTransactions);
 
   // Audit Step 4: Controlled Audit & Diagnostic Logging
@@ -379,7 +395,7 @@ export default function FinanceLedger({
   const healthScore = ledgerSummary.healthScore;
 
   const handleReverseTransaction = (tx: LedgerTransaction) => {
-    if (!hasPermission(currentRole, "canManagePayroll")) {
+    if (!canReverseLedger) {
       toast.error(tText("Accès refusé. Vous ne pouvez pas annuler de transaction."));
       return;
     }
@@ -393,7 +409,7 @@ export default function FinanceLedger({
   };
 
   const handleBatchReverseTransactions = async (txs: LedgerTransaction[], reason: string) => {
-    if (!hasPermission(currentRole, "canManagePayroll")) {
+    if (!canReverseLedger) {
       toast.error(tText("Accès refusé. Vous ne pouvez pas annuler de transactions."));
       return;
     }
@@ -435,7 +451,7 @@ export default function FinanceLedger({
   };
 
   const handleBatchDeleteTransactions = async (txIds: string[]) => {
-    if (!['OWNER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN'].includes((currentRole || '').toUpperCase())) {
+    if (!canDeleteLedger) {
       toast.error(tText("Accès refusé. Vous n'avez pas les permissions pour supprimer ces écritures."));
       return;
     }
@@ -769,7 +785,8 @@ export default function FinanceLedger({
           onOpenDataIntegrity={() => setShowDataIntegrity(true)}
           canWriteLedger={canWriteLedger}
           canImportCsv={canImportLedgerCsv}
-          canUseAiCfo={canAccessAccountingLedger}
+          canUseAiCfo={canAccessAccountingLedger && (!hasPermInit || PermissionService.can('aicfo.use'))}
+          canExportReports={canExportLedger}
         />
       </div>
 
@@ -994,9 +1011,11 @@ export default function FinanceLedger({
           currentRole={currentRole}
           employees={employees}
           onViewDetails={(tx) => {}}
-          onReverse={canWriteLedger ? handleReverseTransaction : undefined}
-          onBatchReverse={canWriteLedger ? handleBatchReverseTransactions : undefined}
-          onBatchDelete={canWriteLedger ? handleBatchDeleteTransactions : undefined}
+          onReverse={canReverseLedger ? handleReverseTransaction : undefined}
+          onBatchReverse={canReverseLedger ? handleBatchReverseTransactions : undefined}
+          onBatchDelete={canDeleteLedger ? handleBatchDeleteTransactions : undefined}
+          canReverse={canReverseLedger}
+          canDelete={canDeleteLedger}
           onResetFilters={handleResetFilters}
           onSeedDemoData={canImportLedgerCsv ? handleSeedDemoData : undefined}
           isSeeding={isSeeding}

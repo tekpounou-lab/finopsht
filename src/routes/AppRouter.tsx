@@ -116,6 +116,9 @@ export default function AppRouter() {
         <Route path="/onboarding" element={<BusinessRoute><DashboardShell /></BusinessRoute>} />
         <Route path="/workspace" element={<BusinessRoute><DashboardShell /></BusinessRoute>} />
         <Route path="/dashboard" element={<BusinessRoute><DashboardShell /></BusinessRoute>} />
+        <Route path="/ledger" element={<BusinessRoute><DashboardShell initialTab="ledger" /></BusinessRoute>} />
+        <Route path="/accounting" element={<BusinessRoute><DashboardShell initialTab="ledger" /></BusinessRoute>} />
+        <Route path="/general-ledger" element={<BusinessRoute><DashboardShell initialTab="ledger" /></BusinessRoute>} />
         <Route path="/manager" element={<BusinessRoute><DashboardShell /></BusinessRoute>} />
         <Route path="/supervisor" element={<BusinessRoute><DashboardShell /></BusinessRoute>} />
         

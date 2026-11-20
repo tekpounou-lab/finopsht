@@ -41,6 +41,9 @@ export const TAB_ALIASES: Record<string, string> = {
   caisses: "cash",
   caisse: "cash",
   coffres: "cash",
+  accounting: "ledger",
+  "general-ledger": "ledger",
+  "grand-livre": "ledger",
 };
 
 export function normalizeTab(tab?: string): string {
@@ -68,34 +71,50 @@ export function useNavigation(currentRole: Role, initialTab?: string) {
     return Array.from(expanded);
   }, [currentRole]);
 
+  const requestedTabFromUrl = useMemo(() => {
+    if (initialTab) return initialTab;
+    if (typeof window !== "undefined" && window.location?.search) {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const tabParam = params.get("tab");
+        if (tabParam && tabParam.trim()) return tabParam.trim();
+      } catch {
+        // Ignore malformed URL search params
+      }
+    }
+    return undefined;
+  }, [initialTab]);
+
   const defaultTab = useMemo(() => {
     const fallback = normalizeTab(resolveDefaultTabForRole(currentRole) || "dashboard");
-    if (initialTab) {
-      const normalized = normalizeTab(initialTab);
-      if (authorizedTabs.includes(initialTab) || authorizedTabs.includes(normalized)) {
+    const targetTab = initialTab || requestedTabFromUrl;
+    if (targetTab) {
+      const normalized = normalizeTab(targetTab);
+      if (authorizedTabs.includes(targetTab) || authorizedTabs.includes(normalized)) {
         return normalized;
       }
       return fallback;
     }
     return fallback;
-  }, [currentRole, initialTab, authorizedTabs]);
+  }, [currentRole, initialTab, requestedTabFromUrl, authorizedTabs]);
 
   const [activeTab, setActiveTabState] = useState<string>(defaultTab);
   const [badgeCounts, setBadgeCounts] = useState<NavigationBadgeCounts>({});
 
-  // Sync if initialTab or currentRole changes with strict authorization gate
+  // Sync if initialTab, URL ?tab=, or currentRole changes with strict authorization gate
   useEffect(() => {
-    if (initialTab) {
-      const normalized = normalizeTab(initialTab);
-      if (authorizedTabs.includes(initialTab) || authorizedTabs.includes(normalized)) {
+    const targetTab = initialTab || requestedTabFromUrl;
+    if (targetTab) {
+      const normalized = normalizeTab(targetTab);
+      if (authorizedTabs.includes(targetTab) || authorizedTabs.includes(normalized)) {
         setActiveTabState(normalized);
       } else {
         const fallback = normalizeTab(resolveDefaultTabForRole(currentRole) || "dashboard");
-        console.warn(`[Navigation] Initial tab "${initialTab}" is not authorized for role "${currentRole}". Redirecting to fallback "${fallback}".`);
+        console.warn(`[Navigation] Initial tab "${targetTab}" is not authorized for role "${currentRole}". Redirecting to fallback "${fallback}".`);
         setActiveTabState(fallback);
       }
     }
-  }, [initialTab, currentRole, authorizedTabs]);
+  }, [initialTab, requestedTabFromUrl, currentRole, authorizedTabs]);
 
   const isTabAuthorized = useCallback(
     (tab: string) => {
@@ -115,6 +134,17 @@ export function useNavigation(currentRole: Role, initialTab?: string) {
       const normalized = normalizeTab(tab);
       if (isTabAuthorized(normalized) || isTabAuthorized(tab)) {
         setActiveTabState(normalized);
+        if (typeof window !== "undefined" && window.history?.replaceState) {
+          try {
+            const url = new URL(window.location.href);
+            if (url.pathname === "/dashboard" || url.pathname === "/workspace") {
+              url.searchParams.set("tab", normalized);
+              window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+            }
+          } catch {
+            // Safe no-op in non-browser/test environments
+          }
+        }
       } else {
         console.warn(`[Navigation] Tab "${tab}" (normalized: "${normalized}") is not authorized for role "${currentRole}". Allowed:`, authorizedTabs);
       }

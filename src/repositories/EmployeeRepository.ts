@@ -23,6 +23,7 @@ import {
   normalizeRole,
   validateRoleOperationalProfileCompatibility
 } from "../domains/rbac/operationalProfilePolicy";
+import { stripUndefinedFields } from "../domains/organization/services/orgResolutionShared";
 
 export class EmployeeRepository {
   /**
@@ -709,7 +710,12 @@ export class EmployeeRepository {
     contracts: any[],
     branchesToCreate: any[] = [],
     departmentsToCreate: any[] = []
-  ): Promise<{ committedBatches: number; totalBatches: number }> {
+  ): Promise<{
+    committedBatches: number;
+    totalBatches: number;
+    committedEmployeesCount?: number;
+    metaCommitted?: boolean;
+  }> {
     for (const emp of employees) {
       const empProfileInfo = extractRawOperationalProfileFromRecord(emp);
       if (empProfileInfo.conflict) {
@@ -726,11 +732,38 @@ export class EmployeeRepository {
       }
     }
 
-    if (employees.length > 0) {
-      const sampleBizId = employees[0].business_id || employees[0].businessId;
-      if (sampleBizId) {
-        await this.assertSeatLimitNotExceeded(sampleBizId, employees.length);
+    const expectedBizId = (
+      employees[0]?.business_id ||
+      employees[0]?.businessId ||
+      branchesToCreate[0]?.business_id ||
+      branchesToCreate[0]?.businessId ||
+      departmentsToCreate[0]?.business_id ||
+      departmentsToCreate[0]?.businessId ||
+      ""
+    ).trim();
+
+    const assertTenantConsistency = (entity: any, kind: string) => {
+      const b1 = typeof entity?.business_id === "string" ? entity.business_id.trim() : "";
+      const b2 = typeof entity?.businessId === "string" ? entity.businessId.trim() : "";
+      if (b1 && b2 && b1 !== b2) {
+        const err: any = new Error(`CONFLICTING_TENANT_FIELDS: Incohérence tenant sur ${kind} [${entity?.id || entity?.name || "inconnu"}].`);
+        err.code = "FORBIDDEN_TENANT_ACCESS";
+        throw err;
       }
+      const resolved = b1 || b2;
+      if (!resolved || (expectedBizId && resolved !== expectedBizId)) {
+        const err: any = new Error(`FORBIDDEN_TENANT_ACCESS: ${kind} [${entity?.id || entity?.name}] n'appartient pas à l'entreprise '${expectedBizId}'.`);
+        err.code = "FORBIDDEN_TENANT_ACCESS";
+        throw err;
+      }
+    };
+
+    employees.forEach((e) => assertTenantConsistency(e, "Employee"));
+    branchesToCreate.forEach((b) => assertTenantConsistency(b, "Branch"));
+    departmentsToCreate.forEach((d) => assertTenantConsistency(d, "Department"));
+
+    if (employees.length > 0 && expectedBizId) {
+      await this.assertSeatLimitNotExceeded(expectedBizId, employees.length);
     }
 
     const uniqueBranchIds = new Set<string>();
@@ -749,7 +782,23 @@ export class EmployeeRepository {
       if (dId) uniqueDeptIds.add(dId);
     });
 
-    // 1. Verify all Branches exist or are in creation batch
+    // 1. Verify all Branches exist (matching tenant & active) or are in creation batch (idempotent check)
+    const branchesActuallyToWrite: any[] = [];
+    for (const branch of branchesToCreate) {
+      const existing = await BranchRepository.getById(branch.id).catch(() => null);
+      if (existing) {
+        const existingBiz = existing.business_id || (existing as any).businessId;
+        if (existingBiz && existingBiz !== expectedBizId) {
+          const err: any = new Error(`FORBIDDEN_TENANT_ACCESS: La succursale [${branch.id}] appartient à une autre entreprise.`);
+          err.code = "FORBIDDEN_TENANT_ACCESS";
+          throw err;
+        }
+        // Idempotent retry: preserve canonical existing branch doc without overwriting
+        continue;
+      }
+      branchesActuallyToWrite.push(branch);
+    }
+
     for (const bId of uniqueBranchIds) {
       if (branchMap.has(bId)) {
         continue;
@@ -758,9 +807,30 @@ export class EmployeeRepository {
       if (!branch) {
         throw new Error(`Erreur d'intégrité : La succursale [${bId}] n'existe pas. Import annulé.`);
       }
+      const branchBiz = branch.business_id || (branch as any).businessId;
+      if (branchBiz && expectedBizId && branchBiz !== expectedBizId) {
+        const err: any = new Error(`FORBIDDEN_TENANT_ACCESS: La succursale [${bId}] n'appartient pas à cette entreprise.`);
+        err.code = "FORBIDDEN_TENANT_ACCESS";
+        throw err;
+      }
     }
 
-    // 2. Verify all Departments exist or are in creation batch
+    // 2. Verify all Departments exist (matching tenant) or are in creation batch (idempotent check)
+    const deptsActuallyToWrite: any[] = [];
+    for (const dept of departmentsToCreate) {
+      const existing = await DepartmentRepository.getById(dept.id).catch(() => null);
+      if (existing) {
+        const existingBiz = existing.business_id || (existing as any).businessId;
+        if (existingBiz && existingBiz !== expectedBizId) {
+          const err: any = new Error(`FORBIDDEN_TENANT_ACCESS: Le département [${dept.id}] appartient à une autre entreprise.`);
+          err.code = "FORBIDDEN_TENANT_ACCESS";
+          throw err;
+        }
+        continue;
+      }
+      deptsActuallyToWrite.push(dept);
+    }
+
     const fetchedDepts = new Map<string, any>();
     for (const dId of uniqueDeptIds) {
       if (deptMap.has(dId)) {
@@ -770,6 +840,12 @@ export class EmployeeRepository {
       const dept = await DepartmentRepository.getById(dId);
       if (!dept) {
         throw new Error(`Erreur d'intégrité : Le département [${dId}] n'existe pas. Import annulé.`);
+      }
+      const deptBiz = dept.business_id || (dept as any).businessId;
+      if (deptBiz && expectedBizId && deptBiz !== expectedBizId) {
+        const err: any = new Error(`FORBIDDEN_TENANT_ACCESS: Le département [${dId}] n'appartient pas à cette entreprise.`);
+        err.code = "FORBIDDEN_TENANT_ACCESS";
+        throw err;
       }
       fetchedDepts.set(dId, dept);
     }
@@ -781,17 +857,14 @@ export class EmployeeRepository {
          const dept = fetchedDepts.get(dId);
          if (dept) {
             let activeBudget = false;
-            // Check direct budget (if added to metadata or model or default 50000)
             if (dept.budget && dept.budget > 0) activeBudget = true;
             if (dept.metadata?.budget && dept.metadata.budget > 0) activeBudget = true;
             
-            // Check attached Cost Center
             if (dept.cost_center_id) {
                const cc = await CostCenterRepository.getById(dept.cost_center_id);
                if (cc && cc.budget > 0 && cc.status === "ACTIVE") activeBudget = true;
             }
 
-            // If system-generated import or newly created, allow default budget
             if (dept.is_system_generated || dept.source === "BULK_IMPORT" || dept.source === "SYSTEM_IMPORT" || dept.source === "GL_IMPORT") {
               activeBudget = true;
             }
@@ -804,33 +877,57 @@ export class EmployeeRepository {
     }
 
     const CHUNK_SIZE = 45;
+    const META_CHUNK_LIMIT = 200;
     const totalEmployees = employees.length;
-    const hasMetadata = branchesToCreate.length > 0 || departmentsToCreate.length > 0;
-    const totalBatches = Math.ceil(totalEmployees / CHUNK_SIZE) + (hasMetadata ? 1 : 0);
+    const metaEntities: Array<{ collectionName: "branches" | "departments"; docData: any }> = [
+      ...branchesActuallyToWrite.map((b) => ({
+        collectionName: "branches" as const,
+        docData: stripUndefinedFields({
+          ...b,
+          business_id: expectedBizId || b.business_id || b.businessId,
+          businessId: expectedBizId || b.businessId || b.business_id
+        })
+      })),
+      ...deptsActuallyToWrite.map((d) => ({
+        collectionName: "departments" as const,
+        docData: stripUndefinedFields({
+          ...d,
+          business_id: expectedBizId || d.business_id || d.businessId,
+          businessId: expectedBizId || d.businessId || d.business_id
+        })
+      }))
+    ];
+
+    const metaChunks = Math.ceil(metaEntities.length / META_CHUNK_LIMIT);
+    const employeeChunks = Math.ceil(totalEmployees / CHUNK_SIZE);
+    const totalBatches = metaChunks + employeeChunks;
     let committedBatches = 0;
+    let committedEmployeesCount = 0;
+    let metaCommitted = metaEntities.length === 0;
 
-    // Phase 1: Metadata setup batch (branches and departments)
-    if (hasMetadata) {
+    // Phase 1: Metadata setup batch(es) (branches and departments, max 200 ops per batch)
+    for (let m = 0; m < metaEntities.length; m += META_CHUNK_LIMIT) {
+      const metaSlice = metaEntities.slice(m, m + META_CHUNK_LIMIT);
       const metaBatch = writeBatch(db);
-      let metaOpCount = 0;
-
-      branchesToCreate.forEach(branch => {
-        metaBatch.set(doc(db, "branches", branch.id), branch);
-        metaOpCount++;
-      });
-
-      departmentsToCreate.forEach(dept => {
-        metaBatch.set(doc(db, "departments", dept.id), dept);
-        metaOpCount++;
-      });
-
-      if (metaOpCount > 400) {
-        throw new Error(`Erreur d'import : Trop d'entités organisationnelles (${metaOpCount}) pour un lot unique.`);
+      for (const item of metaSlice) {
+        metaBatch.set(doc(db, item.collectionName, item.docData.id), item.docData);
       }
 
-      await metaBatch.commit();
-      committedBatches++;
+      try {
+        await metaBatch.commit();
+        committedBatches++;
+      } catch (err: any) {
+        err.batchProgress = {
+          committedBatches,
+          totalBatches,
+          committedEmployeesCount,
+          metaCommitted: false,
+          failedBatchIndex: committedBatches + 1
+        };
+        throw err;
+      }
     }
+    metaCommitted = true;
 
     // Phase 2: Sequential Employee Chunks (max 45 employees = max 181 ops per batch <= 200 safety limit)
     for (let i = 0; i < totalEmployees; i += CHUNK_SIZE) {
@@ -843,33 +940,33 @@ export class EmployeeRepository {
       let batchOpCount = 0;
 
       empChunk.forEach(emp => {
-        const normalizedEmp = { ...emp };
+        const normalizedEmp = stripUndefinedFields({ ...emp });
         if (emp.branchId !== undefined) normalizedEmp.branch_id = emp.branchId;
         else if (emp.branch_id !== undefined) normalizedEmp.branchId = emp.branch_id;
         if (emp.departmentId !== undefined) normalizedEmp.department_id = emp.departmentId;
         else if (emp.department_id !== undefined) normalizedEmp.departmentId = emp.department_id;
         normalizedEmp.business_id = emp.business_id || emp.businessId;
+        normalizedEmp.businessId = normalizedEmp.business_id;
         normalizedEmp.updated_at = new Date().toISOString();
         batch.set(doc(db, "employees", emp.id), normalizedEmp);
         batchOpCount++;
       });
 
       invChunk.forEach(inv => {
-        batch.set(doc(db, "invitations", inv.id), inv);
+        batch.set(doc(db, "invitations", inv.id), stripUndefinedFields(inv));
         batchOpCount++;
       });
 
       badgeChunk.forEach(badge => {
-        batch.set(doc(db, "employee_badges", badge.id), badge);
+        batch.set(doc(db, "employee_badges", badge.id), stripUndefinedFields(badge));
         batchOpCount++;
       });
 
       contractChunk.forEach(contract => {
-        batch.set(doc(db, "employee_contracts", contract.id), contract);
+        batch.set(doc(db, "employee_contracts", contract.id), stripUndefinedFields(contract));
         batchOpCount++;
       });
 
-      // Forensic Log Entry per chunk batch
       const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
       const totalChunks = Math.ceil(totalEmployees / CHUNK_SIZE);
       const logId = "f_bulk_" + Date.now() + "_" + chunkIndex + "_" + Math.random().toString(36).substring(2, 7);
@@ -879,7 +976,7 @@ export class EmployeeRepository {
         userId: "sys_bulk",
         userName: "Moteur Import FinOps",
         userRole: "SYSTEM",
-        business_id: employees[0]?.business_id || employees[0]?.businessId,
+        business_id: expectedBizId,
         action: "HR_EMPLOYEE_ONBOARD_BULK_CHUNK",
         beforeState: "{}",
         afterState: JSON.stringify({ 
@@ -895,18 +992,37 @@ export class EmployeeRepository {
       });
       batchOpCount++;
 
-      // Strict safety invariant check
       if (batchOpCount > 200) {
-        throw new Error(`Batch safety limit exceeded: ${batchOpCount} operations > 200 limit (safety limit)`);
+        const limitErr: any = new Error(`Batch safety limit exceeded: ${batchOpCount} operations > 200 limit (safety limit)`);
+        limitErr.batchProgress = {
+          committedBatches,
+          totalBatches,
+          committedEmployeesCount,
+          metaCommitted,
+          failedBatchIndex: committedBatches + 1
+        };
+        throw limitErr;
       }
 
-      await batch.commit();
-      committedBatches++;
+      try {
+        await batch.commit();
+        committedBatches++;
+        committedEmployeesCount += empChunk.length;
+      } catch (err: any) {
+        err.batchProgress = {
+          committedBatches,
+          totalBatches,
+          committedEmployeesCount,
+          metaCommitted,
+          failedBatchIndex: committedBatches + 1
+        };
+        throw err;
+      }
     }
 
     EventBus.publish(EventBus.createEvent({
       correlationId: "bulk_import",
-      businessId: employees[0]?.business_id,
+      businessId: expectedBizId,
       module: "WORKFORCE",
       aggregate: "EMPLOYEE",
       type: "EmployeesBulkImported",
@@ -919,7 +1035,7 @@ export class EmployeeRepository {
       }
     }));
 
-    return { committedBatches, totalBatches };
+    return { committedBatches, totalBatches, committedEmployeesCount, metaCommitted };
   }
 }
 

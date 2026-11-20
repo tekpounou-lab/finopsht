@@ -22,6 +22,16 @@ import {
 } from "../../utils/caseConverter";
 import { IntegrityValidator } from "../../services/integrity/ForeignKeyIntegrityValidator";
 
+function stripUndefinedFields<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      clean[k] = v;
+    }
+  }
+  return clean as T;
+}
+
 export const BusinessRepository: IBusinessRepository = {
   async getById(id: string): Promise<Business | null> {
     const snap = await resilientGetDoc(doc(db, "businesses", id));
@@ -67,7 +77,7 @@ export const BranchRepository: IBranchRepository = {
       updated_at: new Date().toISOString()
     };
 
-    const ref = await addDoc(collection(db, "branches"), payload);
+    const ref = await addDoc(collection(db, "branches"), stripUndefinedFields(payload));
     
     EventBus.publish(EventBus.createEvent({
       correlationId: `create_branch_${ref.id}`,
@@ -79,6 +89,54 @@ export const BranchRepository: IBranchRepository = {
     }));
 
     return ref.id;
+  },
+  async createWithId(id: string, data: Omit<Branch, "id" | "created_at" | "updated_at">): Promise<string> {
+    const bizId = (data.business_id || (data as any).businessId || "").trim();
+    if (!bizId || bizId === "global") {
+      throw new Error("Multi-Tenancy Violation: business_id is required when creating a Branch.");
+    }
+    if (data.business_id && (data as any).businessId && data.business_id !== (data as any).businessId) {
+      throw new Error("CONFLICTING_TENANT_FIELDS: business_id and businessId mismatch on Branch.");
+    }
+    await IntegrityValidator.validateBusinessExists(bizId);
+
+    const existing = await this.getById(id);
+    if (existing) {
+      const existingBiz = existing.business_id || (existing as any).businessId;
+      if (existingBiz && existingBiz !== bizId) {
+        throw new Error(`FORBIDDEN_TENANT_ACCESS: Branch '${id}' belongs to another business.`);
+      }
+      return existing.id;
+    }
+
+    const now = new Date().toISOString();
+    const isActive = data.is_active !== undefined ? data.is_active : ((data as any).isActive !== undefined ? (data as any).isActive : true);
+    const payload = stripUndefinedFields({
+      ...data,
+      id,
+      business_id: bizId,
+      businessId: bizId,
+      status: data.status || "ACTIVE",
+      is_active: isActive,
+      isActive,
+      created_at: now,
+      updated_at: now,
+      createdAt: (data as any).createdAt || now,
+      updatedAt: (data as any).updatedAt || now
+    });
+
+    await setDoc(doc(db, "branches", id), payload);
+
+    EventBus.publish(EventBus.createEvent({
+      correlationId: `create_branch_${id}`,
+      businessId: bizId,
+      module: "ORGANIZATION",
+      aggregate: "BRANCH",
+      type: "BranchCreated",
+      payload
+    }));
+
+    return id;
   },
   async update(id: string, data: Partial<Branch>): Promise<void> {
     const updates = { ...data, updated_at: new Date().toISOString() };
@@ -152,7 +210,7 @@ export const DepartmentRepository: IDepartmentRepository = {
       updated_at: new Date().toISOString() 
     };
 
-    const ref = await addDoc(collection(db, "departments"), payload);
+    const ref = await addDoc(collection(db, "departments"), stripUndefinedFields(payload));
 
     EventBus.publish(EventBus.createEvent({
       correlationId: `create_dept_${ref.id}`,
@@ -164,6 +222,61 @@ export const DepartmentRepository: IDepartmentRepository = {
     }));
 
     return ref.id;
+  },
+  async createWithId(id: string, data: Omit<Department, "id" | "created_at" | "updated_at">): Promise<string> {
+    const bizId = (data.business_id || (data as any).businessId || "").trim();
+    if (!bizId) {
+      throw new Error("Multi-Tenancy Violation: business_id is required when creating a Department.");
+    }
+    if (data.business_id && (data as any).businessId && data.business_id !== (data as any).businessId) {
+      throw new Error("CONFLICTING_TENANT_FIELDS: business_id and businessId mismatch on Department.");
+    }
+
+    await IntegrityValidator.validateBusinessExists(bizId);
+    const branchId = data.branch_id || (data as any).branchId;
+    if (branchId) {
+      await IntegrityValidator.validateBranchExists(bizId, branchId);
+    }
+
+    const existing = await this.getById(id);
+    if (existing) {
+      const existingBiz = existing.business_id || (existing as any).businessId;
+      if (existingBiz && existingBiz !== bizId) {
+        throw new Error(`FORBIDDEN_TENANT_ACCESS: Department '${id}' belongs to another business.`);
+      }
+      return existing.id;
+    }
+
+    const now = new Date().toISOString();
+    const isActive = data.is_active !== undefined ? data.is_active : ((data as any).isActive !== undefined ? (data as any).isActive : true);
+    const payload = stripUndefinedFields({
+      ...data,
+      id,
+      business_id: bizId,
+      businessId: bizId,
+      branch_id: branchId,
+      branchId,
+      status: data.status || "ACTIVE",
+      is_active: isActive,
+      isActive,
+      created_at: now,
+      updated_at: now,
+      createdAt: (data as any).createdAt || now,
+      updatedAt: (data as any).updatedAt || now
+    });
+
+    await setDoc(doc(db, "departments", id), payload);
+
+    EventBus.publish(EventBus.createEvent({
+      correlationId: `create_dept_${id}`,
+      businessId: bizId,
+      module: "ORGANIZATION",
+      aggregate: "DEPARTMENT",
+      type: "DepartmentCreated",
+      payload: { id, name: data.name, code: data.code, businessId: bizId }
+    }));
+
+    return id;
   },
   async update(id: string, data: Partial<Department>): Promise<void> {
     const dept = await this.getById(id);

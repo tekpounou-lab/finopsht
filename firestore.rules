@@ -301,6 +301,7 @@ service cloud.firestore {
     function canCreateAuditLog(data) {
       return isAuthenticated() && (
         isSuperAdmin() ||
+        getBusinessId(data) == 'global' ||
         (getBusinessId(data) != 'none' && isTenantScoped(getBusinessId(data)))
       );
     }

@@ -35,6 +35,8 @@ export interface IdentitySnapshot {
   business: Business | null;
   businessSnapshot: BusinessSnapshot | null;
   pendingBusiness?: PendingBusiness | null;
+  subscription?: any | null;
+  featureFlags?: Record<string, boolean> | null;
   
   role: Role | "UNASSIGNED";
   requested_role?: Role | "UNASSIGNED";

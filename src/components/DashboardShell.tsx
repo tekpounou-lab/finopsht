@@ -213,7 +213,12 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               }
             >
             {(() => {
-              const hasPermissionInit = PermissionService.getRole() !== "UNASSIGNED";
+              const hasPermissionInit = Boolean(PermissionService.getRole()) && PermissionService.getRole() !== "UNASSIGNED";
+              const isLedgerSubscriptionBlocked =
+                hasPermissionInit &&
+                normalizedActiveTab === "ledger" &&
+                (!PermissionService.hasModule("ledger") || !PermissionService.hasModule("accounting"));
+
               const permissionGateDenied =
                 hasPermissionInit &&
                 ((normalizedActiveTab === "cash" && !PermissionService.can("cash.view")) ||
@@ -222,7 +227,24 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                   (normalizedActiveTab === "payroll" && !PermissionService.can("payroll.view") && !PermissionService.can("view_payroll")) ||
                   (normalizedActiveTab === "dashboard" && !PermissionService.can("bi.read") && !PermissionService.can("read_bi") && !PermissionService.can("view_dashboard")));
 
-              if ((normalizedActiveTab !== "onboarding" && !isTabAuthorized(normalizedActiveTab)) || permissionGateDenied) {
+              if (normalizedActiveTab !== "onboarding" && !isTabAuthorized(normalizedActiveTab)) {
+                return (
+                  <AccessDenied
+                    title="Module Non Autorisé"
+                    message={`Votre rôle (${currentRole}) ne dispose pas des autorisations requises pour accéder à ce module.`}
+                  />
+                );
+              }
+
+              if (permissionGateDenied) {
+                if (isLedgerSubscriptionBlocked) {
+                  return (
+                    <AccessDenied
+                      title="Module Grand Livre Verrouillé"
+                      message={`Le module Grand Livre n'est pas activé sur l'abonnement ou les fonctionnalités actuelles (${PermissionService.getSubscriptionPlan()}).`}
+                    />
+                  );
+                }
                 return (
                   <AccessDenied
                     title="Module Non Autorisé"
@@ -233,7 +255,14 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
               return null;
             })()}
 
-            {(normalizedActiveTab === "onboarding" || isTabAuthorized(normalizedActiveTab)) && (
+            {(normalizedActiveTab === "onboarding" || isTabAuthorized(normalizedActiveTab)) &&
+              !(Boolean(PermissionService.getRole()) &&
+                PermissionService.getRole() !== "UNASSIGNED" &&
+                ((normalizedActiveTab === "cash" && !PermissionService.can("cash.view")) ||
+                  (normalizedActiveTab === "ledger" && !PermissionService.can("accounting.view") && !PermissionService.can("ledger.view")) ||
+                  (normalizedActiveTab === "reports" && !PermissionService.can("view_reports")) ||
+                  (normalizedActiveTab === "payroll" && !PermissionService.can("payroll.view") && !PermissionService.can("view_payroll")) ||
+                  (normalizedActiveTab === "dashboard" && !PermissionService.can("bi.read") && !PermissionService.can("read_bi") && !PermissionService.can("view_dashboard")))) && (
             <>
             {(normalizedActiveTab === "platform" || normalizedActiveTab === "tenants" || normalizedActiveTab === "superadmin") && (
               currentRole === "SUPER_ADMIN" ? (

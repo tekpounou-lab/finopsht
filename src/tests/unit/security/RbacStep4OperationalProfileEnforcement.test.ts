@@ -385,11 +385,11 @@ describe("RBAC STEP 4 — Server-Side Operational Profile Enforcement & Step 3 M
       const plan = BulkEmployeeImportService.resolveImportPlan(
         "biz_alpha",
         [
-          { name: "Bad Teller", email: "bad1@test.com", role: "JUNIOR_TELLER", operational_profile: "vendeur" },
-          { name: "Bad Emp", email: "bad2@test.com", role: "EMPLOYEE", operational_profile: "teller" },
-          { name: "Missing Prof", email: "bad3@test.com", role: "EMPLOYEE" },
-          { name: "Valid Teller", email: "good1@test.com", role: "JUNIOR_TELLER", operational_profile: "teller" },
-          { name: "Legacy Barber", email: "good2@test.com", role: "EMPLOYEE", operational_profile: "barber" }
+          { name: "Bad Teller", email: "bad1@test.com", role: "JUNIOR_TELLER", operational_profile: "vendeur", branch_name: "Bureau Central", department_name: "Caisse" },
+          { name: "Bad Emp", email: "bad2@test.com", role: "EMPLOYEE", operational_profile: "teller", branch_name: "Bureau Central", department_name: "Caisse" },
+          { name: "Missing Prof", email: "bad3@test.com", role: "EMPLOYEE", branch_name: "Bureau Central", department_name: "Ventes" },
+          { name: "Valid Teller", email: "good1@test.com", role: "JUNIOR_TELLER", operational_profile: "teller", branch_name: "Bureau Central", department_name: "Caisse" },
+          { name: "Legacy Barber", email: "good2@test.com", role: "EMPLOYEE", operational_profile: "barber", branch_name: "Bureau Central", department_name: "Barber Shop" }
         ],
         [],
         [],

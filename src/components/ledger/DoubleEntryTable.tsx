@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useTranslate } from '../../i18n';
 import { BatchReversalModal } from './modals/BatchReversalModal';
 import { BatchDeleteModal } from './modals/BatchDeleteModal';
+import { PermissionService } from '../../services/PermissionService';
 
 export const formatTxDate = (dateVal: any, formatStr: string = 'dd/MM/yyyy HH:mm'): string => {
   if (!dateVal) return '-';
@@ -43,6 +44,8 @@ interface DoubleEntryTableProps {
   selectedIds?: string[];
   onToggleSelection?: (id: string) => void;
   onToggleSelectAll?: () => void;
+  canReverse?: boolean;
+  canDelete?: boolean;
 }
 
 export default function DoubleEntryTable({ 
@@ -60,7 +63,9 @@ export default function DoubleEntryTable({
   onOpenCreate,
   selectedIds = [],
   onToggleSelection,
-  onToggleSelectAll
+  onToggleSelectAll,
+  canReverse,
+  canDelete
 }: DoubleEntryTableProps) {
   const tText = useTranslate();
   const cleanDescription = (desc: string) => {
@@ -193,8 +198,20 @@ export default function DoubleEntryTable({
   // Get objects for currently selected transactions
   const selectedTxs = txWithBalances.filter(tx => selectedTxIds.includes(tx.id));
 
-  const isReversalAuthorized = ['OWNER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN'].includes((currentRole || '').toUpperCase());
-  const isDeleteAuthorized = ['OWNER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN'].includes((currentRole || '').toUpperCase());
+  const hasPermInit = Boolean(PermissionService.getRole()) && PermissionService.getRole() !== 'UNASSIGNED';
+  const normalizedRole = (currentRole || '').toUpperCase();
+  const isReversalAuthorized =
+    canReverse !== undefined
+      ? Boolean(canReverse)
+      : hasPermInit
+        ? (PermissionService.can('journal.reverse') || PermissionService.can('ledger.reverse'))
+        : normalizedRole === 'SUPER_ADMIN';
+  const isDeleteAuthorized =
+    canDelete !== undefined
+      ? Boolean(canDelete)
+      : hasPermInit
+        ? PermissionService.can('journal.delete')
+        : normalizedRole === 'SUPER_ADMIN';
 
   const totalDebitsToReverse = selectedTxs
     .filter(tx => ['EXPENSE', 'ADVANCE', 'PAYROLL', 'REFUND', 'PENALTY'].includes(tx.type))

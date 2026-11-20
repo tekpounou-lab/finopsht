@@ -17,6 +17,7 @@ interface LedgerHeaderProps {
   canWriteLedger?: boolean;
   canImportCsv?: boolean;
   canUseAiCfo?: boolean;
+  canExportReports?: boolean;
 }
 
 export default function LedgerHeader({
@@ -33,7 +34,8 @@ export default function LedgerHeader({
   onOpenDataIntegrity,
   canWriteLedger = true,
   canImportCsv = true,
-  canUseAiCfo = true
+  canUseAiCfo = true,
+  canExportReports = true
 }: LedgerHeaderProps) {
   const tText = useTranslate();
 
@@ -119,12 +121,14 @@ export default function LedgerHeader({
             <Sparkles className="w-3.5 h-3.5" /> {tText("AI CFO Analysis")}
           </button>
         )}
-        <button 
-          onClick={onGenerateReport}
-          className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] uppercase tracking-wider px-3 py-2 rounded flex items-center gap-1.5 transition"
-        >
-          <FileSpreadsheet className="w-3.5 h-3.5" /> {tText("Export Excel")}
-        </button>
+        {canExportReports && (
+          <button 
+            onClick={onGenerateReport}
+            className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] uppercase tracking-wider px-3 py-2 rounded flex items-center gap-1.5 transition"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" /> {tText("Export Excel")}
+          </button>
+        )}
       </div>
     </div>
   );

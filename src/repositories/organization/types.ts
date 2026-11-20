@@ -9,6 +9,7 @@ export interface IBranchRepository {
   listByBusiness(businessId: string): Promise<Branch[]>;
   getById(id: string): Promise<Branch | null>;
   create(data: Omit<Branch, "id" | "created_at" | "updated_at">): Promise<string>;
+  createWithId?(id: string, data: Omit<Branch, "id" | "created_at" | "updated_at">): Promise<string>;
   update(id: string, data: Partial<Branch>): Promise<void>;
   delete(id: string): Promise<void>;
 }
@@ -17,6 +18,7 @@ export interface IDepartmentRepository {
   listByBusiness(businessId: string): Promise<Department[]>;
   getById(id: string): Promise<Department | null>;
   create(data: Omit<Department, "id" | "created_at" | "updated_at">): Promise<string>;
+  createWithId?(id: string, data: Omit<Department, "id" | "created_at" | "updated_at">): Promise<string>;
   update(id: string, data: Partial<Department>): Promise<void>;
   delete(id: string): Promise<void>;
   deleteWithIntegrityCheck(businessId: string, departmentId: string, options?: { force?: boolean; reassignToDeptId?: string; actorId?: string }): Promise<{ success: boolean; reassignedCount: number; message: string }>;

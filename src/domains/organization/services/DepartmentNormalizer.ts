@@ -2,6 +2,7 @@ export class DepartmentNormalizer {
   public static normalize(name: string): string {
     if (!name) return "";
     return name
+      .normalize("NFKC")
       .trim()
       .toLowerCase()
       .normalize("NFD")

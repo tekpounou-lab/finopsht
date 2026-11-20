@@ -7,6 +7,8 @@ export interface ResolvedTenantContext {
   business: Business | null;
   businessSnapshot: BusinessSnapshot | null;
   settings: any | null;
+  subscription?: any | null;
+  featureFlags?: Record<string, boolean> | null;
   permissions: string[];
   durationMs: number;
   error?: string;
@@ -57,6 +59,8 @@ export class OptimizedResolver {
               business: parsed.business,
               businessSnapshot: parsed.businessSnapshot || null,
               settings: parsed.settings || null,
+              subscription: parsed.subscription || null,
+              featureFlags: parsed.featureFlags || null,
               permissions: parsed.permissions || [],
               durationMs: 0
             };
@@ -86,6 +90,8 @@ export class OptimizedResolver {
           business: context.business,
           businessSnapshot: context.businessSnapshot,
           settings: context.settings,
+          subscription: context.subscription || null,
+          featureFlags: context.featureFlags || null,
           permissions: context.permissions,
           timestamp: Date.now()
         });
@@ -270,6 +276,47 @@ export class OptimizedResolver {
     return OptimizedResolver.resolveTenantParallel(businessId, role, correlationId);
   }
 
+  private static extractTenantEntitlements(
+    business: Business | null,
+    businessSnapshot: BusinessSnapshot | null,
+    settings: any | null,
+    subDocData: any | null,
+    modernFeaturesData: any | null,
+    legacyFeaturesData: any | null
+  ): { subscription: any | null; featureFlags: Record<string, boolean> | null } {
+    const bizAny = business as any;
+    const snapAny = businessSnapshot as any;
+
+    const subscription =
+      (subDocData && (subDocData.plan || subDocData.status) ? subDocData : null) ||
+      (bizAny?.subscription && (bizAny.subscription.plan || bizAny.subscription.status) ? bizAny.subscription : null) ||
+      (bizAny?.plan ? { plan: bizAny.plan, status: bizAny?.subscription?.status || "ACTIVE" } : null) ||
+      (snapAny?.subscription && (snapAny.subscription.plan || snapAny.subscription.status) ? snapAny.subscription : null) ||
+      (settings?.subscription && (settings.subscription.plan || settings.subscription.status) ? settings.subscription : null) ||
+      null;
+
+    const mergedFeatures: Record<string, boolean> = {};
+    const applyBooleanMap = (src: any) => {
+      if (!src || typeof src !== "object") return;
+      for (const [k, v] of Object.entries(src)) {
+        if (typeof v === "boolean") {
+          mergedFeatures[k] = v;
+        }
+      }
+    };
+
+    applyBooleanMap(settings?.featureFlags);
+    applyBooleanMap(snapAny?.data?.settings?.featureFlags);
+    applyBooleanMap(snapAny?.featureFlags);
+    applyBooleanMap(legacyFeaturesData);
+    applyBooleanMap(modernFeaturesData?.features || modernFeaturesData);
+
+    return {
+      subscription,
+      featureFlags: Object.keys(mergedFeatures).length > 0 ? mergedFeatures : null
+    };
+  }
+
   /**
    * Fast retrieval from Firestore IndexedDB persistent offline cache.
    */
@@ -283,17 +330,35 @@ export class OptimizedResolver {
       const bizRef = doc(db, "businesses", businessId);
       const snapRef = doc(db, "business_snapshots", businessId);
       const settingsRef = doc(db, "business_settings", businessId);
+      const subRef = doc(db, "subscriptions", businessId);
+      const modernFeatRef = doc(db, "businesses", businessId, "settings", "features");
+      const legacyFeatRef = doc(db, "features", businessId);
 
-      const [bizSnap, snapshotSnap, settingsSnap] = await Promise.all([
+      const [bizSnap, snapshotSnap, settingsSnap, subSnap, modernFeatSnap, legacyFeatSnap] = await Promise.all([
         getDocFromCache(bizRef).catch(() => null),
         getDocFromCache(snapRef).catch(() => null),
-        getDocFromCache(settingsRef).catch(() => null)
+        getDocFromCache(settingsRef).catch(() => null),
+        getDocFromCache(subRef).catch(() => null),
+        getDocFromCache(modernFeatRef).catch(() => null),
+        getDocFromCache(legacyFeatRef).catch(() => null)
       ]);
 
       if (bizSnap && bizSnap.exists()) {
         const business = { id: bizSnap.id, ...bizSnap.data() } as Business;
         const businessSnapshot = snapshotSnap && snapshotSnap.exists() ? ({ id: snapshotSnap.id, ...snapshotSnap.data() } as BusinessSnapshot) : null;
         const settings = settingsSnap && settingsSnap.exists() ? settingsSnap.data() : null;
+        const subData = subSnap && subSnap.exists() ? subSnap.data() : null;
+        const modernFeatData = modernFeatSnap && modernFeatSnap.exists() ? modernFeatSnap.data() : null;
+        const legacyFeatData = legacyFeatSnap && legacyFeatSnap.exists() ? legacyFeatSnap.data() : null;
+
+        const { subscription, featureFlags } = OptimizedResolver.extractTenantEntitlements(
+          business,
+          businessSnapshot,
+          settings,
+          subData,
+          modernFeatData,
+          legacyFeatData
+        );
 
         let permissions: string[] = businessSnapshot?.permissions || [];
         if ((!permissions || permissions.length === 0) && settings && settings[role.toUpperCase()]) {
@@ -304,6 +369,8 @@ export class OptimizedResolver {
           business,
           businessSnapshot,
           settings,
+          subscription,
+          featureFlags,
           permissions,
           durationMs: Math.round(performance.now() - startTime)
         };
@@ -328,6 +395,8 @@ export class OptimizedResolver {
         business: null,
         businessSnapshot: null,
         settings: null,
+        subscription: null,
+        featureFlags: null,
         permissions: [],
         durationMs: Math.round(performance.now() - startTime),
         error: "UNAUTHENTICATED"
@@ -337,16 +406,34 @@ export class OptimizedResolver {
       const bizRef = doc(db, "businesses", businessId);
       const snapRef = doc(db, "business_snapshots", businessId);
       const settingsRef = doc(db, "business_settings", businessId);
+      const subRef = doc(db, "subscriptions", businessId);
+      const modernFeatRef = doc(db, "businesses", businessId, "settings", "features");
+      const legacyFeatRef = doc(db, "features", businessId);
 
-      const [bizDoc, snapshotDoc, settingsDoc] = await Promise.all([
+      const [bizDoc, snapshotDoc, settingsDoc, subDoc, modernFeatDoc, legacyFeatDoc] = await Promise.all([
         resilientGetDoc(bizRef, { maxRetries: 2, timeoutMs: 2500, throwOnNetworkFailure: false }),
         resilientGetDoc(snapRef, { maxRetries: 2, timeoutMs: 2500, throwOnNetworkFailure: false }),
-        resilientGetDoc(settingsRef, { maxRetries: 2, timeoutMs: 2500, throwOnNetworkFailure: false })
+        resilientGetDoc(settingsRef, { maxRetries: 2, timeoutMs: 2500, throwOnNetworkFailure: false }),
+        resilientGetDoc(subRef, { maxRetries: 1, timeoutMs: 2500, throwOnNetworkFailure: false }).catch(() => null),
+        resilientGetDoc(modernFeatRef, { maxRetries: 1, timeoutMs: 2500, throwOnNetworkFailure: false }).catch(() => null),
+        resilientGetDoc(legacyFeatRef, { maxRetries: 1, timeoutMs: 2500, throwOnNetworkFailure: false }).catch(() => null)
       ]);
 
       const business = bizDoc && bizDoc.exists() ? ({ id: bizDoc.id, ...bizDoc.data() } as Business) : null;
       const businessSnapshot = snapshotDoc && snapshotDoc.exists() ? ({ id: snapshotDoc.id, ...snapshotDoc.data() } as BusinessSnapshot) : null;
       const settings = settingsDoc && settingsDoc.exists() ? settingsDoc.data() : null;
+      const subData = subDoc && subDoc.exists() ? subDoc.data() : null;
+      const modernFeatData = modernFeatDoc && modernFeatDoc.exists() ? modernFeatDoc.data() : null;
+      const legacyFeatData = legacyFeatDoc && legacyFeatDoc.exists() ? legacyFeatDoc.data() : null;
+
+      const { subscription, featureFlags } = OptimizedResolver.extractTenantEntitlements(
+        business,
+        businessSnapshot,
+        settings,
+        subData,
+        modernFeatData,
+        legacyFeatData
+      );
 
       let permissions: string[] = businessSnapshot?.permissions || [];
       if ((!permissions || permissions.length === 0) && settings && settings[role.toUpperCase()]) {
@@ -359,6 +446,8 @@ export class OptimizedResolver {
         business,
         businessSnapshot,
         settings,
+        subscription,
+        featureFlags,
         permissions,
         durationMs
       };
@@ -377,6 +466,8 @@ export class OptimizedResolver {
         business: null,
         businessSnapshot: null,
         settings: null,
+        subscription: null,
+        featureFlags: null,
         permissions: [],
         durationMs,
         error: error?.message || "FETCH_FAILED",
