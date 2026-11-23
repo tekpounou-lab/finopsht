@@ -2597,18 +2597,46 @@ Schema:
   });
 
   // Serve static files and integrate Vite middlewares (when not running inside Vercel serverless functions or Vitest)
+  let activeVitePromise: Promise<any> | null = null;
   if (!process.env.VERCEL && !process.env.VITEST && process.env.NODE_ENV !== "test") {
     if (process.env.NODE_ENV !== "production") {
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({
-        server: { 
-          middlewareMode: true,
-          hmr: false,
-          ws: false
-        },
-        appType: "spa",
+      let resolvedVite: any = null;
+      const disableWatch = process.env.DISABLE_HMR === "true" || Boolean(process.env.K_SERVICE);
+      activeVitePromise = import("vite")
+        .then(({ createServer: createViteServer }) =>
+          createViteServer({
+            server: {
+              middlewareMode: true,
+              hmr: false,
+              ws: false,
+              ...(disableWatch ? { watch: null } : {})
+            },
+            appType: "spa",
+          })
+        )
+        .then((vite) => {
+          resolvedVite = vite;
+          return vite;
+        });
+
+      activeVitePromise.catch((err) => {
+        console.error("❌ Vite middleware initialization failed:", err);
       });
-      app.use(vite.middlewares);
+
+      app.use(async (req, res, next) => {
+        try {
+          const vite = resolvedVite || (await activeVitePromise);
+          return vite.middlewares(req, res, next);
+        } catch (err) {
+          if (!res.headersSent) {
+            return res.status(503).json({
+              error: "DEV_SERVER_INITIALIZING",
+              message: "Frontend dev middleware failed to initialize."
+            });
+          }
+          return next(err);
+        }
+      });
     } else {
       const distPath = path.join(process.cwd(), "dist");
       app.use(express.static(distPath));
@@ -2618,6 +2646,7 @@ Schema:
     }
   }
 
+  (app as any)._vitePromise = activeVitePromise;
   return app;
 }
 
@@ -2631,7 +2660,7 @@ export async function startServer() {
       : envPort || defaultAppPort;
   const app = await createApp();
 
-  const listenWithRetry = (retriesLeft = 5, delayMs = 1000): Promise<void> => {
+  const listenWithRetry = (retriesLeft = 10, delayMs = 500): Promise<void> => {
     return new Promise<void>((resolve, reject) => {
       const server = app.listen(PORT, "0.0.0.0", () => {
         console.log(`🚀 FinOps Server running on http://0.0.0.0:${PORT}`);
@@ -2655,12 +2684,32 @@ export async function startServer() {
         }
       });
 
-      process.on("SIGTERM", () => {
-        server.close(() => process.exit(0));
-      });
-      process.on("SIGINT", () => {
-        server.close(() => process.exit(0));
-      });
+      let shuttingDown = false;
+      const shutdown = () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+
+        const forceTimer = setTimeout(() => {
+          server.closeAllConnections?.();
+          process.exit(0);
+        }, 1000);
+        forceTimer.unref();
+
+        server.closeIdleConnections?.();
+        const vitePromise: Promise<any> | null = (app as any)._vitePromise || null;
+        Promise.resolve(vitePromise)
+          .then((vite) => vite?.close?.())
+          .catch(() => undefined)
+          .finally(() => {
+            server.close(() => {
+              clearTimeout(forceTimer);
+              process.exit(0);
+            });
+          });
+      };
+
+      process.once("SIGTERM", shutdown);
+      process.once("SIGINT", shutdown);
     });
   };
 
