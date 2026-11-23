@@ -174,6 +174,11 @@ class EnterpriseRuntimeEngine {
     }));
   }
 
+  public setBusinessContext(businessId: string | null, options?: { isSuperAdmin?: boolean }): void {
+    JobEngine.setBusinessContext(businessId, options);
+    MonitoringService.setBusinessContext(businessId, options);
+  }
+
   public getState(): RuntimeState {
     return { ...this.state };
   }
@@ -181,6 +186,10 @@ class EnterpriseRuntimeEngine {
   public async shutdown(): Promise<void> {
     this.transitionTo("SHUTDOWN");
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    this.heartbeatInterval = null;
+    this.setBusinessContext(null);
+    JobEngine.shutdown();
+    MonitoringService.stop();
     console.log("[RuntimeEngine] Enterprise Runtime Shutdown.");
   }
 }

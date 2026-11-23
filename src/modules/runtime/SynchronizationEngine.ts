@@ -232,18 +232,22 @@ class EnterpriseSynchronizationEngine {
   }
 
   private registerHealthHeartbeat(): void {
+    if (this.healthInterval) {
+      clearInterval(this.healthInterval);
+      this.healthInterval = null;
+    }
+
     const interval = setInterval(async () => {
-      if (!auth.currentUser || !this.currentBusinessId) return;
-      const { serverTimestamp } = await import("../../lib/firebase");
+      if (!auth.currentUser || !this.currentBusinessId || this.currentBusinessId === "none") return;
       await AdminRepository.reportHealth({
         name: "SYNC_ENGINE",
-        businessId: this.currentBusinessId || undefined,
+        businessId: this.currentBusinessId,
         status: "GREEN",
-        lastUpdate: serverTimestamp(),
+        lastUpdate: new Date().toISOString(),
         metrics: { listeners: this.activeListeners.size }
       });
     }, 60000);
-    
+
     this.healthInterval = interval;
   }
 

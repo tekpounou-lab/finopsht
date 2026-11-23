@@ -1,5 +1,5 @@
 import { Firestore, Transaction, FieldValue } from "firebase-admin/firestore";
-import { PayrollService } from "../../../services/payroll/PayrollService";
+import { sealPayrollCycleWithAdmin } from "../../../services/payroll/PayrollAdminSealer";
 import { ApprovalHashingService } from "./ApprovalHashingService";
 import { ApprovalInstance, PayrollSourceSnapshot } from "./types";
 import { PayrollCycle, PayrollRecord } from "../../../types";
@@ -189,9 +189,8 @@ export class ApprovalExecutionWorker {
         throw new Error("PAYLOAD_MUTATION_DETECTED: Fingerprint mismatch during execution attempt.");
       }
 
-      // 5. Delegate to Authoritative Payroll Execution Path (Frozen Certified Core Protected)
-      // PayrollService.sealPayrollCycle -> PayrollRepository.sealCycleAtomic
-      await PayrollService.sealPayrollCycle(cycle, records, businessId, {
+      // 5. Delegate to Authoritative Server Payroll Sealing Path (Admin SDK only)
+      await sealPayrollCycleWithAdmin(cycle, records, businessId, {
         currentUser: {
           id: `worker_${workerId}`,
           name: "Trusted Approval Execution Worker",

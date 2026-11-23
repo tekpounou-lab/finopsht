@@ -236,8 +236,7 @@ export class InvitationService {
     let acceptedRole = "";
     let acceptedMembershipId = "";
 
-    try {
-      await db.runTransaction(async (transaction) => {
+    await db.runTransaction(async (transaction) => {
         const inviteRef = db.doc(`invitations/${inviteId}`);
         const userRef = db.doc(`users/${user.uid}`);
 
@@ -440,127 +439,6 @@ export class InvitationService {
           severity: "success"
         });
       });
-    } catch (adminErr: any) {
-      const errMsg = String(adminErr?.message || adminErr);
-      if (errMsg.includes("PERMISSION_DENIED") || adminErr?.code === 7 || errMsg.includes("Missing or insufficient permissions")) {
-        console.warn("[InvitationService] Admin SDK transaction hit PERMISSION_DENIED. Executing client-side fallback transaction...");
-        const { db: clientDb } = await import("../../lib/firebase");
-        const { runTransaction: clientRunTransaction, doc: clientDoc, serverTimestamp: clientServerTimestamp } = await import("firebase/firestore");
-        
-        await clientRunTransaction(clientDb, async (clientTx) => {
-          const inviteRef = clientDoc(clientDb, `invitations/${inviteId}`);
-          const userRef = clientDoc(clientDb, `users/${user.uid}`);
-          
-          const [inviteSnap] = await Promise.all([
-            clientTx.get(inviteRef)
-          ]);
-
-          if (!inviteSnap.exists()) throw new Error("INVITATION_NOT_FOUND");
-          const inviteData = inviteSnap.data()!;
-          if (inviteData.status !== "PENDING") throw new Error("INVITATION_NOT_PENDING");
-
-          const invitedEmail = String(inviteData.email || inviteData.normalizedEmail || "").toLowerCase().trim();
-          if (!invitedEmail || invitedEmail !== normalizedUserEmail) {
-            throw new Error("INVITATION_RECIPIENT_MISMATCH");
-          }
-
-          const targetRole = String(inviteData.role || "EMPLOYEE").trim().toUpperCase();
-          const businessId = String(inviteData.business_id || inviteData.businessId || "").trim();
-          if (!businessId) throw new Error("INVALID_INVITATION_TENANT");
-
-          acceptedBusinessId = businessId;
-          acceptedRole = targetRole;
-
-          const fallbackProfileInfo = extractRawOperationalProfileFromRecord(inviteData);
-          if (fallbackProfileInfo.conflict) {
-            throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS");
-          }
-          const fallbackCompat = validateRoleOperationalProfileCompatibility(
-            targetRole,
-            fallbackProfileInfo.rawValue,
-            {
-              allowLegacyBarberAlias: true,
-              allowMissingForExecutiveOrOversight: true
-            }
-          );
-          if (!fallbackCompat.valid) {
-            throw new Error(fallbackCompat.code);
-          }
-
-          const fallbackProfileFields = fallbackCompat.normalizedProfile
-            ? {
-                operational_profile: fallbackCompat.normalizedProfile,
-                operationalProfile: fallbackCompat.normalizedProfile
-              }
-            : {};
-
-          const employeeId = `emp_${Math.random().toString(36).substring(2, 11)}`;
-          const membershipId = `${businessId}_${user.uid}`;
-          acceptedMembershipId = membershipId;
-
-          clientTx.update(inviteRef, {
-            status: "ACCEPTED",
-            acceptedAt: new Date().toISOString(),
-            acceptedByUid: user.uid,
-            updatedAt: clientServerTimestamp()
-          });
-
-          const employeeData = {
-            id: employeeId,
-            business_id: businessId,
-            businessId: businessId,
-            uid: user.uid,
-            firebase_uid: user.uid,
-            email: normalizedUserEmail,
-            normalizedEmail: normalizedUserEmail,
-            name: user.name,
-            role: targetRole,
-            ...fallbackProfileFields,
-            status: "ACTIVE",
-            isActive: true,
-            createdAt: clientServerTimestamp(),
-            updatedAt: clientServerTimestamp()
-          };
-          clientTx.set(clientDoc(clientDb, `employees/${employeeId}`), employeeData);
-
-          const membershipData = {
-            id: membershipId,
-            uid: user.uid,
-            business_id: businessId,
-            businessId: businessId,
-            role: targetRole,
-            ...fallbackProfileFields,
-            status: "ACTIVE",
-            joinedAt: clientServerTimestamp(),
-            updatedAt: clientServerTimestamp(),
-            employee_id: employeeId,
-            customClaimsSynced: false
-          };
-          clientTx.set(clientDoc(clientDb, `memberships/${membershipId}`), membershipData);
-
-          clientTx.set(
-            userRef,
-            {
-              business_id: businessId,
-              businessId: businessId,
-              employee_id: employeeId,
-              employeeId: employeeId,
-              role: targetRole,
-              ...fallbackProfileFields,
-              account_status: "ACTIVE",
-              accountStatus: "ACTIVE",
-              onboarding_completed: true,
-              onboardingComplete: true,
-              customClaimsSynced: false,
-              updatedAt: clientServerTimestamp()
-            },
-            { merge: true }
-          );
-        });
-      } else {
-        throw adminErr;
-      }
-    }
 
     // 6. Update Custom Claims with sync state recording
     try {

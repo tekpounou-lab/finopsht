@@ -398,6 +398,7 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
   // Enterprise Application State Machine integration on Lifecycle
   useEffect(() => {
     if (authLoading || identityLoading || !auth.currentUser) {
+      RuntimeEngine.setBusinessContext(null);
       setState('INITIALIZING');
       setBusiness(null);
       setBranches([]);
@@ -432,7 +433,9 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
     }
 
     const business_id = identity?.business?.id;
+    const isSuperAdmin = String(identity?.role || "").toUpperCase() === "SUPER_ADMIN";
     if (!business_id) {
+      RuntimeEngine.setBusinessContext(null, { isSuperAdmin });
       setBusiness(null);
       setBranches([]);
       setDepartments([]);
@@ -451,7 +454,12 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
       identity?.business?.status === "ACTIVE" || 
       identity?.business?.status === "APPROVED" || 
       identity?.onboardingStatus === "COMPLETED" ||
-      identity?.role === "SUPER_ADMIN";
+      isSuperAdmin;
+
+    RuntimeEngine.setBusinessContext(
+      isAuthReady && isBizActive && business_id !== "none" ? business_id : null,
+      { isSuperAdmin }
+    );
     
     if (business_id && business_id !== "none" && state !== "INITIALIZING" && state !== "LOADING" && isAuthReady && isBizActive) {
       SynchronizationEngine.startSync(business_id);
@@ -554,8 +562,9 @@ export const BusinessProvider = ({ children }: { children: React.ReactNode }) =>
     return () => {
       unsubSync();
       SynchronizationEngine.stopSync();
+      RuntimeEngine.setBusinessContext(null);
     };
-  }, [identity?.business?.id, authLoading, identityLoading]);
+  }, [identity?.business?.id, identity?.role, authLoading, identityLoading]);
 
   // Backward-compatible Loading state flag
   const isLoading = state === 'INITIALIZING' || state === 'LOADING';

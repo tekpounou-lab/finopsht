@@ -8,8 +8,6 @@ import {
 import { JournalEntry } from "../AccountingEngine";
 import { CHART_OF_ACCOUNTS } from "../../constants/finance";
 import { FinopsException } from "../../modules/runtime/FinopsException";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../../lib/firebase";
 
 export interface CreateProposalParams {
   businessId: string;

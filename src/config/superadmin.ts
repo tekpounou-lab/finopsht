@@ -3,7 +3,12 @@
  * Single Source of Truth for Super Admin Email and authorization checks.
  */
 
-export const DEFAULT_SUPER_ADMIN_EMAIL = "tekpounou@gmail.com";
+import {
+  DEFAULT_SUPER_ADMIN_EMAIL,
+  SUPER_ADMIN_EMAILS,
+} from "./superadminConstants";
+
+export { DEFAULT_SUPER_ADMIN_EMAIL, SUPER_ADMIN_EMAILS };
 
 /**
  * Resolves the Super Admin email address from environment variables or default constant.
@@ -16,15 +21,6 @@ export const getSuperAdminEmail = (): string => {
 };
 
 export const SUPER_ADMIN_EMAIL = getSuperAdminEmail();
-
-/**
- * List of authorized Super Admin emails
- */
-export const SUPER_ADMIN_EMAILS: ReadonlySet<string> = new Set([
-  DEFAULT_SUPER_ADMIN_EMAIL,
-  "admin@finops.com",
-  "superadmin@finops.com",
-]);
 
 /**
  * Helper to check if a given email belongs to a Super Admin platform supervisor.

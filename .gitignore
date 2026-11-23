@@ -14,3 +14,4 @@ scratch/
 .aistudio/
 *.debug.log
 phase3_cleanup_report_*.json
+api/_server.cjs*

@@ -17,17 +17,22 @@ import {
 import { AdminRepository } from "../../modules/admin/AdminRepository";
 import { ModuleHealth, EnterpriseIncident } from "../../modules/admin/types";
 import { RuntimeEngine } from "../../modules/runtime/RuntimeEngine";
+import { useIdentity } from "../../modules/identity/IdentityContext";
 
 export const ControlTower: React.FC = () => {
+  const { identity } = useIdentity();
   const [healthData, setHealthData] = useState<ModuleHealth[]>([]);
   const [incidents, setIncidents] = useState<EnterpriseIncident[]>([]);
   const [runtimeState, setRuntimeState] = useState(RuntimeEngine.getState());
 
   useEffect(() => {
-    const unsubHealth = AdminRepository.subscribeToHealth(setHealthData);
+    const unsubHealth = AdminRepository.subscribeToHealth(setHealthData, {
+      businessId: identity?.business?.id || null,
+      isSuperAdmin: String(identity?.role || "").toUpperCase() === "SUPER_ADMIN"
+    });
     // In a real app, we'd also subscribe to incidents
     return () => unsubHealth();
-  }, []);
+  }, [identity?.business?.id, identity?.role]);
 
   const getStatusColor = (status: string) => {
     switch (status) {

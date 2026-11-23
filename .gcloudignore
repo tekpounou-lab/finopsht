@@ -6,6 +6,7 @@
 .cache/
 node_modules/
 dist/
+api/_server.cjs*
 coverage/
 scratch/
 .aistudio/

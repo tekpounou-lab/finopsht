@@ -1,0 +1,141 @@
+collection_path,rules_line,split_get_list,uses_resource_data_in_read,null_safe_guard_present,missing_doc_path_rule,legacy_read_preserved_reason,verification_evidence
+/audit_logs/{logId},339,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B2)
+/forensic_logs/{id},346,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B2)
+/enterprise_audit_logs/{id},353,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B2)
+/security_audit_logs/{id},360,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B2)
+/ai_cfo_audit_logs/{logId},367,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B2)
+/attendance_justifications/{id},374,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/users/{userId},382,NO (read),YES,YES,YES (userId == request.auth.uid),Self-lookup by UID preserves allow read without resource.data eval when missing,PROVEN_STATIC + PROVEN_UNIT (Vuln01SelfPrivilegeEscalation)
+/user_preferences/{userId},460,NO (read),NO,N/A (path UID only),YES (userId == request.auth.uid),Path-derived rule only,PROVEN_STATIC
+/pending_businesses/{id},468,YES,YES,YES,YES (id == 'pbiz_' + request.auth.uid),N/A,PROVEN_STATIC
+/businesses/{businessId},502,NO (read),YES,YES,YES (isTenantScoped(businessId)),Path-derived tenant check short-circuits before resource != null fallback,PROVEN_STATIC
+/businesses/{businessId}/settings/features,585,NO (read),NO,N/A (path bizId only),YES (isTenantScoped(businessId)),Path-derived rule only,PROVEN_STATIC
+/businesses/{businessId}/settings/{settingId},592,NO (read),NO (read),N/A (path bizId only),YES (isTenantScoped(businessId)),Path-derived read rule only,PROVEN_STATIC
+/business_settings/{businessId},624,NO (read),NO (read),N/A (path bizId only),YES (isTenantScoped(businessId)),Path-derived read rule only,PROVEN_STATIC
+/branches/{branchId},638,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/departments/{deptId},647,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/business_units/{unitId},656,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/cost_centers/{costCenterId},665,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/organizations/{orgId},674,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/roles/{roleId},683,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employees/{empId},692,YES,YES,YES,YES (empId == uid or emp_ + uid),N/A,PROVEN_STATIC + PROVEN_UNIT (P0ApiFirestoreRemediation)
+/invitations/{inviteId},744,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/exchange_rates/{rateId},772,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/daily_exchange_rate_grids/{gridId},786,YES,YES,YES,YES (isOwnTenantDailyRateGridId(gridId)),N/A,PROVEN_STATIC + PROVEN_UNIT (P0ApiFirestoreRemediation)
+/cash_tills/{id},805,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/cash_registers/{id},821,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/branch_safes/{id},837,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/till_sessions/{id},848,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/internal_transfers/{id},864,NO (read),YES,NO,NO,Preserved exact allow read string required by PhaseD4B24RulesHardening & P2RbacCashSecurityRemediation static tests,PROVEN_STATIC + PROVEN_UNIT (PhaseD4B24RulesHardening)
+/teller_transactions/{id},870,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/customer_transfers/{id},876,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payout_idempotency_locks/{id},882,NO (read),YES,NO,NO,Preserved exact allow read string required by PhaseD4B24RulesHardening static tests,PROVEN_STATIC + PROVEN_UNIT (PhaseD4B24RulesHardening)
+/idempotency_keys/{id},887,NO (read),YES,NO,NO,Preserved exact allow read string required by PhaseD4B24RulesHardening static tests,PROVEN_STATIC + PROVEN_UNIT (PhaseD4B24RulesHardening)
+/cash_transfers/{id},892,NO (read),YES,NO,NO,Preserved exact allow read string required by PhaseD4B24RulesHardening static tests,PROVEN_STATIC + PROVEN_UNIT (PhaseD4B24RulesHardening)
+/cash_settlements/{id},898,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/cash_movements/{id},909,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/cash_closures/{id},925,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/training_modules/{id},942,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/training_courses/{id},948,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/training_enrollments/{id},954,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/support_tickets/{id},960,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/bulk_imports/{id},966,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/bulk_employee_imports/{id},974,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/chart_of_accounts/{id},983,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (OwnerGeneralLedgerAccess)
+/transaction_types/{id},994,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/transactions/{txId},1005,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/ledger_transactions/{txId},1013,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (OwnerGeneralLedgerAccess)
+/financial_snapshots/{id},1021,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/bank_reconciliations/{id},1029,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/analytics_processed_transactions/{id},1037,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/GL/{id},1045,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/events/{eventId},1054,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/workflow_definitions/{id},1062,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B5)
+/approval_policies/{id},1076,YES,YES,YES,NO,N/A,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B5)
+/approval_instances/{id},1090,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/active_approval_locks/{id},1097,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/workflow_instances/{id},1104,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/integrity_reports/{reportId},1112,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/analytics_snapshots/{snapId},1120,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/branch_department_links/{linkId},1128,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_contracts/{contractId},1135,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/shifts/{shiftId},1156,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/schedules/{scheduleId},1164,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/shift_templates/{templateId},1171,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/schedule_templates/{templateId},1178,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_assignments/{id},1185,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/shift_change_requests/{id},1192,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_badges/{badgeId},1201,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_adjustment_requests/{requestId},1221,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_logs/{recordId},1229,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_records/{id},1237,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_sessions/{id},1244,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_events/{id},1251,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance/{id},1258,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_status/{id},1265,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/compensation_models/{id},1273,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_policies/{id},1279,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/role_profiles/{id},1285,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_records/{recordId},1292,NO (read),YES,NO,NO,Preserved exact allow read string required by FirestoreRulesModGov8 B4 static test,PROVEN_STATIC + PROVEN_UNIT (FirestoreRulesModGov8 B4)
+/payrolls/{payrollId},1310,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_cycles/{cycleId},1329,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_cycle_archives/{id},1369,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_receivables/{receivableId},1381,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payslips/{id},1400,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_sales_summary/{id},1424,YES,YES,YES,YES (isPathPrefixedWithActorTenant(id, '') && isTenantScoped(getActorTenantId())),N/A,PROVEN_STATIC
+/leaves/{leaveId},1436,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/leave_requests/{leaveId},1444,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/leave_balances/{balanceId},1452,YES,YES,YES,YES (isPathPrefixedWithActorTenant(balanceId, '') && isTenantScoped(getActorTenantId())),N/A,PROVEN_STATIC
+/leave_policies/{policyId},1462,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/leave_approvals/{approvalId},1468,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/overtime_requests/{requestId},1475,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/absence_events/{eventId},1484,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/subscription_plans/{planId},1493,NO (read),NO,N/A (authenticated read),N/A,No resource.data access,PROVEN_STATIC
+/subscriptions/{businessId},1498,NO (read),NO,N/A (path bizId only),YES (isTenantScoped(businessId)),Path-derived rule only,PROVEN_STATIC
+/features/{businessId},1503,NO (read),NO,N/A (path bizId only),YES (isTenantScoped(businessId)),Path-derived rule only,PROVEN_STATIC
+/salary_structures/{id},1509,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_profiles/{id},1515,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_inputs_snapshots/{id},1522,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_input_snapshots/{id},1528,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_deductions/{id},1534,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payroll_bonuses/{id},1540,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/salary_advances/{id},1546,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/attendance_rules/{businessId},1552,NO (read),NO,N/A (path bizId only),YES (isTenantScoped(businessId)),Path-derived rule only,PROVEN_STATIC
+/onboarding_requests/{reqId},1558,YES,YES,YES,YES (reqId == 'req_' + request.auth.uid),N/A,PROVEN_STATIC
+/enterprise_health_snapshots/{id},1569,YES,YES,YES,YES (isPathPrefixedWithActorTenant(id, '') && isTenantScoped(getActorTenantId())),N/A (Denies unscoped JOB_ENGINE & MONITORING_SERVICE for non-SuperAdmins),PROVEN_STATIC + PROVEN_UNIT (P0ApiFirestoreRemediation)
+/orchestration_queue/{id},1606,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/event_outbox/{id},1612,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/enterprise_incidents/{id},1619,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/workflow_dead_letters/{id},1625,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/memberships/{id},1633,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/business_snapshots/{id},1639,NO (read),YES,YES,YES (id == getUserBusinessId() or isTenantScoped(id)),Path-derived checks evaluate before resource != null fallback,PROVEN_STATIC
+/documents/{docId},1649,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_department_history/{id},1658,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_departments/{id},1664,YES,YES,YES,YES (isPathPrefixedWithActorTenant(id, '') && isTenantScoped(getActorTenantId())),N/A,PROVEN_STATIC
+/employee_department_activity/{id},1674,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/commission_plans/{id},1680,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_performance_snapshots/{id},1686,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/department_performance_snapshots/{id},1692,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/branch_performance_snapshots/{id},1698,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/business_performance_snapshots/{id},1704,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/employee_attendance_snapshots/{id},1710,YES,YES,YES,YES (isPathPrefixedWithActorTenant(id, '') && isTenantScoped(getActorTenantId())),N/A,PROVEN_STATIC
+/system_config/{id},1721,NO (read),NO,N/A (authenticated read),N/A,No resource.data access,PROVEN_STATIC
+/security_alerts/{id},1726,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/business_archives/{id},1733,NO (read),NO,N/A (isSuperAdmin() only),N/A,SuperAdmin only,PROVEN_STATIC
+/notifications/{notificationId},1739,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/erp_events/{id},1772,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/leads/{leadId},1779,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/proformas/{proformaId},1808,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/invoices/{invoiceId},1839,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/invoice_templates/{templateId},1870,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/sales_requests/{reqId},1879,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/analytics_anomalies/{id},1889,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/department_aliases/{id},1895,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/workforce_performance_snapshots/{id},1901,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/workforce_productivity_benchmarks/{id},1908,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/labor_economics_metrics/{id},1914,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/shift_labor_efficiency/{id},1920,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/metric_snapshots/{id},1926,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/financial_metrics/{id},1932,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/payment_methods/{methodId},1938,YES,YES,YES,NO,N/A,PROVEN_STATIC
+/{document=**},1962,NO (catch-all deny),NO,N/A (deny all),N/A,Fail-closed catch-all deny,PROVEN_STATIC

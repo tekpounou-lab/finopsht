@@ -4,10 +4,16 @@ export type HealthStatus = "GREEN" | "YELLOW" | "RED";
 export interface ModuleHealth {
   name: string;
   businessId?: string;
+  isPlatformMonitor?: boolean;
   status: HealthStatus;
   lastUpdate: any;
   message?: string;
   metrics?: Record<string, any>;
+}
+
+export interface HealthScopeOptions {
+  businessId?: string | null;
+  isSuperAdmin?: boolean;
 }
 
 export interface RuntimeMetrics {

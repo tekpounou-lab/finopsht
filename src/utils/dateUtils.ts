@@ -1,87 +1,100 @@
 /**
- * FINOPS ERP - Legacy Date Utility Re-exports & Helpers
- * Delegated to SSOT Module: src/utils/dateNormalization.ts
+ * Canonical Haiti (America/Port-au-Prince) business date helpers.
+ * Pure runtime-agnostic utility safe for both browser and Node.js server bundles.
  */
 
-export {
-  toDateOnly,
-  areDatesEqual,
-  isDateInRange,
-  normalizeDateFilter,
-  extractTxDateString,
-  normalizeDateStr,
-  normalizeCsvDate
-} from "./dateNormalization";
+import { normalizeCsvDate } from "./dateNormalization";
+
+export { normalizeCsvDate };
 
 const FRENCH_MONTHS = [
-  "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
-  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"
+  "Janvier",
+  "Février",
+  "Mars",
+  "Avril",
+  "Mai",
+  "Juin",
+  "Juillet",
+  "Août",
+  "Septembre",
+  "Octobre",
+  "Novembre",
+  "Décembre"
 ];
 
 /**
- * Standardized automatic generator for payroll cycle names based on period dates.
+ * Returns YYYY-MM-DD in America/Port-au-Prince business timezone.
  */
-export function formatPayrollCycleName(startDate?: string, endDate?: string, cycleType?: string): string {
-  if (!startDate && !endDate) {
-    return "Nouveau Cycle de Paie";
+export function getHaitiDateString(d: Date = new Date()): string {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Port-au-Prince",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+    return formatter.format(d);
+  } catch {
+    return d.toISOString().split("T")[0];
+  }
+}
+
+/**
+ * Returns YYYY-MM-DD string for the day prior to targetDateStr in America/Port-au-Prince.
+ */
+export function getPreviousHaitiDateString(targetDateStr?: string): string {
+  const baseDateStr = targetDateStr || getHaitiDateString();
+  const dt = new Date(baseDateStr + "T12:00:00.000Z");
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return getHaitiDateString(dt);
+}
+
+function formatDmy(iso: string): string {
+  const m = String(iso || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso || "";
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+/**
+ * Formats standardized payroll cycle names from YYYY-MM-DD start and end dates.
+ */
+export function formatPayrollCycleName(
+  startDate: string,
+  endDate: string,
+  cycleType?: string
+): string {
+  const sMatch = String(startDate || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const eMatch = String(endDate || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!sMatch || !eMatch) {
+    return startDate && endDate ? `Cycle du ${startDate} au ${endDate}` : "";
   }
 
-  const formatDateFr = (isoStr: string): string => {
-    if (!isoStr) return "";
-    const cleanStr = isoStr.split("T")[0];
-    const parts = cleanStr.split("-");
-    if (parts.length === 3) {
-      return `${parts[2].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[0]}`;
-    }
-    return isoStr;
-  };
+  const sYear = Number(sMatch[1]);
+  const sMonth = Number(sMatch[2]);
+  const sDay = Number(sMatch[3]);
+  const eYear = Number(eMatch[1]);
+  const eMonth = Number(eMatch[2]);
+  const eDay = Number(eMatch[3]);
 
-  if (startDate && !endDate) {
-    const sParts = startDate.split("T")[0].split("-");
-    if (sParts.length === 3) {
-      const year = sParts[0];
-      const mIdx = parseInt(sParts[1], 10) - 1;
-      const monthName = FRENCH_MONTHS[mIdx] || sParts[1];
-      return `Paie de ${monthName} ${year}`;
-    }
-    return `Cycle à partir du ${formatDateFr(startDate)}`;
+  const lastDayOfMonth = new Date(Date.UTC(sYear, sMonth, 0)).getUTCDate();
+  const sameMonthYear = sYear === eYear && sMonth === eMonth;
+
+  if (sameMonthYear && sDay === 1 && eDay === lastDayOfMonth) {
+    const monthName = FRENCH_MONTHS[sMonth - 1] || String(sMonth);
+    return `Paie de ${monthName} ${sYear}`;
   }
 
-  if (startDate && endDate) {
-    const sClean = startDate.split("T")[0];
-    const eClean = endDate.split("T")[0];
-    const sParts = sClean.split("-");
-    const eParts = eClean.split("-");
-
-    if (sParts.length === 3 && eParts.length === 3) {
-      const sYear = parseInt(sParts[0], 10);
-      const sMonth = parseInt(sParts[1], 10);
-      const sDay = parseInt(sParts[2], 10);
-
-      const eYear = parseInt(eParts[0], 10);
-      const eMonth = parseInt(eParts[1], 10);
-      const eDay = parseInt(eParts[2], 10);
-
-      const monthName = FRENCH_MONTHS[sMonth - 1] || sParts[1];
-
-      const lastDayOfMonth = new Date(sYear, sMonth, 0).getDate();
-      if (sDay === 1 && eDay >= (lastDayOfMonth - 1) && sMonth === eMonth && sYear === eYear) {
-        return `Paie de ${monthName} ${sYear}`;
-      }
-
-      if (sDay === 1 && eDay === 15 && sMonth === eMonth && sYear === eYear) {
-        return `Quinzaine du ${formatDateFr(startDate)} au ${formatDateFr(endDate)}`;
-      }
-
-      if (sDay === 16 && sMonth === eMonth && sYear === eYear) {
-        return `Quinzaine du ${formatDateFr(startDate)} au ${formatDateFr(endDate)}`;
-      }
-
-      return `Quinzaine du ${formatDateFr(startDate)} au ${formatDateFr(endDate)}`;
-    }
-
-    return `Cycle du ${formatDateFr(startDate)} au ${formatDateFr(endDate)}`;
+  if (
+    cycleType === "QUINZAINE" ||
+    (sameMonthYear && ((sDay === 1 && eDay === 15) || (sDay === 16 && eDay === lastDayOfMonth)))
+  ) {
+    return `Quinzaine du ${formatDmy(startDate)} au ${formatDmy(endDate)}`;
   }
 
-  return "Nouveau Cycle de Paie";
+  if (cycleType === "MONTHLY") {
+    const monthName = FRENCH_MONTHS[sMonth - 1] || String(sMonth);
+    return `Paie de ${monthName} ${sYear}`;
+  }
+
+  return `Cycle du ${formatDmy(startDate)} au ${formatDmy(endDate)}`;
 }

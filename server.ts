@@ -9,7 +9,7 @@ import { AICFOPermissionEngine } from "./src/services/cfo/AICFOPermissionEngine"
 import { AICFODataMasking } from "./src/services/cfo/AICFODataMasking";
 import { AICFOSecureContextBuilder } from "./src/services/cfo/AICFOSecureContextBuilder";
 import { AICFOResponseFilter } from "./src/services/cfo/AICFOResponseFilter";
-import { AICFOAuditService } from "./src/services/cfo/AICFOAuditService";
+import { AICFOServerAuditService as AICFOAuditService } from "./src/services/cfo/AICFOServerAuditService";
 import { IdentityUserContext } from "./src/services/cfo/AICFOGovernanceTypes";
 import { FinancialRatioEngine } from "./src/services/cfo/FinancialRatioEngine";
 import { getAdminApp, getAdminFirestore } from "./src/lib/firebaseAdmin";
@@ -18,7 +18,7 @@ import {
   ServerTillProvisioningService,
   TILL_PROVISIONING_AUTHORIZED_ROLES
 } from "./src/services/business/ServerTillProvisioningService";
-import { TillSessionEngine } from "./src/domains/cash/services/TillSessionEngine";
+import { TillSessionAdminService } from "./src/domains/cash/services/TillSessionAdminService";
 import { BusinessActivationService } from "./src/services/business/BusinessActivationService";
 import { InvitationService, ASSIGNABLE_INVITE_ROLES, INVITE_SENDER_ROLES } from "./src/services/business/InvitationService";
 import {
@@ -36,7 +36,6 @@ import {
   AuthenticatedRequest,
   isInvalidTenantId
 } from "./src/modules/workflow/approval/serverAuthMiddleware";
-import firebaseConfig from "./firebase-applet-config.json";
 
 import crypto from "crypto";
 import { LogSanitizer } from "./src/services/security/LogSanitizer";
@@ -551,9 +550,11 @@ export async function createApp() {
         });
       }
 
-      const { SnapshotRetentionManager } = await import("./src/services/business/snapshot/SnapshotRetentionManager");
+      const { purgeExpiredSnapshotsWithAdmin } = await import(
+        "./src/services/business/snapshot/SnapshotRetentionAdminService"
+      );
       const adminFirestore = getAdminFirestore();
-      const result = await SnapshotRetentionManager.getInstance().purgeExpiredSnapshots(
+      const result = await purgeExpiredSnapshotsWithAdmin(
         businessId,
         {
           retentionDays,
@@ -607,9 +608,11 @@ export async function createApp() {
         });
       }
 
-      const { DataCleanupAndSSOTService } = await import("./src/services/business/DataCleanupAndSSOTService");
+      const { runSSOTCleanupMigrationWithAdmin } = await import(
+        "./src/services/business/SSOTCleanupAdminService"
+      );
       const adminFirestore = getAdminFirestore();
-      const summary = await DataCleanupAndSSOTService.getInstance().runSSOTCleanupMigration(
+      const summary = await runSSOTCleanupMigrationWithAdmin(
         businessId,
         adminFirestore
       );
@@ -684,9 +687,11 @@ export async function createApp() {
         });
       }
 
-      const { IntegrityValidator } = await import("./src/services/integrity/ForeignKeyIntegrityValidator");
+      const { validateEntityForeignKeysWithAdmin } = await import(
+        "./src/services/integrity/ForeignKeyIntegrityAdminValidator"
+      );
       const adminFirestore = getAdminFirestore();
-      await IntegrityValidator.validateEntityForeignKeys(businessId, entityData, entityType, adminFirestore);
+      await validateEntityForeignKeysWithAdmin(businessId, entityData, entityType, adminFirestore);
 
       return res.json({
         valid: true,
@@ -931,7 +936,7 @@ export async function createApp() {
         (typeof body.operatorId !== "string" ||
           (body.operatorId.trim() !== "" && body.operatorId.trim() !== req.user.uid))
       ) {
-        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+        await TillSessionAdminService.recordAdminForensicEvent(getAdminFirestore(), {
           businessId,
           actorId: req.user.uid,
           actorName: req.user.email || req.user.uid,
@@ -953,7 +958,7 @@ export async function createApp() {
 
       const closeProfileInfo = extractRawOperationalProfileFromRecord(body);
       if (closeProfileInfo.conflict) {
-        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+        await TillSessionAdminService.recordAdminForensicEvent(getAdminFirestore(), {
           businessId,
           actorId: req.user.uid,
           actorName: req.user.email || req.user.uid,
@@ -980,7 +985,7 @@ export async function createApp() {
           : req.user.email || req.user.uid;
 
       const adminDb = getAdminFirestore();
-      const result = await TillSessionEngine.closeSessionWithAdmin(adminDb, {
+      const result = await TillSessionAdminService.closeSessionWithAdmin(adminDb, {
         sessionId: body.sessionId,
         tillId: body.tillId,
         businessId,
@@ -1016,7 +1021,7 @@ export async function createApp() {
           code === "UNAUTHORIZED_SESSION_OPERATOR" ||
           code === "IDENTITY_SPOOFING_DETECTED")
       ) {
-        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+        await TillSessionAdminService.recordAdminForensicEvent(getAdminFirestore(), {
           businessId: resolvedBusinessId || req.user.business_id || "UNKNOWN",
           actorId: req.user.uid,
           actorName: req.user.email || req.user.uid,
@@ -1150,7 +1155,7 @@ export async function createApp() {
         (typeof body.approverId !== "string" ||
           (body.approverId.trim() !== "" && body.approverId.trim() !== req.user.uid))
       ) {
-        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+        await TillSessionAdminService.recordAdminForensicEvent(getAdminFirestore(), {
           businessId,
           actorId: req.user.uid,
           actorName: req.user.email || req.user.uid,
@@ -1172,7 +1177,7 @@ export async function createApp() {
 
       const reopenProfileInfo = extractRawOperationalProfileFromRecord(body);
       if (reopenProfileInfo.conflict) {
-        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+        await TillSessionAdminService.recordAdminForensicEvent(getAdminFirestore(), {
           businessId,
           actorId: req.user.uid,
           actorName: req.user.email || req.user.uid,
@@ -1193,7 +1198,7 @@ export async function createApp() {
       }
 
       const adminDb = getAdminFirestore();
-      const result = await TillSessionEngine.reopenSessionWithAdmin(adminDb, {
+      const result = await TillSessionAdminService.reopenSessionWithAdmin(adminDb, {
         tillId: body.tillId,
         previousSessionId: body.previousSessionId,
         businessId,
@@ -1219,7 +1224,7 @@ export async function createApp() {
       serverError("[Cash Session Reopen API] Error:", error);
       const code = error?.code || "";
       if (req.user && code) {
-        await TillSessionEngine.recordAdminForensicEvent(getAdminFirestore(), {
+        await TillSessionAdminService.recordAdminForensicEvent(getAdminFirestore(), {
           businessId: resolvedBusinessId || req.user.business_id || "UNKNOWN",
           actorId: req.user.uid,
           actorName: req.user.email || req.user.uid,
@@ -1725,7 +1730,7 @@ export async function createApp() {
   // API endpoint: Get Subscription Plans (Admin SDK with read-only defaults fallback)
   app.get("/api/subscriptions/plans", async (req, res) => {
     try {
-      const { DEFAULT_SUBSCRIPTION_PLANS } = await import("./src/repositories/SubscriptionPlanRepository");
+      const { DEFAULT_SUBSCRIPTION_PLANS } = await import("./src/constants/subscriptionPlans");
       let plans = [...DEFAULT_SUBSCRIPTION_PLANS].sort((a, b) => a.priceUsd - b.priceUsd);
 
       try {
@@ -1771,9 +1776,11 @@ export async function createApp() {
         });
       }
 
-      const { EmployeeReceivableRepository } = await import("./src/repositories/EmployeeReceivableRepository");
+      const { listReceivablesByBusinessWithAdmin } = await import(
+        "./src/services/payroll/EmployeeReceivableAdminService"
+      );
       const adminFirestore = getAdminFirestore();
-      const receivables = await EmployeeReceivableRepository.listReceivablesByBusiness(businessId, adminFirestore);
+      const receivables = await listReceivablesByBusinessWithAdmin(businessId, adminFirestore);
       res.json({ success: true, receivables });
     } catch (error: any) {
       console.error("[Receivables API] Fetch error:", error);

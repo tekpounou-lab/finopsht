@@ -1,6 +1,6 @@
 
 import { EventBus } from "./EventBus";
-import { AdminRepository } from "../admin/AdminRepository";
+import { AdminRepository, isValidHealthTenantId } from "../admin/AdminRepository";
 import { durableQueueService } from "../../services/queue/DurableQueueService";
 
 export interface Job {
@@ -18,7 +18,10 @@ class EnterpriseJobEngine {
   private static instance: EnterpriseJobEngine;
   private queue: Job[] = [];
   private isProcessing: boolean = false;
-  private interval: any;
+  private interval: any = null;
+  private healthInterval: any = null;
+  private currentBusinessId: string | null = null;
+  private isPlatformMode: boolean = false;
 
   private constructor() {}
 
@@ -77,21 +80,40 @@ class EnterpriseJobEngine {
     return job.id;
   }
 
+  public setBusinessId(businessId: string | null): void {
+    this.currentBusinessId = isValidHealthTenantId(businessId) ? String(businessId).trim() : null;
+  }
+
+  public setBusinessContext(businessId: string | null, options?: { isSuperAdmin?: boolean }): void {
+    this.currentBusinessId = isValidHealthTenantId(businessId) ? String(businessId).trim() : null;
+    this.isPlatformMode = Boolean(options?.isSuperAdmin);
+  }
+
+  public async reportCurrentHealth(): Promise<void> {
+    if (!this.currentBusinessId && !this.isPlatformMode) {
+      return;
+    }
+    await AdminRepository.reportHealth({
+      name: "JOB_ENGINE",
+      businessId: this.currentBusinessId || undefined,
+      isPlatformMonitor: this.isPlatformMode && !this.currentBusinessId,
+      status: "GREEN",
+      lastUpdate: new Date().toISOString(),
+      metrics: { queueSize: this.queue.length, isProcessing: this.isProcessing }
+    });
+  }
+
   public start(): void {
     if (this.interval) return;
-    
+
     this.interval = setInterval(() => this.process(), 1000);
     console.log("[JobEngine] Service Started.");
 
     // Health Reporting
-    setInterval(async () => {
+    if (this.healthInterval) clearInterval(this.healthInterval);
+    this.healthInterval = setInterval(async () => {
       try {
-        await AdminRepository.reportHealth({
-          name: "JOB_ENGINE",
-          status: "GREEN",
-          lastUpdate: new Date().toISOString(),
-          metrics: { queueSize: this.queue.length, isProcessing: this.isProcessing }
-        });
+        await this.reportCurrentHealth();
       } catch {
         // Prevent background interval error from bubbling up
       }
@@ -180,6 +202,10 @@ class EnterpriseJobEngine {
   public shutdown(): void {
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
+    if (this.healthInterval) clearInterval(this.healthInterval);
+    this.healthInterval = null;
+    this.currentBusinessId = null;
+    this.isPlatformMode = false;
     console.log("[JobEngine] Service Stopped.");
   }
 

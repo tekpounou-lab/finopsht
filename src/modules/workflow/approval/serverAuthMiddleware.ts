@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { getAdminAuth, getAdminFirestore } from "../../../lib/firebaseAdmin";
-import { isSuperAdminEmail } from "../../../config/superadmin";
+import { isServerSuperAdminEmail as isSuperAdminEmail } from "../../../config/superadminConstants";
 
 export interface AuthenticatedUser {
   uid: string;

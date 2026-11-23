@@ -14,7 +14,30 @@ import {
 } from "firebase/firestore";
 import { ForensicLogRepository } from "./ForensicLogRepository";
 import { EventBus } from "../modules/runtime/EventBus";
-import { resilientGetDocs, clearResilientCache } from "../utils/resilientFirestore";
+import { resilientGetDocs, clearResilientCache, isNetworkError } from "../utils/resilientFirestore";
+import { getHaitiDateString, getPreviousHaitiDateString } from "../utils/dateUtils";
+
+export { getHaitiDateString, getPreviousHaitiDateString };
+
+function getCurrencyErrorText(err: any): string {
+  return `${err?.code || ""} ${err?.message || ""}`.toLowerCase();
+}
+
+function isFirestorePermissionOrAuthError(err: any): boolean {
+  const msg = getCurrencyErrorText(err);
+  return (
+    msg.includes("permission-denied") ||
+    msg.includes("permission_denied") ||
+    msg.includes("missing or insufficient permissions") ||
+    msg.includes("unauthenticated") ||
+    msg.includes("auth/")
+  );
+}
+
+function isFirestoreNotFoundError(err: any): boolean {
+  const msg = getCurrencyErrorText(err);
+  return msg.includes("not-found") || msg.includes("not_found");
+}
 
 export type RateTypology = 
   | "ACHAT_CLIENT" 
@@ -84,32 +107,7 @@ export const DEFAULT_RATE_GRID_VALUES: DailyExchangeRateGrid["rates"] = {
   LOCAL: 1.0000
 };
 
-/**
- * Returns YYYY-MM-DD in America/Port-au-Prince business timezone.
- */
-export function getHaitiDateString(d: Date = new Date()): string {
-  try {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Port-au-Prince",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    });
-    return formatter.format(d);
-  } catch {
-    return d.toISOString().split("T")[0];
-  }
-}
 
-/**
- * Returns YYYY-MM-DD string for the day prior to targetDateStr in America/Port-au-Prince.
- */
-export function getPreviousHaitiDateString(targetDateStr?: string): string {
-  const baseDateStr = targetDateStr || getHaitiDateString();
-  const dt = new Date(baseDateStr + "T12:00:00.000Z");
-  dt.setUTCDate(dt.getUTCDate() - 1);
-  return getHaitiDateString(dt);
-}
 
 /**
  * CurrencyRateRepository handles querying historical and active exchange rates.
@@ -209,31 +207,41 @@ export class CurrencyRateRepository {
     const todayStr = targetDateStr || getHaitiDateString();
     const docId = `fx_grid_${businessId}_${todayStr}`;
 
-    try {
-      if (db) {
-        // 1. Check exact match for targetDate
-        const ref = doc(db, this.GRIDS_COLLECTION, docId);
-        const snap = await getDoc(ref);
-
-        if (snap.exists()) {
-          const data = snap.data() as DailyExchangeRateGrid;
-          const mergedRates = {
-            ...DEFAULT_RATE_GRID_VALUES,
-            ...data.rates,
-            LOCAL: 1.0000
-          };
-          const hybrid = this.buildRatesHybrid(mergedRates, data.is_inherited, data.source);
-          return {
-            ...data,
-            id: docId,
-            company_id: businessId,
-            effective_date: todayStr,
-            grid: data,
-            rates: hybrid
-          };
+    if (db) {
+      // 1. Check exact match for targetDate in its own isolated try/catch
+      const ref = doc(db, this.GRIDS_COLLECTION, docId);
+      let snap: any = null;
+      try {
+        snap = await getDoc(ref);
+      } catch (todayErr: any) {
+        if (isFirestorePermissionOrAuthError(todayErr) || isNetworkError(todayErr)) {
+          throw todayErr;
         }
+        if (!isFirestoreNotFoundError(todayErr)) {
+          throw todayErr;
+        }
+      }
 
-        // 2. Traversal fallback to most recent previous rate grid
+      if (snap && snap.exists()) {
+        const data = snap.data() as DailyExchangeRateGrid;
+        const mergedRates = {
+          ...DEFAULT_RATE_GRID_VALUES,
+          ...data.rates,
+          LOCAL: 1.0000
+        };
+        const hybrid = this.buildRatesHybrid(mergedRates, data.is_inherited, data.source);
+        return {
+          ...data,
+          id: docId,
+          company_id: businessId,
+          effective_date: todayStr,
+          grid: data,
+          rates: hybrid
+        };
+      }
+
+      // 2. Traversal fallback to most recent previous rate grid in an isolated try/catch
+      try {
         const q = query(
           collection(db, this.GRIDS_COLLECTION),
           where("businessId", "==", businessId),
@@ -264,12 +272,17 @@ export class CurrencyRateRepository {
             rates: hybrid
           };
         }
+      } catch (histErr: any) {
+        if (isFirestorePermissionOrAuthError(histErr) || isNetworkError(histErr)) {
+          throw histErr;
+        }
+        if (!isFirestoreNotFoundError(histErr)) {
+          throw histErr;
+        }
       }
-    } catch (err) {
-      console.warn("[CurrencyRateRepository] Fallback to default rate grid:", err);
     }
 
-    // Default fallback when nothing found
+    // Default fallback when nothing found in Firestore (or DB not initialized in pure offline/unit mode)
     const defaultHybrid = this.buildRatesHybrid(DEFAULT_RATE_GRID_VALUES, true, "auto_inherited");
 
     return {
@@ -299,11 +312,21 @@ export class CurrencyRateRepository {
     const docId = `fx_grid_${businessId}_${todayStr}`;
 
     if (db) {
-      // 1. Check if today's grid already exists
+      // 1. Check if today's grid already exists in isolated try/catch
       const ref = doc(db, this.GRIDS_COLLECTION, docId);
-      const snap = await getDoc(ref);
+      let snap: any = null;
+      try {
+        snap = await getDoc(ref);
+      } catch (todayErr: any) {
+        if (isFirestorePermissionOrAuthError(todayErr) || isNetworkError(todayErr)) {
+          throw todayErr;
+        }
+        if (!isFirestoreNotFoundError(todayErr)) {
+          throw todayErr;
+        }
+      }
 
-      if (snap.exists()) {
+      if (snap && snap.exists()) {
         const existing = snap.data() as DailyExchangeRateGrid;
         // DO NOT overwrite if today's rates were manually confirmed by an Owner/Manager
         if (!existing.is_inherited && existing.source === "manual") {
@@ -317,21 +340,29 @@ export class CurrencyRateRepository {
         }
       }
 
-      // 2. Get most recent preceding rate grid
-      const q = query(
-        collection(db, this.GRIDS_COLLECTION),
-        where("businessId", "==", businessId),
-        where("effectiveDate", "<", todayStr),
-        orderBy("effectiveDate", "desc"),
-        limit(1)
-      );
-
-      const snapPrev = await resilientGetDocs(q, undefined, true);
+      // 2. Get most recent preceding rate grid in isolated try/catch
       let ratesToCopy = { ...DEFAULT_RATE_GRID_VALUES };
+      try {
+        const q = query(
+          collection(db, this.GRIDS_COLLECTION),
+          where("businessId", "==", businessId),
+          where("effectiveDate", "<", todayStr),
+          orderBy("effectiveDate", "desc"),
+          limit(1)
+        );
 
-      if (!snapPrev.empty) {
-        const prevData = snapPrev.docs[0].data() as DailyExchangeRateGrid;
-        ratesToCopy = { ...DEFAULT_RATE_GRID_VALUES, ...prevData.rates, LOCAL: 1.0000 };
+        const snapPrev = await resilientGetDocs(q, undefined, true);
+        if (!snapPrev.empty) {
+          const prevData = snapPrev.docs[0].data() as DailyExchangeRateGrid;
+          ratesToCopy = { ...DEFAULT_RATE_GRID_VALUES, ...prevData.rates, LOCAL: 1.0000 };
+        }
+      } catch (histErr: any) {
+        if (isFirestorePermissionOrAuthError(histErr) || isNetworkError(histErr)) {
+          throw histErr;
+        }
+        if (!isFirestoreNotFoundError(histErr)) {
+          throw histErr;
+        }
       }
 
       const hybridRates = this.buildRatesHybrid(ratesToCopy, true, "inherited");

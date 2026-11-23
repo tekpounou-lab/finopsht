@@ -34,12 +34,28 @@ describe('MOD-GOV-8 Firestore Rules Static & Rule Matrix Verification', () => {
   });
 
   describe('B2: Audit Logs Immutability', () => {
-    it('should prohibit update and delete on all audit log collections', () => {
-      expect(rulesContent).toMatch(/match \/audit_logs\/\{logId\} \{\s*allow read: if isAuthenticated\(\);\s*allow create: if canCreateAuditLog\(request\.resource\.data\);\s*allow update, delete: if false;/);
-      expect(rulesContent).toMatch(/match \/forensic_logs\/\{id\} \{\s*allow read: if isAuthenticated\(\);\s*allow create: if canCreateAuditLog\(request\.resource\.data\);\s*allow update, delete: if false;/);
-      expect(rulesContent).toMatch(/match \/enterprise_audit_logs\/\{id\} \{\s*allow read: if isAuthenticated\(\);\s*allow create: if canCreateAuditLog\(request\.resource\.data\);\s*allow update, delete: if false;/);
-      expect(rulesContent).toMatch(/match \/security_audit_logs\/\{id\} \{\s*allow read: if isAuthenticated\(\);\s*allow create: if canCreateAuditLog\(request\.resource\.data\);\s*allow update, delete: if false;/);
-      expect(rulesContent).toMatch(/match \/ai_cfo_audit_logs\/\{logId\} \{\s*allow read: if isAuthenticated\(\);\s*allow create: if canCreateAuditLog\(request\.resource\.data\);\s*allow update, delete: if false;/);
+    it('should prohibit update and delete on all audit log collections and require null-safe tenant-scoped get/list', () => {
+      const auditCollections = [
+        { name: 'audit_logs', param: 'logId' },
+        { name: 'forensic_logs', param: 'id' },
+        { name: 'enterprise_audit_logs', param: 'id' },
+        { name: 'security_audit_logs', param: 'id' },
+        { name: 'ai_cfo_audit_logs', param: 'logId' }
+      ];
+
+      for (const coll of auditCollections) {
+        const blockRegex = new RegExp(
+          `match /${coll.name}/\\{${coll.param}\\} \\{([\\s\\S]*?)\\}`,
+          'm'
+        );
+        const match = rulesContent.match(blockRegex);
+        expect(match, `Missing rule block for ${coll.name}`).not.toBeNull();
+        const block = match![1];
+        expect(block).toMatch(/allow get: if isAuthenticated\(\) && \(isSuperAdmin\(\) \|\| \(resource != null && isTenantScoped\(getBusinessId\(resource\.data\)\)\)\);/);
+        expect(block).toMatch(/allow list: if isAuthenticated\(\) && \(isSuperAdmin\(\) \|\| isTenantScoped\(getBusinessId\(resource\.data\)\)\);/);
+        expect(block).toContain('allow create: if canCreateAuditLog(request.resource.data);');
+        expect(block).toContain('allow update, delete: if false;');
+      }
     });
   });
 
@@ -57,9 +73,17 @@ describe('MOD-GOV-8 Firestore Rules Static & Rule Matrix Verification', () => {
   });
 
   describe('B5: Workflow Definitions & Approval Policies RBAC', () => {
-    it('should restrict create and update of workflow definitions and approval policies to SuperAdmin or TenantAdmin/Manager', () => {
-      expect(rulesContent).toMatch(/match \/workflow_definitions\/\{id\} \{\s*allow read: if isAuthenticated\(\);\s*allow create, update: if isAuthenticated\(\) && \(\s*isSuperAdmin\(\) \|\|\s*isTenantAdminOrManager\(getBusinessId\(request\.resource\.data\)\)/);
-      expect(rulesContent).toMatch(/match \/approval_policies\/\{id\} \{\s*allow read: if isAuthenticated\(\);\s*allow create, update: if isAuthenticated\(\) && \(\s*isSuperAdmin\(\) \|\|\s*isTenantAdminOrManager\(getBusinessId\(request\.resource\.data\)\)/);
+    it('should restrict create and update of workflow definitions and approval policies to SuperAdmin or TenantAdmin/Manager with null-safe tenant-scoped get/list', () => {
+      for (const coll of ['workflow_definitions', 'approval_policies']) {
+        const blockRegex = new RegExp(`match /${coll}/\\{id\\} \\{([\\s\\S]*?)\\}`, 'm');
+        const match = rulesContent.match(blockRegex);
+        expect(match, `Missing rule block for ${coll}`).not.toBeNull();
+        const block = match![1];
+        expect(block).toMatch(/allow get: if isAuthenticated\(\) && \(isSuperAdmin\(\) \|\| \(resource != null && isTenantScoped\(getBusinessId\(resource\.data\)\)\)\);/);
+        expect(block).toMatch(/allow list: if isAuthenticated\(\) && \(isSuperAdmin\(\) \|\| isTenantScoped\(getBusinessId\(resource\.data\)\)\);/);
+        expect(block).toMatch(/allow create: if isAuthenticated\(\) && \(\s*isSuperAdmin\(\) \|\|\s*isTenantAdminOrManager\(getBusinessId\(request\.resource\.data\)\)/);
+        expect(block).toMatch(/allow update: if isAuthenticated\(\) && \(\s*isSuperAdmin\(\) \|\|\s*\(isTenantAdminOrManager\(getBusinessId\(resource\.data\)\) && getBusinessId\(request\.resource\.data\) == getBusinessId\(resource\.data\)\)/);
+      }
     });
   });
 

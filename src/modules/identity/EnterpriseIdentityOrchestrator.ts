@@ -25,7 +25,6 @@ import { WorkspaceProvisioningService } from "../../services/business/WorkspaceP
 import { BusinessSnapshotService } from "../../services/business/BusinessSnapshotService";
 import { SUPER_ADMIN_EMAIL, isSuperAdminEmail } from "../../config/superadmin";
 import { PermissionRepository } from "../../repositories";
-import { InvitationRepository } from "../../repositories/InvitationRepository";
 import { PendingBusinessRepository } from "../../repositories/PendingBusinessRepository";
 import { OptimizedResolver } from "../../services/identity/OptimizedResolver";
 import { BusinessResolver } from "../../services/business/BusinessResolver";
@@ -538,7 +537,7 @@ export class EnterpriseIdentityOrchestrator {
   }
 
   /**
-   * Action: Accept an Invitation via Backend API
+   * Action: Accept an Invitation via Backend API (Backend Authority Only)
    */
   static async acceptInvitation(invitationId: string, user: FirebaseUser): Promise<void> {
     const correlationId = `accept_inv_${Date.now()}`;
@@ -568,29 +567,8 @@ export class EnterpriseIdentityOrchestrator {
           errorData = await response.json();
         } catch (e) {}
 
-        const errCode = errorData.error || errorData.message || `HTTP_${response.status}`;
-
-        // Resilient fallback for preview container runner where server Admin SDK lacks IAM permissions
-        if (response.status === 500 || response.status === 502) {
-          console.warn(`[Orchestrator][${correlationId}] Backend API returned ${response.status} (${errCode}). Attempting client-side invitation acceptance fallback...`);
-          try {
-            await InvitationRepository.acceptInvitation(invitationId, {
-              uid: user.uid,
-              email: user.email || "",
-              displayName: user.displayName || (user.email ? user.email.split("@")[0] : "Collaborateur")
-            });
-            console.log(`[Orchestrator][${correlationId}] Client-side invitation acceptance succeeded via InvitationRepository.`);
-            this.inFlightOrchestration.delete(user.uid);
-            this.invalidateCache(user.uid);
-            clearResilientCache();
-            await user.getIdToken(true);
-            return;
-          } catch (clientErr: any) {
-            console.error(`[Orchestrator][${correlationId}] Client-side invitation acceptance fallback failed:`, clientErr);
-          }
-        }
-
-        throw new Error(errorData.message || errorData.error || "Échec de l'acceptation de l'invitation.");
+        const errMessage = errorData.message || errorData.error || `HTTP_${response.status}: Échec de l'acceptation de l'invitation.`;
+        throw new Error(errMessage);
       }
 
       // Force refresh of ID token to pull newly assigned Custom Claims (business_id, role)
@@ -608,15 +586,34 @@ export class EnterpriseIdentityOrchestrator {
   }
 
   /**
-   * Action: Reject an Invitation
+   * Action: Reject an Invitation via Backend API (Backend Authority Only)
    */
   static async rejectInvitation(invitationId: string, user: FirebaseUser): Promise<void> {
-    const invRef = doc(db, "invitations", invitationId);
-    await updateDoc(invRef, cleanPayload({
-      status: "REJECTED",
-      rejectedAt: new Date().toISOString(),
-      uid: user.uid
-    }));
+    const correlationId = `reject_inv_${Date.now()}`;
+    const idToken = await user.getIdToken();
+    const response = await fetch("/api/invitations/reject", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: JSON.stringify({
+        inviteId: invitationId,
+        userId: user.uid
+      })
+    });
+
+    if (!response.ok) {
+      let errorData: any = {};
+      try {
+        errorData = await response.json();
+      } catch (e) {}
+      throw new Error(errorData.message || errorData.error || `HTTP_${response.status}: Échec du refus de l'invitation.`);
+    }
+
+    this.inFlightOrchestration.delete(user.uid);
+    this.invalidateCache(user.uid);
+    clearResilientCache();
   }
 
   private static async resolveUserProfile(user: FirebaseUser, correlationId: string): Promise<UserProfile | null> {
@@ -802,71 +799,17 @@ export class EnterpriseIdentityOrchestrator {
   }
 
   /**
-   * Migrate/update invitation and employee records when matched via secondary resolution tiers
+   * Read-only diagnostic check for invitation linkage. Client SDK must not mutate invitation/employee privilege fields.
    */
   private static async migrateInvitationIfNeeded(
-    invitationId: string,
-    existingInv: any,
-    user: FirebaseUser,
-    employeeId: string | null,
-    correlationId: string
+    _invitationId: string,
+    _existingInv: any,
+    _user: FirebaseUser,
+    _employeeId: string | null,
+    _correlationId: string
   ) {
-    try {
-      const activeEmail = user.email ? user.email.toLowerCase().trim() : "";
-      if (!activeEmail) return;
-
-      const existingHistory: string[] = Array.isArray(existingInv.email_history) ? existingInv.email_history : [];
-      const newHistory = Array.from(new Set([
-        ...existingHistory,
-        (existingInv.email || "").toLowerCase().trim(),
-        (existingInv.normalizedEmail || "").toLowerCase().trim(),
-        activeEmail
-      ])).filter(Boolean);
-
-      const needsMigration = 
-        existingInv.email?.toLowerCase().trim() !== activeEmail ||
-        !existingInv.firebase_uid ||
-        !existingInv.employee_id ||
-        !existingInv.employeeId;
-
-      if (needsMigration) {
-        console.log(`[Orchestrator][${correlationId}] Auto-migrating invitation ${invitationId} to user email ${activeEmail}`);
-        const invRef = doc(db, "invitations", invitationId);
-        await updateDoc(invRef, cleanPayload({
-          email: activeEmail,
-          normalizedEmail: activeEmail,
-          emailHistory: newHistory,
-          uid: user.uid,
-          ...(employeeId ? { employeeId: employeeId } : {}),
-          updatedAt: new Date().toISOString()
-        }));
-
-        if (employeeId) {
-          const empRef = doc(db, "employees", employeeId);
-          const empSnap = await resilientGetDoc(empRef);
-          if (empSnap.exists()) {
-            const empData = empSnap.data();
-            const empHistory: string[] = Array.isArray(empData.email_history || empData.emailHistory) ? (empData.email_history || empData.emailHistory) : [];
-            const mergedEmpHistory = Array.from(new Set([
-              ...empHistory,
-              (empData.email || "").toLowerCase().trim(),
-              (empData.normalizedEmail || "").toLowerCase().trim(),
-              activeEmail
-            ])).filter(Boolean);
-
-            await updateDoc(empRef, cleanPayload({
-              email: activeEmail,
-              normalizedEmail: activeEmail,
-              emailHistory: mergedEmpHistory,
-              uid: user.uid,
-              updatedAt: new Date().toISOString()
-            }));
-          }
-        }
-      }
-    } catch (err) {
-      console.warn(`[Orchestrator][${correlationId}] Auto-migration of invitation failed:`, err);
-    }
+    // Intentionally a no-op on the client SDK: invitation & employee linkage mutations are server-authoritative.
+    return;
   }
 
   private static async reconcileIdentityDocs(
@@ -876,63 +819,22 @@ export class EnterpriseIdentityOrchestrator {
     correlationId: string
   ) {
     if (!employee) return;
-
-    const userRef = doc(db, "users", uid);
-    const empRef = doc(db, "employees", employee.id);
-
-    const batch = writeBatch(db);
-    let needsBatch = false;
-
     const targetBizId = employee.businessId || (employee as any).business_id || profile?.businessId || profile?.business_id || "";
-    const activeEmail = employee.email || profile?.email || "";
-
-    const empId = employee.id;
-    const profileEmpId = profile?.employeeId || profile?.employee_id;
-    const profileBizId = profile?.businessId || profile?.business_id;
-
-    // Profile repair
-    if (
-      !profileEmpId || 
-      profileEmpId !== empId || 
-      !profileBizId || 
-      (activeEmail && profile?.email !== activeEmail)
-    ) {
-      needsBatch = true;
-      batch.set(userRef, cleanPayload({
-        employeeId: empId,
-        businessId: targetBizId,
-        businessStatus: "ACTIVE",
-        email: activeEmail,
-        normalizedEmail: activeEmail ? activeEmail.toLowerCase().trim() : "",
-        role: employee.role || profile?.role || "EMPLOYEE",
-        accountStatus: "ACTIVE",
-        onboardingComplete: true,
-        updatedAt: new Date().toISOString()
-      }), { merge: true });
-    }
-
-    // Employee repair
-    const empUid = employee.uid || (employee as any).firebase_uid;
-    const empBizId = employee.businessId || (employee as any).business_id;
-    if (
-      !empUid || 
-      empUid !== uid || 
-      !empBizId || 
-      (activeEmail && employee.email !== activeEmail)
-    ) {
-      needsBatch = true;
-      batch.set(empRef, cleanPayload({
-        uid: uid,
-        email: activeEmail,
-        normalizedEmail: activeEmail ? activeEmail.toLowerCase().trim() : "",
-        businessId: targetBizId,
-        updatedAt: new Date().toISOString()
-      }), { merge: true });
-    }
-
-    if (needsBatch) {
-      await batch.commit();
-      console.log(`[Orchestrator][${correlationId}] Identity docs reconciled.`);
+    const profileBizId = profile?.businessId || profile?.business_id || "";
+    if (!profileBizId && targetBizId && auth.currentUser?.uid === uid) {
+      // Request server-authoritative claims & profile reconciliation rather than attempting unauthorized client privilege writes
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        await fetch("/api/invitations/reconcile-claims", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${idToken}`
+          }
+        });
+      } catch (err) {
+        console.warn(`[Orchestrator][${correlationId}] Server claims reconciliation skipped/deferred:`, err);
+      }
     }
   }
 

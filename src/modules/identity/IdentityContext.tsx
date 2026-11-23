@@ -609,26 +609,28 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [user, resolve]);
 
   const acceptInvitation = useCallback(async (invitationId: string) => {
-    if (!user) return;
+    if (!user) throw new Error("AUTH_REQUIRED");
     setLoading(true);
     try {
       await EnterpriseIdentityOrchestrator.acceptInvitation(invitationId, user);
       await resolve(user);
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message || "Échec de l'acceptation de l'invitation.");
       setLoading(false);
+      throw err;
     }
   }, [user, resolve]);
 
   const rejectInvitation = useCallback(async (invitationId: string) => {
-    if (!user) return;
+    if (!user) throw new Error("AUTH_REQUIRED");
     setLoading(true);
     try {
       await EnterpriseIdentityOrchestrator.rejectInvitation(invitationId, user);
       await resolve(user);
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message || "Échec du refus de l'invitation.");
       setLoading(false);
+      throw err;
     }
   }, [user, resolve]);
 
