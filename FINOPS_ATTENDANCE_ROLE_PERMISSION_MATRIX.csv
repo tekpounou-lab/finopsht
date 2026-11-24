@@ -1,0 +1,8 @@
+role,self_check_in_out,record_other_employee,manage_attendance,branch_scope_enforced,firestore_auth_helper
+OWNER,Allowed,All business branches (same tenant),Full business scope (All branches),Global tenant scope,isTenantAdminOrManager() / isTenantScoped()
+MANAGER,Allowed,Authorized branch(es) only,Operational management (edit_attendance),Branch-restricted,isTenantAdminOrManager() with branch validation
+SUPERVISOR,Allowed,Authorized team/branch only,Supervision (view_reports, edit_attendance),Team/Branch-restricted,isTenantAdminOrManager() or team assignment
+HEAD_TELLER,Allowed,Denied (unless explicitly delegated),No general attendance administration,Till / Branch scope,isTenantCashOperator() (no attendance admin)
+SENIOR_TELLER,Allowed,Denied (Self-service only),Self-service (view own attendance),Own till / self only,Self-service guard
+JUNIOR_TELLER,Allowed,Denied (Self-service only),Self-service (view own attendance),Own till / self only,Self-service guard
+EMPLOYEE,Allowed,Denied (Self-service only),Self-service (view own attendance),Personal record only,Self-service guard

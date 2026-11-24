@@ -3,6 +3,12 @@ import { Employee, AttendanceRecord, ERPEvent, ForensicLog, EmployeeBadge } from
 import { queueAttendanceLog } from "../lib/offlineSync";
 import { calculateAttendanceVariance, formatAttendanceVariance, getDeviceLocalDate, getDeviceLocalTime, getDeviceMetadata, normalizeDateStr, findEmployeeByQrPayload, findAttendanceRecordForEmployee } from "../lib/attendanceSSOT";
 import { AttendanceRepository } from "../repositories/AttendanceRepository";
+import { authorizeAttendanceAction } from "../domains/attendance/AttendanceAuthorizationService";
+import {
+  resolveClientAuthenticatedActor,
+  toTrustedAttendanceTarget,
+  verifyScannedBadgeSecurity
+} from "../domains/attendance/clientActorResolver";
 
 interface UseQRScannerProps {
   employees: Employee[];
@@ -10,6 +16,8 @@ interface UseQRScannerProps {
   attendanceRecords: AttendanceRecord[];
   current_business_id: string;
   currentBranchId?: string | null;
+  currentRole?: string | null;
+  currentUser?: any;
   isOffline: boolean;
   onAddEvent?: (ev: ERPEvent) => void;
   onAddForensicLog?: (log: ForensicLog) => void;
@@ -23,6 +31,8 @@ export function useQRScanner({
   attendanceRecords,
   current_business_id,
   currentBranchId,
+  currentRole,
+  currentUser,
   isOffline,
   onAddEvent,
   onAddForensicLog,
@@ -180,76 +190,40 @@ export function useQRScanner({
           return;
         }
 
-        if (businessId && businessId !== current_business_id && emp.business_id !== current_business_id) {
+        const activeBadge =
+          employeeBadges.find((b) => b.employeeId === emp.id && (b as any).status === "ACTIVE") ||
+          employeeBadges.find((b) => b.employeeId === emp.id);
+        const badgeSec = verifyScannedBadgeSecurity({
+          emp,
+          activeBadge,
+          allEmployeeBadges: employeeBadges,
+          signature,
+          payloadBusinessId: businessId,
+          currentBusinessId: current_business_id,
+          requireSignature: true
+        });
+        if (!badgeSec.valid) {
           if (onAddForensicLog) {
             onAddForensicLog({
               id: "f_sec_" + Math.random().toString(36).substring(2, 9),
               timestamp: new Date().toISOString(),
-              userId: "sys_kiosk",
-              userName: "Borne Entrée Sécurisée",
-              userRole: "EMPLOYEE",
-              business_id: current_business_id,
-              action: "ATTENDANCE_CROSS_TENANT_BREACH_REJECTED",
+              userId: currentUser?.id || "sys_kiosk",
+              userName: currentUser?.name || "Borne Entrée Sécurisée",
+              userRole: currentRole || "UNKNOWN",
+              business_id: current_business_id || emp.business_id || "global",
+              action: `ATTENDANCE_${badgeSec.reasonCode || "SECURITY_REJECTED"}`,
               beforeState: JSON.stringify({ current_business_id }),
-              afterState: JSON.stringify({ attemptedPayload: payloadToProcess }),
+              afterState: JSON.stringify({ attemptedPayload: payloadToProcess, targetEmp: emp.id }),
               ipAddress: getLocalIP(),
               userAgent: window.navigator.userAgent,
               signature: "threat_seal_" + Math.random().toString(36).substring(2, 8),
             });
           }
           playBeep("error");
-          addRecentScan("INCONNU", "ERROR");
+          addRecentScan(emp.name || "INCONNU", "ERROR");
           setScannerFeedback({
             status: "breach",
-            message:
-              language === "fr"
-                ? "BRÈCHE DE SÉCURITÉ : Ce badge appartient à un tiers locataire. Accès rejeté."
-                : language === "ht"
-                ? "VYOLASYON SEKIRITE : Badge sa a apatni a yon lòt moun. Aksè refize."
-                : "SECURITY BREACH: This badge belongs to a third-party tenant. Access denied.",
-          });
-          setIsProcessing(false);
-          return;
-        }
-
-        const activeBadge = employeeBadges.find((b) => b.employeeId === emp.id);
-        const defaultHmac = `HMAC::${btoa((emp.id || "") + (emp.business_id || "")).substring(0, 16).toUpperCase()}`;
-        const isSignatureValid =
-          !signature ||
-          !activeBadge ||
-          !activeBadge.signature ||
-          activeBadge.signature === signature ||
-          (activeBadge as any).tokenHash === signature ||
-          signature === defaultHmac ||
-          (activeBadge as any)?.status === "ACTIVE";
-
-        if (!isSignatureValid && (activeBadge as any)?.status === "REVOKED") {
-          if (onAddForensicLog) {
-            onAddForensicLog({
-              id: "f_sec_" + Math.random().toString(36).substring(2, 9),
-              timestamp: new Date().toISOString(),
-              userId: "sys_kiosk",
-              userName: "Borne Entrée Sécurisée",
-              userRole: "EMPLOYEE",
-              business_id: current_business_id,
-              action: "ATTENDANCE_REVOKED_BADGE_REJECTED",
-              beforeState: JSON.stringify({ activeBadgeSig: activeBadge?.signature }),
-              afterState: JSON.stringify({ attemptedSignature: signature }),
-              ipAddress: getLocalIP(),
-              userAgent: window.navigator.userAgent,
-              signature: "threat_seal_" + Math.random().toString(36).substring(2, 8),
-            });
-          }
-          playBeep("error");
-          addRecentScan(emp.name, "ERROR");
-          setScannerFeedback({
-            status: "breach",
-            message:
-              language === "fr"
-                ? "ALERTE FRAUDE : Ce badge a été révoqué ou régénéré. Accès refusé."
-                : language === "ht"
-                ? "ALÈT FRA DE : Badge sa a te revoke oswa rejenere. Aksè refize."
-                : "FRAUD ALERT: This badge has been revoked or regenerated. Access denied.",
+            message: badgeSec.message || "Validation de sécurité du badge refusée.",
           });
           setIsProcessing(false);
           return;
@@ -266,6 +240,44 @@ export function useQRScanner({
         if (targetMode === "AUTO") {
           targetMode = exists && exists.checkIn && !exists.checkOut ? "OUT" : "IN";
         }
+
+        const authenticatedActor = resolveClientAuthenticatedActor({
+          currentUser,
+          currentRole,
+          currentBusinessId: current_business_id,
+          employees
+        });
+        const authDecision = authorizeAttendanceAction({
+          action: targetMode === "IN" ? "check_in" : "check_out",
+          actor: authenticatedActor,
+          targetEmployee: toTrustedAttendanceTarget(emp),
+          claimedBusinessId: current_business_id
+        });
+        if (!authDecision.allowed) {
+          playBeep("error");
+          addRecentScan(emp.name, "ERROR");
+          setScannerFeedback({
+            status: "breach",
+            message: authDecision.reason,
+          });
+          setIsProcessing(false);
+          return;
+        }
+
+        const repoActorPayload = {
+          id: authenticatedActor.uid,
+          name: authenticatedActor.displayName || authenticatedActor.email || authenticatedActor.uid,
+          role: String(authDecision.canonicalRole || authenticatedActor.role || ""),
+          businessId: authenticatedActor.business_id || current_business_id,
+          branchId: authenticatedActor.branchId || undefined,
+          departmentId: authenticatedActor.departmentId || undefined,
+          employeeId: authenticatedActor.employeeId || undefined,
+          authorizedBranchIds: authenticatedActor.authorizedBranchIds || undefined,
+          authorizedDepartmentIds: authenticatedActor.authorizedDepartmentIds || undefined,
+          authorizedTeamIds: authenticatedActor.authorizedTeamIds || undefined,
+          explicitAttendanceDelegation: authenticatedActor.explicitAttendanceDelegation,
+          isSuperAdmin: authenticatedActor.isSuperAdmin
+        };
 
         if (targetMode === "IN") {
           if (exists && exists.checkIn) {
@@ -297,18 +309,27 @@ export function useQRScanner({
               status: "NORMAL",
             };
 
-            if (onUpdateAttendance) {
-              onUpdateAttendance([newRecord, ...attendanceRecords]);
-            }
-
             await queueAttendanceLog({
               id: newRecord.id,
               business_id: newRecord.business_id,
               employeeId: newRecord.employeeId,
+              branchId: emp.branchId || "",
+              actorId: authenticatedActor.uid,
+              actorName: authenticatedActor.displayName,
+              actorRole: String(authDecision.canonicalRole || authenticatedActor.role || ""),
+              deviceId: devMeta.deviceId,
+              badgeId: activeBadge?.id,
+              qrSignature: signature || undefined,
+              badgePayload: payloadToProcess,
+              idempotencyKey: `offline_${newRecord.id}`,
               timestamp: new Date().toISOString(),
               type: "CHECK_IN",
               method: "QR",
             });
+
+            if (onUpdateAttendance) {
+              onUpdateAttendance([newRecord, ...attendanceRecords]);
+            }
 
             if (onAddEvent) {
               onAddEvent({
@@ -338,16 +359,19 @@ export function useQRScanner({
             try {
               const session = await AttendanceRepository.checkIn({
                 employeeId: emp.id,
-                businessId: emp.business_id,
+                businessId: authDecision.canonicalBusinessId || emp.business_id,
                 branchId: emp.branchId || "BRANCH_DEFAULT",
                 method: "QR",
                 deviceId: devMeta.deviceId,
                 location: "Kiosk Terminal",
-                actor: { id: emp.id, name: emp.name, role: emp.role },
+                actor: repoActorPayload,
                 deviceDate: dateStr,
                 deviceTime: timeStr,
                 deviceTimezone: devMeta.deviceTimezone,
                 deviceInfo: devMeta.userAgent,
+                badgeId: activeBadge?.id,
+                qrSignature: signature || undefined,
+                badgePayload: payloadToProcess
               });
 
               const newRecord: AttendanceRecord = {
@@ -452,18 +476,27 @@ export function useQRScanner({
             updatedRecord.status = "NORMAL";
             updated[targetIdx] = updatedRecord;
 
-            if (onUpdateAttendance) {
-              onUpdateAttendance(updated);
-            }
-
             await queueAttendanceLog({
               id: record.id + "_out",
               business_id: record.business_id,
               employeeId: record.employeeId,
+              branchId: record.branchId || emp.branchId || "",
+              actorId: authenticatedActor.uid,
+              actorName: authenticatedActor.displayName,
+              actorRole: String(authDecision.canonicalRole || authenticatedActor.role || ""),
+              deviceId: devMeta.deviceId,
+              badgeId: activeBadge?.id,
+              qrSignature: signature || undefined,
+              badgePayload: payloadToProcess,
+              idempotencyKey: `offline_${record.id}_out`,
               timestamp: new Date().toISOString(),
               type: "CHECK_OUT",
               method: "QR",
             });
+
+            if (onUpdateAttendance) {
+              onUpdateAttendance(updated);
+            }
 
             if (onAddEvent) {
               onAddEvent({
@@ -494,13 +527,18 @@ export function useQRScanner({
             try {
               const session = await AttendanceRepository.checkOut({
                 sessionId: record.id,
+                employeeId: emp.id,
+                businessId: authDecision.canonicalBusinessId || emp.business_id,
                 method: "QR",
-                actor: { id: emp.id, name: emp.name, role: emp.role },
+                actor: repoActorPayload,
                 deviceId: devMeta.deviceId,
                 deviceDate: dateStr,
                 deviceTime: timeStr,
                 deviceTimezone: devMeta.deviceTimezone,
                 deviceInfo: devMeta.userAgent,
+                badgeId: activeBadge?.id,
+                qrSignature: signature || undefined,
+                badgePayload: payloadToProcess
               });
 
               const updated = [...attendanceRecords];
@@ -570,6 +608,8 @@ export function useQRScanner({
       employeeBadges,
       attendanceRecords,
       current_business_id,
+      currentRole,
+      currentUser,
       isOffline,
       onAddForensicLog,
       onAddEvent,

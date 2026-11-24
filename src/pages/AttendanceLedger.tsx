@@ -19,10 +19,15 @@ import { UnifiedAttendanceKioskModal } from '../components/attendance/UnifiedAtt
 import { ReferenceResolver } from '../services/ReferenceResolver';
 import * as xlsx from 'xlsx';
 import { format } from 'date-fns';
-import { db } from "../lib/firebase";
-import { doc, setDoc, deleteDoc } from "firebase/firestore";
+import { auth } from "../lib/firebase";
 import { toast } from 'sonner';
 import { calculateAttendanceVariance, getDeviceLocalDate, getDeviceLocalTime, getDeviceMetadata, normalizeDateStr, findEmployeeByQrPayload, findAttendanceRecordForEmployee } from '../lib/attendanceSSOT';
+import { authorizeAttendanceAction } from '../domains/attendance/AttendanceAuthorizationService';
+import {
+  resolveClientAuthenticatedActor,
+  toTrustedAttendanceTarget,
+  verifyScannedBadgeSecurity
+} from '../domains/attendance/clientActorResolver';
 
 interface AttendanceLedgerProps {
   employees: Employee[];
@@ -146,39 +151,6 @@ export default function AttendanceLedger({
       }
     }
   }, [initialMassImportOpen, onResetInitialMassImportOpen]);
-
-  // One-time auto-cleanup effect for malformed dates in Firestore
-  useEffect(() => {
-    if (!attendanceRecords || attendanceRecords.length === 0) return;
-    const fixMalformedDates = async () => {
-      const badRecords = attendanceRecords.filter(r => /^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(r.date || ""));
-      if (badRecords.length === 0) return;
-      
-      console.log(`[Auto-Repair] Found ${badRecords.length} records with malformed DD/MM/YYYY dates. Migrating...`);
-      for (const badRec of badRecords) {
-        try {
-          const p = badRec.date.split(/[-/]/);
-          const goodDate = `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
-          
-          // Determine the correct ID format for this record type
-          // If it was created by MassImportModal, its ID starts with att_bulk_
-          // If created by OrgStructure, its ID starts with rec_
-          const idPrefix = badRec.id.startsWith("att_bulk_") ? "att_bulk_fixed_" : `rec_${badRec.employeeId}_`;
-          const goodId = `${idPrefix}${goodDate.replace(/-/g, "")}_${Math.random().toString(36).substring(2,6)}`;
-          
-          const goodRec = { ...badRec, id: goodId, date: goodDate };
-          
-          // Write the corrected record
-          await setDoc(doc(db, "attendance_logs", goodId), goodRec);
-          // Delete the malformed record
-          await deleteDoc(doc(db, "attendance_logs", badRec.id));
-        } catch (e) {
-          console.error("[Auto-Repair] Failed to migrate record:", badRec.id, e);
-        }
-      }
-    };
-    fixMalformedDates();
-  }, [attendanceRecords]);
 
   const addRecentScan = (name: string, status: 'IN' | 'OUT' | 'ERROR') => {
     setRecentScans(prev => {
@@ -461,18 +433,29 @@ export default function AttendanceLedger({
         return;
       }
 
-      // Tenant isolation verification
-      if (businessId && businessId !== current_business_id && emp.business_id !== current_business_id) {
+      // Tenant isolation & badge signature security verification
+      const activeBadge = employeeBadges.find((b) => b.employeeId === emp.id && (b as any).status === "ACTIVE")
+        || employeeBadges.find((b) => b.employeeId === emp.id);
+      const badgeSec = verifyScannedBadgeSecurity({
+        emp,
+        activeBadge,
+        allEmployeeBadges: employeeBadges,
+        signature,
+        payloadBusinessId: businessId,
+        currentBusinessId: current_business_id,
+        requireSignature: true
+      });
+      if (!badgeSec.valid) {
         onAddForensicLog({
           id: "f_sec_" + Math.random().toString(36).substring(2, 9),
           timestamp: new Date().toISOString(),
-          userId: "sys_kiosk",
-          userName: "Borne Entrée Sécurisée",
-          userRole: "EMPLOYEE",
-          business_id: current_business_id,
-          action: "ATTENDANCE_CROSS_TENANT_BREACH_REJECTED",
+          userId: currentUser?.id || "sys_kiosk",
+          userName: currentUser?.name || "Borne Entrée Sécurisée",
+          userRole: currentRole || "UNKNOWN",
+          business_id: current_business_id || emp.business_id || "global",
+          action: `ATTENDANCE_${badgeSec.reasonCode || "SECURITY_REJECTED"}`,
           beforeState: JSON.stringify({ current_business_id }),
-          afterState: JSON.stringify({ attemptedPayload: payloadToProcess }),
+          afterState: JSON.stringify({ attemptedPayload: payloadToProcess, targetEmp: emp.id }),
           ipAddress: getLocalIP(),
           userAgent: window.navigator.userAgent,
           signature: "threat_seal_" + Math.random().toString(36).substring(2, 8)
@@ -481,33 +464,7 @@ export default function AttendanceLedger({
         addRecentScan(emp.name || "INCONNU", "ERROR");
         setScannerFeedback({
           status: "breach",
-          message: language === "fr" 
-            ? "BRÈCHE DE SÉCURITÉ : Ce badge appartient à un tiers locataire. Accès rejeté." 
-            : "SECURITY BREACH: This badge belongs to a third-party tenant. Access denied."
-        });
-        return;
-      }
-
-      // Check revoked badge signature if active badges exist
-      const activeBadge = employeeBadges.find((b) => b.employeeId === emp.id);
-      const defaultHmac = `HMAC::${btoa((emp.id || "") + (emp.business_id || "")).substring(0, 16).toUpperCase()}`;
-      const isSignatureValid =
-        !signature ||
-        !activeBadge ||
-        !activeBadge.signature ||
-        activeBadge.signature === signature ||
-        (activeBadge as any).tokenHash === signature ||
-        signature === defaultHmac ||
-        (activeBadge as any)?.status === "ACTIVE";
-
-      if (!isSignatureValid && (activeBadge as any)?.status === "REVOKED") {
-        playBeep('error');
-        addRecentScan(emp.name, "ERROR");
-        setScannerFeedback({
-          status: "breach",
-          message: language === "fr" 
-            ? "ALERTE SÉCURITÉ : Signature de badge révoquée ou régénérée." 
-            : "SECURITY ALERT: Revoked or regenerated badge signature."
+          message: badgeSec.message || "Validation de sécurité du badge refusée."
         });
         return;
       }
@@ -524,6 +481,57 @@ export default function AttendanceLedger({
         targetMode = (exists && exists.checkIn && !exists.checkOut) ? "OUT" : "IN";
       }
 
+      const authenticatedActor = resolveClientAuthenticatedActor({
+        currentUser,
+        currentRole,
+        currentBusinessId: current_business_id,
+        employees
+      });
+      const authDecision = authorizeAttendanceAction({
+        action: targetMode === "IN" ? "check_in" : "check_out",
+        actor: authenticatedActor,
+        targetEmployee: toTrustedAttendanceTarget(emp),
+        claimedBusinessId: current_business_id
+      });
+      if (!authDecision.allowed) {
+        onAddForensicLog({
+          id: "f_rbac_" + Math.random().toString(36).substring(2, 9),
+          timestamp: new Date().toISOString(),
+          userId: authenticatedActor.uid || "UNKNOWN",
+          userName: authenticatedActor.displayName || "Operator",
+          userRole: String(authDecision.canonicalRole || authenticatedActor.role || "UNKNOWN"),
+          business_id: current_business_id || emp.business_id || "global",
+          action: `ATTENDANCE_RBAC_DENIED_${authDecision.code}`,
+          beforeState: JSON.stringify({ targetEmp: emp.id, targetBranch: emp.branchId }),
+          afterState: JSON.stringify({ code: authDecision.code, reason: authDecision.reason }),
+          ipAddress: getLocalIP(),
+          userAgent: window.navigator.userAgent,
+          signature: "rbac_seal_" + Math.random().toString(36).substring(2, 8)
+        });
+        playBeep('error');
+        addRecentScan(emp.name, "ERROR");
+        setScannerFeedback({
+          status: "breach",
+          message: authDecision.reason
+        });
+        return;
+      }
+
+      const repoActorPayload = {
+        id: authenticatedActor.uid,
+        name: authenticatedActor.displayName || authenticatedActor.email || authenticatedActor.uid,
+        role: String(authDecision.canonicalRole || authenticatedActor.role || ""),
+        businessId: authenticatedActor.business_id || current_business_id,
+        branchId: authenticatedActor.branchId || undefined,
+        departmentId: authenticatedActor.departmentId || undefined,
+        employeeId: authenticatedActor.employeeId || undefined,
+        authorizedBranchIds: authenticatedActor.authorizedBranchIds || undefined,
+        authorizedDepartmentIds: authenticatedActor.authorizedDepartmentIds || undefined,
+        authorizedTeamIds: authenticatedActor.authorizedTeamIds || undefined,
+        explicitAttendanceDelegation: authenticatedActor.explicitAttendanceDelegation,
+        isSuperAdmin: authenticatedActor.isSuperAdmin
+      };
+
       if (targetMode === "IN") {
         if (exists && exists.checkIn) {
           playBeep('error');
@@ -538,22 +546,25 @@ export default function AttendanceLedger({
 
         AttendanceRepository.checkIn({
           employeeId: emp.id,
-          businessId: emp.business_id || current_business_id,
+          businessId: authDecision.canonicalBusinessId || emp.business_id || current_business_id,
           branchId: emp.branchId || branchId || "BRANCH_DEFAULT",
           method: "QR",
           deviceId: devMeta.deviceId,
           location: "Borne Entrée Sécurisée",
-          actor: { id: emp.id, name: emp.name, role: emp.role },
+          actor: repoActorPayload,
           deviceDate: dateStr,
           deviceTime: timeStr,
           deviceTimezone: devMeta.deviceTimezone,
-          deviceInfo: devMeta.userAgent
+          deviceInfo: devMeta.userAgent,
+          badgeId: activeBadge?.id,
+          qrSignature: signature || undefined,
+          badgePayload: payloadToProcess
         }).then((session) => {
           const newRecord: AttendanceRecord = {
             id: session.sessionId,
             employeeId: session.employeeId,
             employeeName: emp.name,
-            business_id: session.businessId || current_business_id,
+            business_id: session.businessId || authDecision.canonicalBusinessId || current_business_id,
             branchId: session.branchId || emp.branchId || "BRANCH_DEFAULT",
             departmentId: emp.departmentId || "DEPT_DEFAULT",
             date: dateStr,
@@ -565,7 +576,6 @@ export default function AttendanceLedger({
             status: "NORMAL",
           };
 
-          AttendanceRepository.saveRecord(newRecord, { uid: emp.id, name: emp.name, role: emp.role }).catch(() => {});
           onUpdateAttendance([newRecord, ...attendanceRecords.filter(r => r.id !== newRecord.id)]);
 
           // Ensure filter displays today's scan if date filter was hiding it
@@ -629,13 +639,18 @@ export default function AttendanceLedger({
 
         AttendanceRepository.checkOut({
           sessionId: exists.id,
+          employeeId: emp.id,
+          businessId: authDecision.canonicalBusinessId || emp.business_id || current_business_id,
           method: "QR",
-          actor: { id: emp.id, name: emp.name, role: emp.role },
+          actor: repoActorPayload,
           deviceId: devMeta.deviceId,
           deviceDate: dateStr,
           deviceTime: timeStr,
           deviceTimezone: devMeta.deviceTimezone,
-          deviceInfo: devMeta.userAgent
+          deviceInfo: devMeta.userAgent,
+          badgeId: activeBadge?.id,
+          qrSignature: signature || undefined,
+          badgePayload: payloadToProcess
         }).then((session) => {
           const totalHours = session?.totalMinutes ? Number((session.totalMinutes / 60).toFixed(2)) : 8;
           const updated = attendanceRecords.map((r) => {
@@ -653,10 +668,6 @@ export default function AttendanceLedger({
           });
 
           onUpdateAttendance(updated);
-          const targetItem = updated.find(r => r.id === exists.id || (r.employeeId === emp.id && r.date === dateStr));
-          if (targetItem) {
-            AttendanceRepository.saveRecord(targetItem, { uid: emp.id, name: emp.name, role: emp.role }).catch(() => {});
-          }
 
           onAddEvent({
             id: "ev_" + Math.random().toString(36).substring(2, 9),
@@ -693,9 +704,9 @@ export default function AttendanceLedger({
         message: language === "fr" ? "Charge utile invalide." : "Invalid payload."
       });
     }
-  }, [attendanceRecords, current_business_id, employees, isOffline, onAddEvent, onAddForensicLog, onUpdateAttendance, scannedQrString, employeeBadges, isMuted, language]);
+  }, [attendanceRecords, current_business_id, currentRole, currentUser, employees, isOffline, onAddEvent, onAddForensicLog, onUpdateAttendance, scannedQrString, employeeBadges, isMuted, language]);
 
-  const handleOverrideSubmit = () => {
+  const handleOverrideSubmit = async () => {
     if (!overrideTarget || !overrideReason.trim()) return;
 
     if (!hasPermission(currentRole, "canOverrideAttendance")) {
@@ -706,86 +717,108 @@ export default function AttendanceLedger({
     const targetIndex = attendanceRecords.findIndex((r) => r.id === overrideTarget.id);
     if (targetIndex === -1) return;
 
+    const resolvedActorId = auth?.currentUser?.uid || currentUser?.id || "";
+    const resolvedActorName = currentUser?.name || auth?.currentUser?.displayName || currentRole;
+
     const updated = [...attendanceRecords];
     const oldState = JSON.stringify(updated[targetIndex]);
 
-    const item = updated[targetIndex];
+    const item = { ...updated[targetIndex] };
     item.status = overrideStatus as any;
     item.realHours = overrideHours;
     item.variance = calculateAttendanceVariance(overrideHours, item.plannedHours);
     item.overrideReason = overrideReason;
     item.overrideBy = currentRole;
+    updated[targetIndex] = item;
 
     const newState = JSON.stringify(item);
-    onUpdateAttendance(updated);
-    
-    // REFACTOR: Use AttendanceRepository for audited persistence
-    AttendanceRepository.updateRecord(item.id, {
-      status: item.status,
-      realHours: item.realHours,
-      variance: item.variance,
-      overrideReason: item.overrideReason,
-      overrideBy: item.overrideBy
-    }, {
-      id: currentUser?.id || "admin_sys",
-      name: currentUser?.name || "Admin",
-      role: currentRole
-    }).catch(e => {
+
+    try {
+      await AttendanceRepository.updateRecord(item.id, {
+        employeeId: item.employeeId,
+        business_id: item.business_id || current_business_id,
+        branchId: item.branchId,
+        departmentId: item.departmentId,
+        date: item.date,
+        checkIn: item.checkIn,
+        checkOut: item.checkOut,
+        plannedHours: item.plannedHours,
+        status: item.status,
+        realHours: item.realHours,
+        variance: item.variance,
+        overrideReason: item.overrideReason,
+        overrideBy: item.overrideBy
+      }, {
+        id: resolvedActorId,
+        name: resolvedActorName,
+        role: currentRole,
+        business_id: current_business_id
+      });
+
+      onUpdateAttendance(updated);
+      onAddForensicLog({
+        id: "f_" + Math.random().toString(36).substring(2, 9),
+        timestamp: new Date().toISOString(),
+        userId: resolvedActorId,
+        userName: resolvedActorName,
+        userRole: currentRole,
+        business_id: current_business_id,
+        action: "ATTENDANCE_OVERRIDE",
+        beforeState: oldState,
+        afterState: newState,
+        ipAddress: getLocalIP(),
+        userAgent: window.navigator.userAgent,
+        signature: generateSignature({ oldState, newState }),
+      });
+
+      setOverrideTarget(null);
+      setOverrideReason("");
+    } catch (e: any) {
       console.error("[AttendanceLedger] Repository update failed:", e);
-      toast.error(language === "fr" ? "Erreur de synchronisation Firebase." : "Firebase sync error.");
-    });
-
-    onAddForensicLog({
-      id: "f_" + Math.random().toString(36).substring(2, 9),
-      timestamp: new Date().toISOString(),
-      userId: currentRole === "OWNER" ? "e1" : "e2",
-      userName: currentRole === "OWNER" ? "Manoel Lhérisson" : "Manager",
-      userRole: currentRole,
-      business_id: current_business_id,
-      action: "ATTENDANCE_OVERRIDE",
-      beforeState: oldState,
-      afterState: newState,
-      ipAddress: getLocalIP(),
-      userAgent: window.navigator.userAgent,
-      signature: generateSignature({ oldState, newState }),
-    });
-
-    setOverrideTarget(null);
-    setOverrideReason("");
+      toast.error(e?.message || (language === "fr" ? "Erreur de synchronisation Firebase." : "Firebase sync error."));
+    }
   };
 
   const handleGlobalOverrideSave = async (newRecord: AttendanceRecord, reason: string) => {
-    const existingIndex = attendanceRecords.findIndex(r => r.id === newRecord.id);
-    if (existingIndex >= 0) {
-      const updated = [...attendanceRecords];
-      updated[existingIndex] = newRecord;
-      onUpdateAttendance(updated);
-    } else {
-      onUpdateAttendance([newRecord, ...attendanceRecords]);
-    }
+    const resolvedActorId = auth?.currentUser?.uid || currentUser?.id || "";
+    const resolvedActorName = currentUser?.name || auth?.currentUser?.displayName || currentRole;
 
-    // REFACTOR: Use AttendanceRepository for audited persistence
     try {
       await AttendanceRepository.updateRecord(newRecord.id, {
         ...newRecord,
+        business_id: newRecord.business_id || current_business_id,
         overrideReason: reason,
         overrideBy: currentRole
       }, {
-        id: currentUser?.id || "admin_sys",
-        name: currentUser?.name || "Admin",
-        role: currentRole
+        id: resolvedActorId,
+        name: resolvedActorName,
+        role: currentRole,
+        business_id: current_business_id
       });
-    } catch(e) {
+
+      const existingIndex = attendanceRecords.findIndex(r => r.id === newRecord.id);
+      if (existingIndex >= 0) {
+        const updated = [...attendanceRecords];
+        updated[existingIndex] = newRecord;
+        onUpdateAttendance(updated);
+      } else {
+        onUpdateAttendance([newRecord, ...attendanceRecords]);
+      }
+    } catch (e: any) {
       console.error("[AttendanceLedger] Global repository update failed:", e);
-      toast.error("Global Sync Error");
+      toast.error(e?.message || "Global Sync Error");
+      throw e;
     }
   };
 
   const handleRecalculate = async () => {
     if (currentRole !== 'OWNER' && currentRole !== 'MANAGER') {
-      alert("Droits insuffisants.");
+      toast.error("Droits insuffisants.");
       return;
     }
+    const resolvedActorId = auth?.currentUser?.uid || currentUser?.id || "";
+    const resolvedActorName = currentUser?.name || auth?.currentUser?.displayName || currentRole;
+
     const updated = attendanceRecords.map(rec => {
       if (rec.overrideBy) return rec; // Ne pas toucher aux dérogations
       if (!rec.checkOut) return rec;
@@ -804,31 +837,41 @@ export default function AttendanceLedger({
         status: status as any
       };
     });
-    onUpdateAttendance(updated);
 
-    // Persist recalculated records to Firestore SSOT
+    // Persist recalculated records via server API before committing React state
     try {
       for (const rec of updated) {
+        if (rec.overrideBy || !rec.checkOut) continue;
         await AttendanceRepository.updateRecord(rec.id, {
+          employeeId: rec.employeeId,
+          date: rec.date,
+          checkIn: rec.checkIn,
+          checkOut: rec.checkOut,
+          plannedHours: rec.plannedHours,
           realHours: rec.realHours,
           variance: rec.variance,
           status: rec.status,
-          business_id: rec.business_id || current_business_id
+          business_id: rec.business_id || current_business_id,
+          overrideReason: "Recalcul automatique des heures effectuées"
         }, {
-          id: currentUser?.id || "admin_sys",
-          name: currentUser?.name || "Admin",
-          role: currentRole
+          id: resolvedActorId,
+          name: resolvedActorName,
+          role: currentRole,
+          business_id: current_business_id
         });
       }
-    } catch (e) {
+      onUpdateAttendance(updated);
+    } catch (e: any) {
       console.error("[AttendanceLedger] Recalculate sync error:", e);
+      toast.error(e?.message || "Erreur lors de la synchronisation du recalcul.");
+      return;
     }
     
     onAddForensicLog({
       id: `fLog_${Math.random().toString(36).substr(2,9)}`,
       timestamp: new Date().toISOString(),
-      userId: currentRole === "OWNER" ? "e1" : "e2",
-      userName: currentRole === "OWNER" ? "Manoel Lhérisson" : "Manager",
+      userId: resolvedActorId,
+      userName: resolvedActorName,
       userRole: currentRole,
       business_id: current_business_id,
       action: "ATTENDANCE_RECALCULATED",
@@ -859,17 +902,24 @@ export default function AttendanceLedger({
 
   const confirmDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
+    const resolvedActorId = auth?.currentUser?.uid || currentUser?.id || "";
+    const resolvedActorName = currentUser?.name || auth?.currentUser?.displayName || currentRole;
     setIsDeleting(true);
     try {
-      await AttendanceRepository.batchDeleteRecords(selectedIds, { uid: currentUser?.id, name: currentUser?.name, business_id: current_business_id });
+      await AttendanceRepository.batchDeleteRecords(
+        selectedIds,
+        { uid: resolvedActorId, name: resolvedActorName, business_id: current_business_id },
+        current_business_id
+      );
+      onUpdateAttendance(attendanceRecords.filter(r => !selectedIds.includes(r.id)));
       toast.success(language === "fr" ? `${selectedIds.length} pointage(s) supprimé(s).` : `${selectedIds.length} record(s) deleted.`);
       setSelectedIds([]); // Clear selection
       setIsDeleteConfirmOpen(false); // Close modal
       onAddForensicLog({
         id: `fLog_${Math.random().toString(36).substr(2,9)}`,
         timestamp: new Date().toISOString(),
-        userId: currentUser?.id || "SYSTEM",
-        userName: currentUser?.name || "System",
+        userId: resolvedActorId,
+        userName: resolvedActorName,
         userRole: currentRole,
         business_id: current_business_id,
         action: "ATTENDANCE_BATCH_DELETED",
@@ -881,7 +931,7 @@ export default function AttendanceLedger({
       });
     } catch (err: any) {
       console.error("Failed to delete records:", err);
-      toast.error("Erreur lors de la suppression.");
+      toast.error(err?.message || "Erreur lors de la suppression.");
     } finally {
       setIsDeleting(false);
     }
@@ -927,11 +977,13 @@ export default function AttendanceLedger({
     const dateStr = format(new Date(), 'yyyy-MM-dd');
     xlsx.writeFile(wb, `finops-presences-${dateStr}.xlsx`);
     
+    const resolvedActorId = auth?.currentUser?.uid || currentUser?.id || "";
+    const resolvedActorName = currentUser?.name || auth?.currentUser?.displayName || currentRole;
     onAddForensicLog({
       id: `fLog_${Math.random().toString(36).substr(2,9)}`,
       timestamp: new Date().toISOString(),
-      userId: currentRole === "OWNER" ? "e1" : "e2",
-      userName: currentRole === "OWNER" ? "Manoel Lhérisson" : "Manager",
+      userId: resolvedActorId,
+      userName: resolvedActorName,
       userRole: currentRole,
       business_id: current_business_id,
       action: "ATTENDANCE_EXPORTED",

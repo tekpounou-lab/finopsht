@@ -700,7 +700,8 @@ export class EmployeeRepository {
   }
 
   static async saveAttendanceLog(log: any, actor?: any): Promise<void> {
-    await setDoc(doc(db, "attendance_logs", log.id), log);
+    const { AttendanceRepository } = await import("./AttendanceRepository");
+    await AttendanceRepository.saveRecord(log, actor);
   }
 
   static async createBulkImportBatch(

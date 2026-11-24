@@ -66,8 +66,21 @@ export const BadgeRepository = {
   }): Promise<ExtendedEmployeeBadge> {
     const { employeeId, businessId, branchId, departmentId, role, type, actor, hardwareId, serialNumber } = params;
     
-    const badgeId = `bdg_${Math.random().toString(36).substring(2, 9)}`;
-    const signature = `sig_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+    const randomToken = (prefix: string) => {
+      if (typeof globalThis.crypto?.getRandomValues === "function") {
+        const bytes = new Uint8Array(16);
+        globalThis.crypto.getRandomValues(bytes);
+        const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+        return `${prefix}_${hex}`;
+      }
+      if (typeof globalThis.crypto?.randomUUID === "function") {
+        return `${prefix}_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
+      }
+      return `${prefix}_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`;
+    };
+
+    const badgeId = randomToken("bdg");
+    const signature = randomToken("sig");
     const issuedAt = new Date().toISOString();
     
     const qrPayloadObj = {
@@ -106,9 +119,10 @@ export const BadgeRepository = {
     };
 
     await TransactionEngine.execute("generateBadge", businessId, async (transaction) => {
-      // Find and revoke any existing active badges for this employee
+      // Find and revoke any existing active badges for this employee within the same tenant
       const q = query(
         collection(db, "employee_badges"),
+        where("business_id", "==", businessId),
         where("employeeId", "==", employeeId),
         where("status", "==", "ACTIVE")
       );

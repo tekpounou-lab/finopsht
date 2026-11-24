@@ -109,6 +109,10 @@ export const TENANT_ERP_CAPABILITIES = new Set([
   "attendance.view",
   "attendance.read",
   "attendance.log",
+  "attendance.record_self",
+  "attendance.record_others",
+  "attendance.manage",
+  "attendance.delegate_others",
   "attendance.override",
   "attendance.approve",
 
@@ -794,7 +798,12 @@ class PermissionServiceClass {
         "invoices.write",
         "invoice_template.write",
         "documents.write",
-        "documents.delete"
+        "documents.delete",
+        "override_attendance",
+        "attendance.override",
+        "attendance.approve",
+        "attendance.manage",
+        "manage_attendance"
       ]);
       if (TELLER_DENIED_CAPABILITIES.has(actionLower)) {
         this.capabilityCache[actionLower] = false;
@@ -825,7 +834,7 @@ class PermissionServiceClass {
         "manage_tenant_profile", "manage_settings", "business.settings", "settings.write",
         "manage_tenant_settings", "manage_tenant_users",
         "manage_payroll", "lock_payroll", "validate_payroll", "payroll.calculate", "payroll.approve", "payroll.lock",
-        "manage_attendance", "log_attendance", "override_attendance", "attendance.log", "attendance.override", "attendance.approve",
+        "manage_attendance", "log_attendance", "override_attendance", "attendance.log", "attendance.record_self", "attendance.record_others", "attendance.manage", "attendance.delegate_others", "attendance.override", "attendance.approve",
         "request_leaves", "manage_leaves", "leave.request", "leave.create", "leaves.request", "leave.manage", "leaves.manage",
         "manage_planning", "planning.write", "planning.manage",
         "manage_crm", "crm.write", "leads.write", "prospects.write", "proformas.write",
@@ -861,6 +870,15 @@ class PermissionServiceClass {
         this.capabilityCache[actionLower] = false;
         return false;
       }
+    }
+
+    // 5. Attendance overrides & adjustment approvals are restricted strictly to SUPER_ADMIN, OWNER, OWNER_ADMIN, ADMIN, MANAGER
+    if (
+      ["override_attendance", "attendance.override", "attendance.approve"].includes(actionLower) &&
+      !["SUPER_ADMIN", "OWNER", "OWNER_ADMIN", "ADMIN", "MANAGER"].includes(this.activeRole || "")
+    ) {
+      this.capabilityCache[actionLower] = false;
+      return false;
     }
 
     // Ledger deletion is immutable across all tenant roles (enforced in Firestore rules & accounting policy)
@@ -951,11 +969,27 @@ class PermissionServiceClass {
           result = this.permissions.includes("view_attendance") || ["SUPER_ADMIN", "OWNER", "ADMIN", "CFO", "DIRECTOR", "MANAGER", "SUPERVISOR", "EMPLOYEE"].includes(this.activeRole || "") || this.hasRoleModuleAccess(this.activeRole || undefined, "attendance");
           break;
         case "attendance.log":
-          result = this.permissions.includes("log_attendance") || this.permissions.includes("override_attendance");
+        case "attendance.record_self":
+          result =
+            this.activeRole !== "AUDITOR" &&
+            (
+              this.permissions.includes("log_attendance") ||
+              this.permissions.includes("attendance.record_others") ||
+              ["SUPER_ADMIN", "OWNER", "ADMIN", "OWNER_ADMIN", "MANAGER", "SUPERVISOR", "HEAD_TELLER", "MASTER_HEAD_TELLER", "SENIOR_TELLER", "JUNIOR_TELLER", "TELLER", "EMPLOYEE"].includes(this.activeRole || "")
+            );
+          break;
+        case "attendance.record_others":
+        case "attendance.manage":
+          result =
+            this.permissions.includes("attendance.record_others") ||
+            this.permissions.includes("attendance.delegate_others") ||
+            ["SUPER_ADMIN", "OWNER", "ADMIN", "OWNER_ADMIN", "MANAGER", "SUPERVISOR", "TEAM_LEADER"].includes(this.activeRole || "");
           break;
         case "attendance.override":
         case "attendance.approve":
-          result = this.permissions.includes("override_attendance");
+          result =
+            ["SUPER_ADMIN", "OWNER", "ADMIN", "OWNER_ADMIN", "MANAGER"].includes(this.activeRole || "") &&
+            (this.permissions.includes("override_attendance") || this.activeRole === "MANAGER");
           break;
 
         // Leave & Vacation Operations

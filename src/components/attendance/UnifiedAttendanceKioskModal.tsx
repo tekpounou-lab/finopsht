@@ -22,6 +22,12 @@ import {
 import CameraQrScanner from "./CameraQrScanner";
 import { Employee, AttendanceRecord, Branch, Department, EmployeeBadge, ERPEvent, ForensicLog } from "../../types";
 import { AttendanceRepository } from "../../repositories/AttendanceRepository";
+import { authorizeAttendanceAction } from "../../domains/attendance/AttendanceAuthorizationService";
+import {
+  resolveClientAuthenticatedActor,
+  toTrustedAttendanceTarget,
+  verifyScannedBadgeSecurity
+} from "../../domains/attendance/clientActorResolver";
 import { calculateAttendanceVariance, getDeviceLocalDate, getDeviceLocalTime, getDeviceMetadata, normalizeDateStr, findEmployeeByQrPayload, findAttendanceRecordForEmployee } from "../../lib/attendanceSSOT";
 import { ReferenceResolver } from "../../services/ReferenceResolver";
 import { getLocalIP } from "../../data";
@@ -71,6 +77,7 @@ export function UnifiedAttendanceKioskModal({
   const [isProcessing, setIsProcessing] = useState(false);
   const [scannedQrString, setScannedQrString] = useState("");
   const [empSearchQuery, setEmpSearchQuery] = useState("");
+  const [selectedManualEmp, setSelectedManualEmp] = useState<{ id: string; name: string } | null>(null);
   const [isEmpDropdownOpen, setIsEmpDropdownOpen] = useState(false);
   const [deviceClock, setDeviceClock] = useState<{ time: string; date: string; tz: string; meta: any }>(() => {
     const now = new Date();
@@ -144,6 +151,7 @@ export function UnifiedAttendanceKioskModal({
       if (emp) {
         setScannedQrString(emp.id);
         setEmpSearchQuery(emp.name);
+        setSelectedManualEmp({ id: emp.id, name: emp.name });
       }
     }
   }, [preSelectedEmployeeId, employees]);
@@ -259,9 +267,19 @@ export function UnifiedAttendanceKioskModal({
 
   // Secure scan and SSOT verification processor
   const processSecureScan = useCallback(
-    async (modeOverride?: "AUTO" | "IN" | "OUT", payloadOverride?: string) => {
+    async (
+      modeOverride?: "AUTO" | "IN" | "OUT",
+      payloadOverride?: string,
+      sourceOverride?: "QR_SCAN" | "MANUAL_SELECT"
+    ) => {
       const payloadToProcess = (payloadOverride !== undefined ? payloadOverride : scannedQrString).trim();
       const targetMode = modeOverride || scanMode;
+      const isManualDropdownSelection =
+        sourceOverride === "MANUAL_SELECT" ||
+        (sourceOverride === undefined &&
+          !!selectedManualEmp &&
+          (payloadToProcess === selectedManualEmp.id || empSearchQuery.trim() === selectedManualEmp.name));
+      const attendanceMethod: "QR" | "MANUAL" = isManualDropdownSelection ? "MANUAL" : "QR";
 
       if (!payloadToProcess) {
         setScannerFeedback({
@@ -348,71 +366,104 @@ export function UnifiedAttendanceKioskModal({
           return;
         }
 
-        // 3. Multi-tenant isolation verification
-        if (businessId && businessId !== current_business_id && emp.business_id !== current_business_id) {
+        // 3. Multi-tenant isolation & badge cryptographic verification
+        const activeBadge =
+          employeeBadges.find((b) => b.employeeId === emp.id && (b as any).status === "ACTIVE") ||
+          employeeBadges.find((b) => b.employeeId === emp.id);
+        const badgeSec = verifyScannedBadgeSecurity({
+          emp,
+          activeBadge,
+          allEmployeeBadges: employeeBadges,
+          signature,
+          payloadBusinessId: businessId,
+          currentBusinessId: current_business_id,
+          requireSignature: !isManualDropdownSelection
+        });
+        if (!badgeSec.valid) {
           if (onAddForensicLog) {
             onAddForensicLog({
               id: "f_sec_" + Math.random().toString(36).substring(2, 9),
               timestamp: new Date().toISOString(),
-              userId: "sys_kiosk",
-              userName: "Borne Entrée Sécurisée",
-              userRole: "EMPLOYEE",
-              business_id: current_business_id,
-              action: "ATTENDANCE_CROSS_TENANT_BREACH_REJECTED",
+              userId: currentUser?.id || "sys_kiosk",
+              userName: currentUser?.name || "Borne Entrée Sécurisée",
+              userRole: currentRole || "UNKNOWN",
+              business_id: current_business_id || emp.business_id || "global",
+              action: `ATTENDANCE_${badgeSec.reasonCode || "SECURITY_REJECTED"}`,
               beforeState: JSON.stringify({ current_business_id }),
-              afterState: JSON.stringify({ attemptedPayload: payloadToProcess }),
+              afterState: JSON.stringify({ attemptedPayload: payloadToProcess, targetEmp: emp.id }),
               ipAddress: getLocalIP(),
               userAgent: window.navigator.userAgent,
               signature: "threat_seal_" + Math.random().toString(36).substring(2, 8),
             });
           }
           playBeep("error");
-          addRecentScan(emp.name || "INCONNU", "ERROR", "CROSS_TENANT");
+          addRecentScan(emp.name || "INCONNU", "ERROR", badgeSec.reasonCode || "BREACH");
           setScannerFeedback({
             status: "breach",
-            message:
-              language === "fr"
-                ? "BRÈCHE DE SÉCURITÉ : Ce badge appartient à un tiers locataire. Accès rejeté."
-                : "SEKIRITE : Badj sa a se pou yon lòt konpayi. Aksè refize.",
+            message: badgeSec.message || "Validation de sécurité du badge refusée.",
           });
           setIsProcessing(false);
           return;
         }
 
-        // 4. Check revoked badge signature
-        const activeBadge = employeeBadges.find((b) => b.employeeId === emp.id);
-        const defaultHmac = `HMAC::${btoa((emp.id || "") + (emp.business_id || "")).substring(0, 16).toUpperCase()}`;
-        const isSignatureValid =
-          !signature ||
-          !activeBadge ||
-          !activeBadge.signature ||
-          activeBadge.signature === signature ||
-          (activeBadge as any).tokenHash === signature ||
-          signature === defaultHmac ||
-          (activeBadge as any)?.status === "ACTIVE";
-
-        if (!isSignatureValid && (activeBadge as any)?.status === "REVOKED") {
-          playBeep("error");
-          addRecentScan(emp.name, "ERROR", "SIG_REVOKED");
-          setScannerFeedback({
-            status: "breach",
-            message:
-              language === "fr"
-                ? "ALERTE SÉCURITÉ : Signature cryptographique de badge révoquée ou expirée."
-                : "ALÈT SEKIRITE : Siyati kripotgrafik badj sa a ekspire.",
-          });
-          setIsProcessing(false);
-          return;
-        }
+        // 4. Resolve authenticated operator (NEVER impersonate target employee) & verify RBAC policy
+        const authenticatedActor = resolveClientAuthenticatedActor({
+          currentUser,
+          currentRole,
+          currentBusinessId: current_business_id,
+          employees
+        });
 
         const now = new Date();
         const devMeta = getDeviceMetadata();
         const timeStr = getDeviceLocalTime(now); // Local machine time HH:MM:SS
         const dateStr = getDeviceLocalDate(now); // Local machine date YYYY-MM-DD
 
+        const exists = findAttendanceRecordForEmployee(emp, attendanceRecords, dateStr);
+        let calculatedAction: "IN" | "OUT" = "IN";
+
+        if (targetMode === "AUTO") {
+          calculatedAction = exists && exists.checkIn && !exists.checkOut ? "OUT" : "IN";
+        } else {
+          calculatedAction = targetMode;
+        }
+
+        const authDecision = authorizeAttendanceAction({
+          action: calculatedAction === "IN" ? "check_in" : "check_out",
+          actor: authenticatedActor,
+          targetEmployee: toTrustedAttendanceTarget(emp),
+          claimedBusinessId: current_business_id
+        });
+        if (!authDecision.allowed) {
+          if (onAddForensicLog) {
+            onAddForensicLog({
+              id: "f_rbac_" + Math.random().toString(36).substring(2, 9),
+              timestamp: new Date().toISOString(),
+              userId: authenticatedActor.uid || "UNKNOWN",
+              userName: authenticatedActor.displayName || "Operator",
+              userRole: String(authDecision.canonicalRole || authenticatedActor.role || "UNKNOWN"),
+              business_id: current_business_id || emp.business_id || "global",
+              action: `ATTENDANCE_RBAC_DENIED_${authDecision.code}`,
+              beforeState: JSON.stringify({ targetEmp: emp.id, targetBranch: emp.branchId }),
+              afterState: JSON.stringify({ code: authDecision.code, reason: authDecision.reason }),
+              ipAddress: getLocalIP(),
+              userAgent: window.navigator.userAgent,
+              signature: "rbac_seal_" + Math.random().toString(36).substring(2, 8),
+            });
+          }
+          playBeep("error");
+          addRecentScan(emp.name, "ERROR", authDecision.code);
+          setScannerFeedback({
+            status: "breach",
+            message: authDecision.reason,
+          });
+          setIsProcessing(false);
+          return;
+        }
+
         // 5. Check if payroll period is locked
         try {
-          await AttendanceRepository.verifyPeriodLock(emp.business_id || current_business_id, dateStr);
+          await AttendanceRepository.verifyPeriodLock(authDecision.canonicalBusinessId || emp.business_id || current_business_id, dateStr);
         } catch (lockErr: any) {
           playBeep("error");
           setScannerFeedback({
@@ -423,14 +474,20 @@ export function UnifiedAttendanceKioskModal({
           return;
         }
 
-        const exists = findAttendanceRecordForEmployee(emp, attendanceRecords, dateStr);
-        let calculatedAction: "IN" | "OUT" = "IN";
-
-        if (targetMode === "AUTO") {
-          calculatedAction = exists && exists.checkIn && !exists.checkOut ? "OUT" : "IN";
-        } else {
-          calculatedAction = targetMode;
-        }
+        const repoActorPayload = {
+          id: authenticatedActor.uid,
+          name: authenticatedActor.displayName || authenticatedActor.email || authenticatedActor.uid,
+          role: String(authDecision.canonicalRole || authenticatedActor.role || ""),
+          businessId: authenticatedActor.business_id || current_business_id,
+          branchId: authenticatedActor.branchId || undefined,
+          departmentId: authenticatedActor.departmentId || undefined,
+          employeeId: authenticatedActor.employeeId || undefined,
+          authorizedBranchIds: authenticatedActor.authorizedBranchIds || undefined,
+          authorizedDepartmentIds: authenticatedActor.authorizedDepartmentIds || undefined,
+          authorizedTeamIds: authenticatedActor.authorizedTeamIds || undefined,
+          explicitAttendanceDelegation: authenticatedActor.explicitAttendanceDelegation,
+          isSuperAdmin: authenticatedActor.isSuperAdmin
+        };
 
         // 6. Execute Check-in or Check-out
         if (calculatedAction === "IN") {
@@ -450,16 +507,19 @@ export function UnifiedAttendanceKioskModal({
           try {
             const session = await AttendanceRepository.checkIn({
               employeeId: emp.id,
-              businessId: emp.business_id || current_business_id,
+              businessId: authDecision.canonicalBusinessId || emp.business_id || current_business_id,
               branchId: emp.branchId || branchId || "BRANCH_DEFAULT",
-              method: "QR",
+              method: attendanceMethod,
               deviceId: devMeta.deviceId,
               location: "Borne Entrée Sécurisée Hub",
-              actor: { id: emp.id, name: emp.name, role: emp.role },
+              actor: repoActorPayload,
               deviceDate: dateStr,
               deviceTime: timeStr,
               deviceTimezone: devMeta.deviceTimezone,
               deviceInfo: devMeta.userAgent,
+              badgeId: activeBadge?.id,
+              qrSignature: signature || undefined,
+              badgePayload: payloadToProcess
             });
 
             const newRecord: AttendanceRecord = {
@@ -541,13 +601,18 @@ export function UnifiedAttendanceKioskModal({
           try {
             const session = await AttendanceRepository.checkOut({
               sessionId: exists.id,
-              method: "QR",
-              actor: { id: emp.id, name: emp.name, role: emp.role },
+              employeeId: emp.id,
+              businessId: authDecision.canonicalBusinessId || emp.business_id || current_business_id,
+              method: attendanceMethod,
+              actor: repoActorPayload,
               deviceId: devMeta.deviceId,
               deviceDate: dateStr,
               deviceTime: timeStr,
               deviceTimezone: devMeta.deviceTimezone,
               deviceInfo: devMeta.userAgent,
+              badgeId: activeBadge?.id,
+              qrSignature: signature || undefined,
+              badgePayload: payloadToProcess
             });
 
             const totalHours = session?.totalMinutes ? Number((session.totalMinutes / 60).toFixed(2)) : 8;
@@ -613,12 +678,16 @@ export function UnifiedAttendanceKioskModal({
     },
     [
       scannedQrString,
+      empSearchQuery,
+      selectedManualEmp,
       scanMode,
       language,
       employees,
       employeeBadges,
       attendanceRecords,
       current_business_id,
+      currentRole,
+      currentUser,
       onUpdateAttendance,
       onAddEvent,
       onAddForensicLog,
@@ -734,7 +803,8 @@ export function UnifiedAttendanceKioskModal({
               <div className="flex flex-col items-center justify-center p-3 bg-slate-900/80 border border-slate-800/90 rounded-2xl shadow-inner w-full">
                 <CameraQrScanner
                   onScanSuccess={(decodedText) => {
-                    processSecureScan(undefined, decodedText);
+                    setSelectedManualEmp(null);
+                    processSecureScan(undefined, decodedText, "QR_SCAN");
                   }}
                   isMuted={isMuted}
                   onToggleMute={() => setIsMuted(!isMuted)}
@@ -823,6 +893,7 @@ export function UnifiedAttendanceKioskModal({
                         onChange={(e) => {
                           setEmpSearchQuery(e.target.value);
                           setScannedQrString(e.target.value);
+                          setSelectedManualEmp(null);
                           setIsEmpDropdownOpen(true);
                         }}
                         onFocus={() => setIsEmpDropdownOpen(true)}
@@ -835,6 +906,7 @@ export function UnifiedAttendanceKioskModal({
                           onClick={() => {
                             setEmpSearchQuery("");
                             setScannedQrString("");
+                            setSelectedManualEmp(null);
                           }}
                           className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
                         >
@@ -889,6 +961,7 @@ export function UnifiedAttendanceKioskModal({
                                 onClick={() => {
                                   setScannedQrString(emp.id);
                                   setEmpSearchQuery(emp.name);
+                                  setSelectedManualEmp({ id: emp.id, name: emp.name });
                                   setIsEmpDropdownOpen(false);
                                 }}
                                 className="p-2.5 flex items-center justify-between hover:bg-cyan-950/40 cursor-pointer transition-colors"
@@ -922,8 +995,9 @@ export function UnifiedAttendanceKioskModal({
                                     e.stopPropagation();
                                     setScannedQrString(emp.id);
                                     setEmpSearchQuery(emp.name);
+                                    setSelectedManualEmp({ id: emp.id, name: emp.name });
                                     setIsEmpDropdownOpen(false);
-                                    processSecureScan("AUTO", emp.id);
+                                    processSecureScan("AUTO", emp.id, "MANUAL_SELECT");
                                   }}
                                   className="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold rounded uppercase transition shrink-0 ml-2 cursor-pointer"
                                 >

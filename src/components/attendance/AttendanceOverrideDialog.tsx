@@ -82,8 +82,8 @@ export default function AttendanceOverrideDialog({
       onAddForensicLog({
         id: "f_" + Math.random().toString(36).substring(2, 9),
         timestamp: new Date().toISOString(),
-        userId: currentRole === "OWNER" ? "e1" : "e2",
-        userName: currentUser?.name || "Manager",
+        userId: currentUser?.id || "",
+        userName: currentUser?.name || currentRole,
         userRole: currentRole,
         business_id: current_business_id,
         action: "ATTENDANCE_OVERRIDE_CREATED",

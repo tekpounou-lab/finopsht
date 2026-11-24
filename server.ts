@@ -29,6 +29,7 @@ import {
 } from "./src/services/payroll/EmployeeReceivableService";
 import { approvalRouter } from "./src/modules/workflow/approval/serverApprovalRoutes";
 import { transferRouter } from "./src/routes/transferRoutes";
+import { attendanceRouter } from "./src/routes/attendanceRoutes";
 import {
   authenticateToken,
   authenticateIdentityOnly,
@@ -740,6 +741,7 @@ export async function createApp() {
   // API endpoints: Phase 3 Transfer Intake & Payout Gateway & Forensic Verification
   app.use("/api/cash/transfers", transferRouter);
   app.use("/api/audit", transferRouter);
+  app.use("/api/attendance", attendanceRouter);
 
   // API endpoint: Phase D2 — Controlled Server-Side Auto-Provisioning of Tills & Safes (Firebase Admin SDK)
   app.post("/api/cash/tills/auto-provision", authenticateToken, async (req: AuthenticatedRequest, res) => {

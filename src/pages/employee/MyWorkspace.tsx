@@ -15,6 +15,7 @@ import {
   PayrollInputSnapshot
 } from "../../types";
 import { AttendanceRepository } from "../../repositories/AttendanceRepository";
+import { auth } from "../../lib/firebase";
 import { getDeviceLocalDate, getDeviceLocalTime } from "../../lib/attendanceSSOT";
 import { AnalyticsEngine, resolveEmployeeContractualHours } from "../../domains/analytics/services/AnalyticsEngine";
 import { toast } from "sonner";
@@ -403,12 +404,22 @@ export function MyWorkspace({
   const todayRecord = myAttendance.find((a) => a.date === todayStr);
   const isCheckedIn = !!todayRecord && !!todayRecord.checkIn && !todayRecord.checkOut;
 
-  // Handle Clock In / Clock Out
+  // Handle Clock In / Clock Out via Server-Authoritative Check-In/Check-Out APIs
   const handleClockIn = async () => {
     setIsClockingIn(true);
     try {
       const now = new Date();
       const timeStr = getDeviceLocalTime(now);
+      const actorUid = auth?.currentUser?.uid || resolvedEmployee.firebase_uid || resolvedEmployee.id;
+      const actorPayload = {
+        id: actorUid,
+        name: resolvedEmployee.name,
+        role: resolvedEmployee.role,
+        businessId: resolvedEmployee.business_id,
+        branchId: resolvedEmployee.branchId,
+        departmentId: resolvedEmployee.departmentId,
+        employeeId: resolvedEmployee.id
+      };
 
       if (!todayRecord) {
         const empHoursRes = resolveEmployeeContractualHours(
@@ -418,8 +429,20 @@ export function MyWorkspace({
         );
         const resolvedPlannedHours = empHoursRes.dailyHours ?? 0;
 
+        const session = await AttendanceRepository.checkIn({
+          employeeId: resolvedEmployee.id,
+          businessId: resolvedEmployee.business_id,
+          branchId: resolvedEmployee.branchId || "BRANCH-001",
+          method: "MANUAL",
+          deviceId: "workspace_web",
+          location: "Espace Employé",
+          actor: actorPayload,
+          deviceDate: todayStr,
+          deviceTime: timeStr
+        });
+
         const newRecord: AttendanceRecord = {
-          id: `ATT-${resolvedEmployee.id}-${todayStr}`,
+          id: session?.sessionId || `ATT-${resolvedEmployee.id}-${todayStr}`,
           employeeId: resolvedEmployee.id,
           employeeName: resolvedEmployee.name,
           business_id: resolvedEmployee.business_id,
@@ -431,29 +454,34 @@ export function MyWorkspace({
           plannedHours: resolvedPlannedHours,
           realHours: 0,
           variance: 0,
-          status: "NORMAL",
+          status: "NORMAL"
         };
 
-        await AttendanceRepository.saveRecord(newRecord, { uid: resolvedEmployee.id, name: resolvedEmployee.name, role: resolvedEmployee.role });
         onAddAttendanceSim?.(newRecord);
         toast.success(`Pointage d'entrée enregistré à ${timeStr}`);
       } else if (!todayRecord.checkOut) {
-        const [h1, m1] = String(todayRecord.checkIn || "").split(":").map(Number);
-        const [h2, m2] = String(timeStr || "").split(":").map(Number);
-        const mins1 = !isNaN(h1) ? h1 * 60 + (m1 || 0) : NaN;
-        const mins2 = !isNaN(h2) ? h2 * 60 + (m2 || 0) : NaN;
-        const computedRealHours =
-          !isNaN(mins1) && !isNaN(mins2) && mins2 > mins1
-            ? Number(((mins2 - mins1) / 60).toFixed(2))
-            : (todayRecord.plannedHours || 0);
+        const activeSessionId = (await AttendanceRepository.getActiveSession(resolvedEmployee.id)) || todayRecord.id;
+        const session = await AttendanceRepository.checkOut({
+          sessionId: activeSessionId,
+          employeeId: resolvedEmployee.id,
+          businessId: resolvedEmployee.business_id,
+          method: "MANUAL",
+          actor: actorPayload,
+          deviceId: "workspace_web",
+          deviceDate: todayStr,
+          deviceTime: timeStr
+        });
+
+        const computedRealHours = session?.totalMinutes
+          ? Number((session.totalMinutes / 60).toFixed(2))
+          : (todayRecord.plannedHours || 0);
         const updatedRecord: AttendanceRecord = {
           ...todayRecord,
           checkOut: timeStr,
           realHours: computedRealHours,
-          variance: Number((computedRealHours - (todayRecord.plannedHours || 0)).toFixed(2)),
+          variance: Number((computedRealHours - (todayRecord.plannedHours || 0)).toFixed(2))
         };
 
-        await AttendanceRepository.saveRecord(updatedRecord, { uid: resolvedEmployee.id, name: resolvedEmployee.name, role: resolvedEmployee.role });
         onAddAttendanceSim?.(updatedRecord);
         toast.success(`Pointage de sortie enregistré à ${timeStr}`);
       }

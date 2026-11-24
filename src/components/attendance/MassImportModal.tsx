@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import * as xlsx from 'xlsx';
 import { Employee, AttendanceRecord, Role, ERPEvent, ForensicLog } from '../../types';
-import { db, getDbDoc } from '../../lib/firebase';
+import { auth, db, getDbDoc } from '../../lib/firebase';
 import { setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { AttendanceRepository } from '../../repositories/AttendanceRepository';
 import { finopsEventOrchestrator } from '../../services/finopsEventOrchestrator';
@@ -272,17 +272,38 @@ export default function MassImportModal({
   // 4. Enterprise Pipeline Validation Logic
   const validateRows = async (rows: ParsedRow[]) => {
     let lockedCycles: any[] = [];
+    let lockCheckFailed = false;
     try {
-      const q = query(
-        collection(db, "payroll_cycles"),
-        where("business_id", "==", current_business_id),
-        where("status", "in", ["LOCKED", "PESSIMISTIC_LOCKED", "SEALED", "PAID"])
-      );
-      const snap = await getDocs(q);
-      lockedCycles = snap.docs.map(docSnap => docSnap.data());
+      const lockedStatuses = ["LOCKED", "PESSIMISTIC_LOCKED", "SEALED", "PAID"];
+      const [snapSnake, snapCamel] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, "payroll_cycles"),
+            where("business_id", "==", current_business_id),
+            where("status", "in", lockedStatuses)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, "payroll_cycles"),
+            where("businessId", "==", current_business_id),
+            where("status", "in", lockedStatuses)
+          )
+        )
+      ]);
+      const merged = new Map<string, any>();
+      snapSnake.docs.forEach((docSnap) => merged.set(docSnap.id, { id: docSnap.id, ...docSnap.data() }));
+      snapCamel.docs.forEach((docSnap) => merged.set(docSnap.id, { id: docSnap.id, ...docSnap.data() }));
+      lockedCycles = Array.from(merged.values());
     } catch (err) {
-      console.warn("Could not fetch locked payroll cycles for validation:", err);
+      console.error("Failed to fetch locked payroll cycles (fail-closed):", err);
+      lockCheckFailed = true;
     }
+
+    const tenantEmployees = employees.filter((emp) => {
+      const empBiz = emp.business_id || (emp as any).businessId;
+      return !current_business_id || empBiz === current_business_id;
+    });
 
     const results: ValidatedRow[] = [];
     const internalKeysHistory = new Set<string>();
@@ -293,6 +314,12 @@ export default function MassImportModal({
       const warnings: string[] = [];
       let rejectionReason: string | undefined = undefined;
       let rejectionCategory: RejectionCategory | undefined = undefined;
+
+      if (lockCheckFailed) {
+        rejectionCategory = "PERIOD_LOCKED";
+        rejectionReason = "Vérification du verrouillage de paie impossible (fail-closed).";
+        errors.push(rejectionReason);
+      }
 
       const r = row as any;
       // Extract raw inputs with flexible column aliases
@@ -314,19 +341,19 @@ export default function MassImportModal({
       const rawDate = r.attendance_date || r.date || r.date_pointage || r.jour || "";
       const cleanDate = cleanDateString(rawDate);
 
-      // --- STEP 1: Employee Resolution (Rule 1) ---
+      // --- STEP 1: Employee Resolution (Rule 1, Tenant-Scoped) ---
       let matchedEmployee: Employee | undefined = undefined;
       
       // Priority 1: Email
       if (rawEmail) {
         const searchEmail = rawEmail.toLowerCase();
-        matchedEmployee = employees.find(emp => emp.email && emp.email.toLowerCase().trim() === searchEmail);
+        matchedEmployee = tenantEmployees.find(emp => emp.email && emp.email.toLowerCase().trim() === searchEmail);
       }
       
       // Priority 2: Employee ID / Badge / Registration / Matricule / Code / NIF
       if (!matchedEmployee && rawEmpId) {
         const searchId = rawEmpId.toLowerCase();
-        matchedEmployee = employees.find(emp => 
+        matchedEmployee = tenantEmployees.find(emp => 
           emp.id.toLowerCase() === searchId || 
           (emp as any).employee_id?.toString().toLowerCase() === searchId ||
           (emp as any).badgeNumber?.toString().toLowerCase() === searchId ||
@@ -341,7 +368,7 @@ export default function MassImportModal({
       // Fallback: Employee Name
       if (!matchedEmployee && rawName) {
         const searchName = rawName.toLowerCase();
-        matchedEmployee = employees.find(emp => emp.name && emp.name.toLowerCase().trim() === searchName);
+        matchedEmployee = tenantEmployees.find(emp => emp.name && emp.name.toLowerCase().trim() === searchName);
       }
 
       if (!matchedEmployee) {
@@ -538,11 +565,14 @@ export default function MassImportModal({
     let successCountLocal = 0;
 
     const validRecords = validRows.map(r => r.mappedRecord!);
+    const resolvedActorId = auth?.currentUser?.uid || currentUser?.id || "";
+    const resolvedActorName = currentUser?.name || auth?.currentUser?.displayName || currentRole || "Operator";
+
     try {
       await AttendanceRepository.batchSaveRecords(current_business_id, validRecords, {
-        id: currentUser?.id || "sys_import",
-        name: currentUser?.name || "Importateur",
-        role: currentRole || "MANAGER"
+        id: resolvedActorId,
+        name: resolvedActorName,
+        role: currentRole
       });
 
       for (let i = 0; i < validRecords.length; i++) {
@@ -605,8 +635,8 @@ export default function MassImportModal({
       onAddForensicLog({
         id: `fLog_bulk_att_${Math.random().toString(36).substring(2,9)}`,
         timestamp: new Date().toISOString(),
-        userId: currentRole === "OWNER" ? "e1" : "e2",
-        userName: currentUser?.name || "System",
+        userId: resolvedActorId,
+        userName: resolvedActorName,
         userRole: currentRole,
         business_id: current_business_id,
         action: "ATTENDANCE_BULK_IMPORT_COMPLETED",

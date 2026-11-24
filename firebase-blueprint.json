@@ -1047,6 +1047,30 @@
     "/teller_transactions/{id}": {
       "schema": "TellerTransaction",
       "description": "Immutable operational counter cash movements (collection, disbursement, foreign exchange) linked to balanced double-entry GL ledger transactions."
+    },
+    "/attendance_sessions/{id}": {
+      "schema": "AttendanceRecord",
+      "description": "Server-authoritative attendance work sessions written exclusively by Firebase Admin SDK."
+    },
+    "/attendance_records/{id}": {
+      "schema": "AttendanceRecord",
+      "description": "Server-authoritative attendance mirror records written exclusively by Firebase Admin SDK."
+    },
+    "/attendance_events/{id}": {
+      "schema": "ERPEvent",
+      "description": "Server-authoritative immutable attendance audit events written exclusively by Firebase Admin SDK."
+    },
+    "/attendance_status/{id}": {
+      "schema": "AttendanceRecord",
+      "description": "Server-authoritative active attendance session pointer per employee written exclusively by Firebase Admin SDK."
+    },
+    "/attendance_adjustment_requests/{requestId}": {
+      "schema": "AttendanceRecord",
+      "description": "Server-authoritative attendance adjustment requests with Maker-Checker enforcement."
+    },
+    "/attendance_idempotency/{id}": {
+      "schema": "ERPEvent",
+      "description": "Server-authoritative idempotency ledger preventing duplicate attendance check-in/check-out replays."
     }
   }
 }

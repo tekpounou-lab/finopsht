@@ -39,7 +39,7 @@ describe("P0 RBAC Operational Roles Verification Suite", () => {
     expect(headTellerPerms).toContain("cash.view");
     expect(headTellerPerms).toContain("cash.operate");
     expect(headTellerPerms).toContain("cash.transfer");
-    expect(headTellerPerms).toContain("override_attendance");
+    expect(headTellerPerms).not.toContain("override_attendance");
 
     const juniorTellerPerms = await PermissionRepository.getRolePermissions("JUNIOR_TELLER");
     expect(juniorTellerPerms).toContain("cash.view");

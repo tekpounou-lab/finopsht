@@ -1484,9 +1484,9 @@ const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         }}
         employees={employees}
         attendanceRecords={attendanceRecords}
-        current_business_id={currentBusiness?.id || "b1"}
+        current_business_id={currentBusiness?.id || ""}
         currentRole={currentRole}
-        currentUser={{ name: currentUserEmail || "Admin", id: currentUserId || "u1" }}
+        currentUser={{ name: currentUserEmail || "", id: currentUserId || "" }}
         branches={branches}
         departments={departments}
         employeeBadges={employeeBadges}

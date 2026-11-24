@@ -301,13 +301,13 @@ export const PermissionRepository = {
       OWNER: [
         "view_dashboard", "read_bi", "manage_settings", "manage_employees", "invite_employees",
         "manage_payroll", "lock_payroll", "view_ledger", "write_ledger", "view_documents",
-        "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs",
+        "manage_leaves", "override_attendance", "log_attendance", "attendance.record_self", "attendance.record_others", "use_aicfo", "view_audit_logs",
         "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve"
       ],
       ADMIN: [
         "view_dashboard", "read_bi", "manage_settings", "manage_employees", "invite_employees",
         "manage_payroll", "view_ledger", "write_ledger", "view_documents",
-        "manage_leaves", "override_attendance", "use_aicfo", "view_audit_logs",
+        "manage_leaves", "override_attendance", "log_attendance", "attendance.record_self", "attendance.record_others", "use_aicfo", "view_audit_logs",
         "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve"
       ],
       DIRECTOR: [
@@ -316,11 +316,11 @@ export const PermissionRepository = {
       ],
       MANAGER: [
         "view_dashboard", "manage_employees", "invite_employees", "manage_payroll", "view_ledger",
-        "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "use_aicfo",
+        "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "log_attendance", "attendance.record_self", "attendance.record_others", "use_aicfo",
         "cash.view", "cash.operate", "cash.transfer", "cash.supervise", "transfer.approve"
       ],
       SUPERVISOR: [
-        "view_dashboard", "manage_employees", "view_documents", "manage_leaves", "view_employee_space", "override_attendance", "cash.view"
+        "view_dashboard", "manage_employees", "view_documents", "manage_leaves", "view_employee_space", "log_attendance", "attendance.record_self", "attendance.record_others", "cash.view"
       ],
       HR_MANAGER: [
         "view_dashboard", "manage_employees", "invite_employees", "manage_leaves", "view_documents", "view_employee_space"
@@ -332,30 +332,30 @@ export const PermissionRepository = {
         "view_dashboard", "manage_payroll", "lock_payroll", "view_documents", "view_employee_space"
       ],
       TEAM_LEADER: [
-        "view_dashboard", "manage_leaves", "override_attendance", "view_employee_space"
+        "view_dashboard", "manage_leaves", "log_attendance", "attendance.record_self", "attendance.record_others", "view_employee_space"
       ],
       MASTER_HEAD_TELLER: [
         "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "cash.supervise",
-        "view_documents", "view_employee_space", "override_attendance"
+        "view_documents", "view_employee_space", "log_attendance", "attendance.record_self"
       ],
       HEAD_TELLER: [
         "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "cash.supervise",
-        "view_documents", "view_employee_space", "override_attendance"
+        "view_documents", "view_employee_space", "log_attendance", "attendance.record_self"
       ],
       SENIOR_TELLER: [
-        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "view_documents", "view_employee_space"
+        "view_dashboard", "cash.view", "cash.operate", "cash.transfer", "view_documents", "view_employee_space", "log_attendance", "attendance.record_self"
       ],
       JUNIOR_TELLER: [
-        "view_dashboard", "cash.view", "cash.operate", "view_documents", "view_employee_space"
+        "view_dashboard", "cash.view", "cash.operate", "view_documents", "view_employee_space", "log_attendance", "attendance.record_self"
       ],
       TELLER: [
-        "view_dashboard", "cash.view", "cash.operate", "view_documents", "view_employee_space"
+        "view_dashboard", "cash.view", "cash.operate", "view_documents", "view_employee_space", "log_attendance", "attendance.record_self"
       ],
       AUDITOR: [
         "view_dashboard", "read_bi", "view_ledger", "view_documents", "view_audit_logs", "cash.view", "view_employee_space", "use_aicfo"
       ],
       EMPLOYEE: [
-        "view_employee_space", "view_documents", "request_leaves", "log_attendance"
+        "view_employee_space", "view_documents", "request_leaves", "log_attendance", "attendance.record_self"
       ],
       GUEST: [
         "view_employee_space"
@@ -366,6 +366,14 @@ export const PermissionRepository = {
     if (!defaultPermissionsMap[upperRole]) {
       return []; // Unknown or invalid roles are granted ZERO permissions (defense-in-depth)
     }
+
+    const canOverrideAttendanceRole = ["SUPER_ADMIN", "OWNER", "ADMIN", "OWNER_ADMIN", "MANAGER"].includes(upperRole);
+    const sanitizeDynamicPermissions = (perms: string[]): string[] =>
+      canOverrideAttendanceRole
+        ? perms
+        : perms.filter(
+            (p) => !["override_attendance", "attendance.override", "attendance.approve"].includes(String(p).toLowerCase())
+          );
 
     if (!business_id || !auth.currentUser) {
       return defaultPermissionsMap[upperRole];
@@ -381,7 +389,7 @@ export const PermissionRepository = {
           const uiToBackendMap: Record<string, string[]> = {
             "employees.read": ["view_employee_space", "view_documents"],
             "employees.write": ["manage_employees", "invite_employees"],
-            "attendance.manage": ["override_attendance", "manage_leaves"],
+            "attendance.manage": canOverrideAttendanceRole ? ["override_attendance", "manage_leaves"] : ["manage_leaves"],
             "payroll.run": ["manage_payroll"],
             "payroll.lock": ["lock_payroll", "validate_payroll"],
             "finance.view": ["view_ledger"],
@@ -399,7 +407,7 @@ export const PermissionRepository = {
             }
           });
           backendPerms.add("view_dashboard"); // Baseline
-          return Array.from(backendPerms);
+          return sanitizeDynamicPermissions(Array.from(backendPerms));
         }
       }
     } catch (error: any) {
@@ -415,7 +423,7 @@ export const PermissionRepository = {
     try {
       const snap = await resilientGetDoc(doc(db, "businesses", business_id, "roles_config", role.toUpperCase()), { timeoutMs: 2000, maxRetries: 1, fallbackToCache: true, throwOnNetworkFailure: false });
       if (snap && snap.exists() && snap.data().permissions) {
-        return snap.data().permissions as string[];
+        return sanitizeDynamicPermissions(snap.data().permissions as string[]);
       }
     } catch (error: any) {
       if (auth.currentUser) {
