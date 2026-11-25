@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Mail, CheckCircle, LogOut, XCircle } from 'lucide-react';
+import { Mail, CheckCircle, LogOut, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useIdentity } from '../modules/identity/IdentityContext';
 import { useI18n } from '../i18n';
-import { auth, db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth } from '../lib/firebase';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -12,28 +11,45 @@ export default function AcceptInvitation() {
   const { identity, acceptInvitation, rejectInvitation } = useIdentity();
   const { language } = useI18n();
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [businessName, setBusinessName] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const invitation = identity?.invitation;
-  const targetBusinessId = invitation?.business_id;
+  const targetBusinessId = invitation?.business_id || (invitation as any)?.businessId || '';
+  const invitationId = invitation?.id || '';
+  const cachedBusinessName =
+    identity?.business?.name ||
+    invitation?.business_name ||
+    (invitation as any)?.businessName ||
+    (invitation as any)?.companyName ||
+    null;
 
   useEffect(() => {
-    if (!targetBusinessId) return;
+    if (cachedBusinessName) {
+      setBusinessName(cachedBusinessName);
+      return;
+    }
+    if (!invitationId) return;
 
     let active = true;
+    const controller = new AbortController();
     const fetchBusinessName = async () => {
       try {
-        const docRef = doc(db, "businesses", targetBusinessId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists() && active) {
-          const data = docSnap.data();
-          if (data?.name) {
-            setBusinessName(data.name);
-          }
+        const res = await fetch(
+          `/api/invitations/lookup?token=${encodeURIComponent(invitationId)}`,
+          { signal: controller.signal }
+        );
+        if (!res.ok) return;
+        const body = await res.json().catch(() => null);
+        const resolvedName = body?.invitation?.businessName;
+        if (resolvedName && active) {
+          setBusinessName(resolvedName);
         }
-      } catch (err) {
-        console.error("Error fetching business name for accept invitation:", err);
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          console.warn('[AcceptInvitation] Business name lookup skipped:', err?.message || err);
+        }
       }
     };
 
@@ -41,31 +57,38 @@ export default function AcceptInvitation() {
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [targetBusinessId]);
+  }, [invitationId, cachedBusinessName]);
 
   const handleAccept = async () => {
-    if (!invitation) return;
+    if (!invitation || loading) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       await acceptInvitation(invitation.id);
       toast.success(language === "fr" ? "Invitation acceptée !" : "Invitation accepted!");
       navigate("/dashboard");
     } catch (e: any) {
-      toast.error(e.message);
+      const msg = e?.message || (language === "fr" ? "Erreur lors de l'acceptation." : "Failed to accept invitation.");
+      setErrorMsg(msg);
+      toast.error(msg);
       setLoading(false);
     }
   };
 
   const handleReject = async () => {
-    if (!invitation) return;
+    if (!invitation || loading) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       await rejectInvitation(invitation.id);
       toast.success(language === "fr" ? "Invitation refusée." : "Invitation rejected.");
       navigate("/onboarding");
     } catch (e: any) {
-      toast.error(e.message);
+      const msg = e?.message || (language === "fr" ? "Erreur lors du refus." : "Failed to reject invitation.");
+      setErrorMsg(msg);
+      toast.error(msg);
       setLoading(false);
     }
   };
@@ -97,7 +120,7 @@ export default function AcceptInvitation() {
           {language === "fr" ? "Vous avez été invité à rejoindre une entreprise sur le réseau FinOps ERP." : language === "ht" ? "Ou te envite pou rantre nan yon konpayi sou rezo FinOps ERP." : "You have been invited to join a company on the FinOps ERP network."}
         </p>
         
-        <div className="bg-slate-950/50 rounded-lg p-5 mb-8 flex flex-col gap-2 text-left border border-slate-800/50">
+        <div className="bg-slate-950/50 rounded-lg p-5 mb-6 flex flex-col gap-2 text-left border border-slate-800/50">
           <div className="flex justify-between items-center pb-2 border-b border-slate-800/50">
             <span className="text-xs text-slate-500 uppercase font-bold">
               {language === "fr" ? "Rôle assigné" : language === "ht" ? "Wòl ou" : "Assigned Role"}
@@ -109,10 +132,33 @@ export default function AcceptInvitation() {
               {language === "fr" ? "Entreprise" : language === "ht" ? "Konpayi" : "Business"}
             </span>
             <span className="text-xs text-slate-300 font-mono">
-              {businessName || identity?.business?.name || invitation.business_name || invitation.business_id}
+              {businessName || cachedBusinessName || targetBusinessId || "FINOPS Enterprise"}
             </span>
           </div>
         </div>
+
+        {errorMsg && (
+          <div className="mb-6 rounded-xl border border-rose-500/40 bg-rose-950/30 p-3.5 text-left">
+            <div className="flex items-start gap-2.5 text-xs text-rose-200">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-rose-300 mb-1">
+                  {language === "fr" ? "Impossible de finaliser l'opération" : "Unable to complete action"}
+                </p>
+                <p className="text-rose-200/80 break-words">{errorMsg}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={handleAccept}
+              className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-300 hover:text-cyan-200 disabled:opacity-50"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              {language === "fr" ? "Réessayer" : "Retry"}
+            </button>
+          </div>
+        )}
         
         <div className="flex flex-col gap-3">
           <button 
@@ -127,7 +173,7 @@ export default function AcceptInvitation() {
           <button 
             disabled={loading}
             onClick={handleReject}
-            className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium transition-colors"
+            className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-xl font-medium transition-colors"
           >
             <XCircle className="w-4 h-4" />
             {language === "fr" ? "Refuser l'invitation" : "Reject invitation"}

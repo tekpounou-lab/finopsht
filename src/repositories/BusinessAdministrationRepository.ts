@@ -5,6 +5,7 @@ import { STATUTORY_TAX_RATES, SURVIVAL_FLOOR_HTG, BASE_CURRENCY } from "../const
 import { StaticDataCacheService } from "../services/cache/StaticDataCacheService";
 import { isQuotaExceededError, resilientGetDoc } from "../utils/resilientFirestore";
 import { idbCache } from "../services/cache/idb";
+import { ForensicLogRepository } from "./ForensicLogRepository";
 
 export interface TaxConfigRecord {
   cnssRateEmployee: number; // e.g. 0.06 (6%)
@@ -204,17 +205,17 @@ export const BusinessAdministrationRepository = {
       await StaticDataCacheService.invalidateKey(`tax_config:${businessId}`);
 
       try {
-        await addDoc(collection(db, "forensic_logs"), {
-          id: "f_pol_" + Math.random().toString(36).substring(2, 9),
-          timestamp: new Date().toISOString(),
-          userId: actorId || "system",
-          userRole: "ADMIN",
+        const log = await ForensicLogRepository.createAndSignLog({
           business_id: businessId,
+          actorId: actorId || "system",
+          userRole: "ADMIN",
           action: "PAYROLL_POLICIES_UPDATED",
           beforeState: "{}",
           afterState: JSON.stringify(policies),
-          signature: "seal_pol_" + Math.random().toString(36).substring(2, 9)
+          timestamp: new Date().toISOString(),
+          details: "Mise à jour des politiques de paie."
         });
+        await ForensicLogRepository.writeForensicLog(log);
       } catch (logErr) {
         console.warn("[BusinessAdministrationRepository] Failed to log forensic entry:", logErr);
       }
@@ -369,17 +370,17 @@ export const BusinessAdministrationRepository = {
       await StaticDataCacheService.invalidateKey(`tax_config:${businessId}`);
 
       try {
-        await addDoc(collection(db, "forensic_logs"), {
-          id: "f_tax_" + Math.random().toString(36).substring(2, 9),
-          timestamp: new Date().toISOString(),
-          userId: actorId || "system",
-          userRole: "ADMIN",
+        const log = await ForensicLogRepository.createAndSignLog({
           business_id: businessId,
+          actorId: actorId || "system",
+          userRole: "ADMIN",
           action: "TAX_CONFIGURATION_UPDATED",
           beforeState: "{}",
           afterState: JSON.stringify(config),
-          signature: "seal_tax_" + Math.random().toString(36).substring(2, 9)
+          timestamp: new Date().toISOString(),
+          details: "Mise à jour de la configuration fiscale."
         });
+        await ForensicLogRepository.writeForensicLog(log);
       } catch (logErr) {
         console.warn("[BusinessAdministrationRepository] Non-fatal: Failed to write forensic log:", logErr);
       }

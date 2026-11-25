@@ -246,129 +246,30 @@ export const InvitationLifecycleService = {
   },
 
   /**
-   * Accept an invitation and bind to Firebase Auth Identity
+   * Client-side invitation acceptance is disabled for security.
+   * All invitation acceptances must execute via EnterpriseIdentityOrchestrator -> POST /api/invitations/accept.
    */
   async acceptInvitation(
-    invitationId: string,
-    firebaseUid: string,
-    actor: { id: string; name: string; role: string }
+    _invitationId: string,
+    _firebaseUid: string,
+    _actor: { id: string; name: string; role: string }
   ): Promise<Employee> {
-    const invRef = doc(db, "invitations", invitationId);
-    let inviteData: Invitation | null = null;
-    let employee: Employee | null = null;
-
-    await runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(invRef);
-      if (!snap.exists()) throw new Error("Invitation introuvable.");
-
-      inviteData = snap.data() as Invitation;
-      if (inviteData.status === "ACCEPTED") {
-        console.info(`[InvitationLifecycleService] Invitation ${invitationId} is already ACCEPTED. Proceeding idempotently.`);
-        return;
-      }
-      if (inviteData.status !== "PENDING" && inviteData.status !== "SENT") {
-        throw new Error("Cette invitation a déjà été expirée ou révoquée.");
-      }
-
-      const employeeId = inviteData.employeeId;
-      if (!employeeId) throw new Error("L'invitation ne référence aucun employé.");
-
-      const empRef = doc(db, "employees", employeeId);
-      const empSnap = await transaction.get(empRef);
-      if (!empSnap.exists()) throw new Error("Fiche employé introuvable.");
-
-      const empData = empSnap.data() as Employee;
-
-      const invProfileInfo = extractRawOperationalProfileFromRecord(inviteData);
-      const empProfileInfo = extractRawOperationalProfileFromRecord(empData);
-      if (invProfileInfo.conflict || empProfileInfo.conflict) {
-        throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS: Incohérence de profil opérationnel sur l'invitation ou l'employé.");
-      }
-
-      const rawProfile = invProfileInfo.hasValue ? invProfileInfo.rawValue : empProfileInfo.rawValue;
-      const effectiveRole = inviteData.role || empData.role;
-      const compat = validateRoleOperationalProfileCompatibility(effectiveRole, rawProfile, {
-        allowLegacyBarberAlias: true,
-        allowMissingForExecutiveOrOversight: true
-      });
-      if (!compat.valid) {
-        throw new Error(`${compat.code}: ${compat.reason}`);
-      }
-
-      const profileFields = compat.normalizedProfile
-        ? {
-            operational_profile: compat.normalizedProfile,
-            operationalProfile: compat.normalizedProfile
-          }
-        : {};
-
-      // Update Employee status to ACTIVE, bind firebase_uid
-      const empUpdates: Partial<Employee> = {
-        status: "ACTIVE",
-        isActive: true,
-        uid: firebaseUid,
-        firebase_uid: firebaseUid,
-        ...profileFields,
-        updatedAt: new Date().toISOString()
-      };
-      transaction.update(empRef, empUpdates);
-
-      // Create / Update UserProfile doc
-      const userRef = doc(db, "users", firebaseUid);
-      const userProfile = {
-        uid: firebaseUid,
-        id: firebaseUid,
-        email: inviteData.email.toLowerCase().trim(),
-        name: inviteData.name || empData.name,
-        role: effectiveRole,
-        ...profileFields,
-        business_id: inviteData.business_id,
-        branchId: inviteData.branchId,
-        departmentId: inviteData.departmentId,
-        employee_id: employeeId,
-        onboarding_completed: true,
-        account_status: "ACTIVE",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      transaction.set(userRef, userProfile, { merge: true });
-
-      // Update Invitation status to ACCEPTED
-      transaction.update(invRef, {
-        status: "ACCEPTED",
-        updatedAt: new Date().toISOString()
-      });
-
-      employee = { ...empData, ...empUpdates } as Employee;
-    });
-
-    if (inviteData && employee) {
-      await EmployeeAuditService.logTransition({
-        employeeId: (inviteData as Invitation).employeeId || "",
-        actorId: actor.id,
-        actorName: actor.name,
-        actorRole: actor.role,
-        business_id: (inviteData as Invitation).business_id,
-        action: "INVITATION_ACCEPTED",
-        beforeState: inviteData,
-        afterState: employee,
-        severity: "info",
-        metadata: { firebaseUid }
-      });
-    }
-
-    return employee!;
+    throw new Error(
+      "CLIENT_INVITATION_ACCEPTANCE_FORBIDDEN: Invitation acceptance must execute through POST /api/invitations/accept."
+    );
   },
 
   /**
-   * Refuse / Reject invitation
+   * Client-side invitation refusal is disabled for security.
+   * All invitation rejections must execute via EnterpriseIdentityOrchestrator -> POST /api/invitations/reject.
    */
   async refuseInvitation(
-    invitationId: string,
-    actor: { id: string; name: string; role: string }
+    _invitationId: string,
+    _actor: { id: string; name: string; role: string }
   ): Promise<void> {
-    const invRef = doc(db, "invitations", invitationId);
-    await updateDoc(invRef, { status: "REVOKED", rejectedAt: new Date().toISOString() });
+    throw new Error(
+      "CLIENT_INVITATION_REJECTION_FORBIDDEN: Invitation rejection must execute through POST /api/invitations/reject."
+    );
   },
 
   /**

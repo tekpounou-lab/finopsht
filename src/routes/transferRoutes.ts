@@ -1,5 +1,6 @@
 import { Router, Response } from "express";
 import {
+  authenticateIdentityOnly,
   authenticateToken,
   AuthenticatedRequest,
   isInvalidTenantId
@@ -362,6 +363,167 @@ transferRouter.post("/verify-log", authenticateToken, async (req: AuthenticatedR
       verified: false,
       error: "INTERNAL_SERVER_ERROR",
       message: "Erreur interne lors de la vérification du journal forensique."
+    });
+  }
+});
+
+// Endpoint 3b: Server-Authoritative Forensic Log Persistence
+const SELF_SCOPED_GLOBAL_AUDIT_PREFIXES = [
+  "USER_",
+  "PENDING_BUSINESS_",
+  "INVITATION_",
+  "AUTH_",
+  "WORKSPACE_AUDIT_INITIALIZED",
+  "STATUTORY_TAX_POLICIES_CONFIRMED",
+  "RBAC_TENANT_ISOLATION_VERIFIED",
+  "SECURITY_ALERT"
+];
+
+function stripUndefinedProps<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      clean[k] = v;
+    }
+  }
+  return clean;
+}
+
+transferRouter.post("/forensic-logs", authenticateIdentityOnly, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication required." });
+    }
+
+    const rawBody = req.body || {};
+    const incomingLog = rawBody.log && typeof rawBody.log === "object" ? rawBody.log : rawBody;
+    const action = typeof incomingLog?.action === "string" ? incomingLog.action.trim() : "";
+
+    if (!action) {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_LOG_PAYLOAD",
+        message: "log.action is required."
+      });
+    }
+
+    const rawBizSnake = typeof incomingLog.business_id === "string" ? incomingLog.business_id.trim() : "";
+    const rawBizCamel = typeof incomingLog.businessId === "string" ? incomingLog.businessId.trim() : "";
+    const rawBizId = rawBizSnake || rawBizCamel;
+    const isGlobalScope = rawBizId === "" || rawBizId.toLowerCase() === "global";
+
+    let canonicalBusinessId = "";
+    if (isGlobalScope) {
+      const isAllowedGlobalAction =
+        req.user.isSuperAdmin ||
+        incomingLog.audit_type === "AUTH_AUDIT_LOGS" ||
+        SELF_SCOPED_GLOBAL_AUDIT_PREFIXES.some((prefix) => action.toUpperCase().startsWith(prefix));
+      if (!isAllowedGlobalAction) {
+        return res.status(400).json({
+          success: false,
+          error: "MISSING_TENANT_CONTEXT",
+          message: "log.business_id is required for tenant-scoped forensic logs."
+        });
+      }
+      canonicalBusinessId = req.user.isSuperAdmin && rawBizId ? rawBizId : req.user.business_id || "global";
+    } else {
+      if (isInvalidTenantId(rawBizId) || rawBizId.toUpperCase() === "DEFAULT") {
+        return res.status(400).json({
+          success: false,
+          error: "MISSING_TENANT_CONTEXT",
+          message: "log.business_id must be a valid tenant identifier."
+        });
+      }
+      if (!req.user.isSuperAdmin && rawBizId !== req.user.business_id) {
+        return res.status(403).json({
+          success: false,
+          error: "FORBIDDEN_TENANT_ACCESS",
+          message: "Client is not authorized to record forensic logs for another tenant."
+        });
+      }
+      canonicalBusinessId = rawBizId;
+    }
+
+    const logId =
+      typeof incomingLog.id === "string" && incomingLog.id.trim()
+        ? incomingLog.id.trim()
+        : `flog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const timestamp =
+      typeof incomingLog.timestamp === "string" && incomingLog.timestamp.trim()
+        ? incomingLog.timestamp.trim()
+        : new Date().toISOString();
+
+    const requestedActorId =
+      typeof incomingLog.actorId === "string" && incomingLog.actorId.trim()
+        ? incomingLog.actorId.trim()
+        : typeof incomingLog.userId === "string" && incomingLog.userId.trim()
+          ? incomingLog.userId.trim()
+          : "";
+
+    const signaturePayload = {
+      id: logId,
+      business_id: canonicalBusinessId,
+      action,
+      actorId: req.user.uid,
+      timestamp,
+      details: incomingLog.details ?? "",
+      beforeState: incomingLog.beforeState ?? null,
+      afterState: incomingLog.afterState ?? null,
+      keyVersion: "v2_server"
+    };
+    const serverSignature = computeServerHMACSignature(signaturePayload);
+
+    const sealedRecord = stripUndefinedProps({
+      ...incomingLog,
+      id: logId,
+      business_id: canonicalBusinessId,
+      action,
+      actorId: req.user.uid,
+      userId: req.user.uid,
+      ...(requestedActorId && requestedActorId !== req.user.uid ? { sourceActorId: requestedActorId } : {}),
+      userName: incomingLog.userName || req.user.email || "USER",
+      userRole: incomingLog.userRole || req.user.role || "EMPLOYEE",
+      timestamp,
+      details: incomingLog.details ?? "",
+      beforeState: incomingLog.beforeState ?? null,
+      afterState: incomingLog.afterState ?? null,
+      keyVersion: "v2_server",
+      signature: serverSignature,
+      verifiedByServer: true,
+      _server_timestamp: new Date().toISOString()
+    });
+    delete sealedRecord.businessId;
+    delete sealedRecord.tenantId;
+    delete sealedRecord.tenant_id;
+
+    const adminDb = getAdminFirestore();
+    await adminDb.collection("forensic_logs").doc(logId).set(sealedRecord);
+
+    return res.status(201).json({
+      success: true,
+      id: logId,
+      signature: serverSignature,
+      keyVersion: "v2_server"
+    });
+  } catch (error: any) {
+    const errMsg = String(error?.message || error || "");
+    const isAdminUnavailable =
+      errMsg.includes("PERMISSION_DENIED") ||
+      errMsg.includes("Could not load the default credentials") ||
+      errMsg.includes("UNAVAILABLE") ||
+      errMsg.includes("Identity Toolkit");
+    if (isAdminUnavailable) {
+      return res.status(503).json({
+        success: false,
+        error: "ADMIN_FIRESTORE_UNAVAILABLE",
+        message: "Server Admin Firestore access is unavailable in this environment."
+      });
+    }
+    console.error("[Server Audit API] Forensic Log Write Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "INTERNAL_SERVER_ERROR",
+      message: "Failed to persist server forensic log."
     });
   }
 });

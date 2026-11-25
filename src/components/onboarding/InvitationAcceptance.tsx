@@ -1,14 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { 
-  Mail, 
   Building2, 
   Loader2,
   UserPlus,
-  ArrowRight,
   Shield,
   XCircle,
-  CheckCircle
+  CheckCircle,
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
 import { useIdentity } from "../../modules/identity/IdentityContext";
 import { toast } from "sonner";
@@ -16,27 +16,70 @@ import { toast } from "sonner";
 export const InvitationAcceptance: React.FC = () => {
   const { identity, acceptInvitation, rejectInvitation } = useIdentity();
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [resolvedBusinessName, setResolvedBusinessName] = useState<string | null>(null);
+
+  const invitation = identity?.invitation;
+  const cachedBusinessName =
+    identity?.business?.name ||
+    invitation?.business_name ||
+    (invitation as any)?.businessName ||
+    (invitation as any)?.companyName ||
+    null;
+
+  useEffect(() => {
+    if (cachedBusinessName) {
+      setResolvedBusinessName(cachedBusinessName);
+      return;
+    }
+    if (!invitation?.id) return;
+
+    let active = true;
+    const controller = new AbortController();
+    fetch(`/api/invitations/lookup?token=${encodeURIComponent(invitation.id)}`, {
+      signal: controller.signal
+    })
+      .then((res) => (res.ok ? res.json().catch(() => null) : null))
+      .then((body) => {
+        const name = body?.invitation?.businessName;
+        if (active && name) {
+          setResolvedBusinessName(name);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [invitation?.id, cachedBusinessName]);
 
   const handleAccept = async () => {
-    if (!identity?.invitation?.id) return;
+    if (!identity?.invitation?.id || loading) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       await acceptInvitation(identity.invitation.id);
       toast.success("Invitation acceptée ! Bienvenue sur FINOPS ERP.");
     } catch (err: any) {
-      toast.error(`Erreur: ${err.message}`);
+      const msg = err?.message || "Erreur inconnue lors de l'acceptation.";
+      setErrorMsg(msg);
+      toast.error(`Erreur: ${msg}`);
       setLoading(false);
     }
   };
 
   const handleReject = async () => {
-    if (!identity?.invitation?.id) return;
+    if (!identity?.invitation?.id || loading) return;
     setLoading(true);
+    setErrorMsg(null);
     try {
       await rejectInvitation(identity.invitation.id);
       toast.success("Invitation refusée.");
     } catch (err: any) {
-      toast.error(`Erreur: ${err.message}`);
+      const msg = err?.message || "Erreur inconnue lors du refus.";
+      setErrorMsg(msg);
+      toast.error(`Erreur: ${msg}`);
       setLoading(false);
     }
   };
@@ -69,14 +112,16 @@ export const InvitationAcceptance: React.FC = () => {
               </p>
             </div>
 
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 mb-10 space-y-4">
+            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 mb-8 space-y-4">
               <div className="flex items-center gap-4">
                 <div className="p-2 bg-slate-800 rounded-lg">
                   <Building2 className="text-slate-400" size={20} />
                 </div>
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest">Entreprise</p>
-                  <p className="text-slate-100 font-bold text-sm">{identity?.business?.name || identity.invitation.business_name || identity.invitation.business_id}</p>
+                  <p className="text-slate-100 font-bold text-sm">
+                    {resolvedBusinessName || cachedBusinessName || identity.invitation.business_id || (identity.invitation as any).businessId}
+                  </p>
                 </div>
               </div>
 
@@ -90,6 +135,27 @@ export const InvitationAcceptance: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {errorMsg && (
+              <div className="mb-6 rounded-2xl border border-rose-500/40 bg-rose-950/30 p-4 text-left">
+                <div className="flex items-start gap-2.5 text-xs text-rose-200">
+                  <AlertTriangle className="text-rose-400 shrink-0 mt-0.5" size={16} />
+                  <div className="flex-1">
+                    <p className="font-semibold text-rose-300 mb-1">Échec de l'opération</p>
+                    <p className="text-rose-200/80 break-words">{errorMsg}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAccept}
+                  disabled={loading}
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-300 hover:text-cyan-200 disabled:opacity-50"
+                >
+                  <RefreshCw size={14} />
+                  <span>Réessayer l'acceptation</span>
+                </button>
+              </div>
+            )}
 
             <div className="flex flex-col gap-3">
               <button 

@@ -66,16 +66,10 @@ export function useInvitationsManager(businessId: string | undefined) {
     }
   };
 
-  const handleAcceptInvitation = async (inviteId: string, userId: string, actor: { id: string; name: string; role: string }) => {
-    setInvitations((prev) =>
-      prev.map((inv) => (inv.id === inviteId ? { ...inv, status: "ACCEPTED" as const } : inv))
+  const handleAcceptInvitation = async (_inviteId: string, _userId: string, _actor: { id: string; name: string; role: string }) => {
+    throw new Error(
+      "CLIENT_INVITATION_ACCEPTANCE_FORBIDDEN: Use EnterpriseIdentityOrchestrator.acceptInvitation via POST /api/invitations/accept."
     );
-    try {
-      await InvitationLifecycleService.acceptInvitation(inviteId, userId, actor);
-    } catch (e) {
-      console.error("[useInvitationsManager] Failed to accept invitation:", e);
-      throw e;
-    }
   };
 
   return {

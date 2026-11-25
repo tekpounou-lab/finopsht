@@ -18,6 +18,7 @@ import { RuntimeEvent } from "../modules/runtime/types";
 import { EventBus } from "../modules/runtime/EventBus";
 import { PaginatedRepository, PaginatedResult } from "./PaginatedRepository";
 import { PayrollService } from "../services/payroll/PayrollService";
+import { ForensicLogRepository } from "./ForensicLogRepository";
 import { FinopsException } from "../modules/runtime/FinopsException";
 import { hasPermission } from "../permissions/role.permissions";
 
@@ -507,17 +508,13 @@ export const PayrollRepository = {
               updated_at: serverTimestamp()
             }, { merge: true });
           });
-
-          // Write forensic audit log to forensic_logs
-          const logRef = doc(db, "forensic_logs", forensicLog.id);
-          batch.set(logRef, {
-            ...forensicLog,
-            business_id: businessId,
-            _server_timestamp: serverTimestamp()
-          });
         },
         event
       );
+      await ForensicLogRepository.writeForensicLog({
+        ...forensicLog,
+        business_id: businessId
+      });
       markLocalDeleted();
       console.debug(`[Payroll] Cycle deleted successfully. {softDelete: true, childRecordsMarked: ${childRecordRefs.length}}`);
     } catch (error: any) {
@@ -731,17 +728,13 @@ export const PayrollRepository = {
               updatedAt: serverTimestamp()
             }, { merge: true });
           });
-
-          // 4. Persist Forensic Audit Trail Log
-          const logRef = doc(db, "forensic_logs", forensicLog.id);
-          batch.set(logRef, {
-            ...forensicLog,
-            business_id: businessId,
-            _server_timestamp: serverTimestamp()
-          });
         },
         event
       );
+      await ForensicLogRepository.writeForensicLog({
+        ...forensicLog,
+        business_id: businessId
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycle.id}/seal`);
       throw error;
@@ -814,17 +807,13 @@ export const PayrollRepository = {
               updatedAt: serverTimestamp()
             }, { merge: true });
           });
-
-          // 3. Persist Forensic Audit Log
-          const logRef = doc(db, "forensic_logs", forensicLog.id);
-          batch.set(logRef, {
-            ...forensicLog,
-            business_id: businessId,
-            _server_timestamp: serverTimestamp()
-          });
         },
         event
       );
+      await ForensicLogRepository.writeForensicLog({
+        ...forensicLog,
+        business_id: businessId
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `payroll_cycles/${cycle.id}/rollback`);
       throw error;

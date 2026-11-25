@@ -14,6 +14,7 @@ import {
 import { Employee } from "../types";
 import { EventBus } from "../modules/runtime/EventBus";
 import { EmployeeAuditService } from "../services/audit/EmployeeAuditService";
+import { ForensicLogRepository } from "./ForensicLogRepository";
 import { BranchRepository, DepartmentRepository, CostCenterRepository } from "./organization";
 import { mapEmployee } from "../utils/caseConverter";
 import { IntegrityValidator } from "../services/integrity/ForeignKeyIntegrityValidator";
@@ -109,33 +110,30 @@ export class EmployeeRepository {
       });
 
       try {
-        const forensicRef = doc(collection(db, "forensic_logs"));
-        await setDoc(forensicRef, {
-          id: forensicRef.id,
-          timestamp: new Date().toISOString(),
-          userId: actor?.uid || "system",
+        const forensicLog = await ForensicLogRepository.createAndSignLog({
+          business_id: updatedEmp.business_id,
+          actorId: actor?.uid || "system",
           userName: actor?.name || "Administrator",
           userRole: actor?.role || "UNASSIGNED",
-          business_id: updatedEmp.business_id,
           action: "EMPLOYEE_SUSPENDED",
           beforeState: JSON.stringify({ status: "ACTIVE", isActive: true }),
           afterState: JSON.stringify({ status: "SUSPENDED", isActive: false, suspensionReason: reason || "" }),
-          ipAddress: "127.0.0.1",
-          userAgent: typeof window !== "undefined" ? window.navigator.userAgent : "FINOPS_SYSTEM",
-          signature: `sig_susp_${Date.now()}_${Math.floor(Math.random() * 999999)}`,
-          employeeId,
+          timestamp: new Date().toISOString(),
+          details: `Suspension employé ${updatedEmp.name} (${employeeId})`,
           entityType: "EMPLOYEE",
           entityId: employeeId,
           severity: "warning",
           metadata: {
+            employeeId,
             employeeName: updatedEmp.name,
             employeeEmail: updatedEmp.email,
             reason: reason || "",
             actionedBy: actor?.uid || "system"
           }
         });
+        await ForensicLogRepository.writeForensicLog(forensicLog);
       } catch (e) {
-        console.error("[EmployeeRepository] Forensic log write failed:", e);
+        console.warn("[EmployeeRepository] Forensic log write skipped:", e);
       }
 
       EventBus.publish(EventBus.createEvent({
@@ -188,32 +186,29 @@ export class EmployeeRepository {
       });
 
       try {
-        const forensicRef = doc(collection(db, "forensic_logs"));
-        await setDoc(forensicRef, {
-          id: forensicRef.id,
-          timestamp: new Date().toISOString(),
-          userId: actor?.uid || "system",
+        const forensicLog = await ForensicLogRepository.createAndSignLog({
+          business_id: updatedEmp.business_id,
+          actorId: actor?.uid || "system",
           userName: actor?.name || "Administrator",
           userRole: actor?.role || "UNASSIGNED",
-          business_id: updatedEmp.business_id,
           action: "EMPLOYEE_REACTIVATED",
           beforeState: JSON.stringify({ status: "SUSPENDED", isActive: false }),
           afterState: JSON.stringify({ status: "ACTIVE", isActive: true }),
-          ipAddress: "127.0.0.1",
-          userAgent: typeof window !== "undefined" ? window.navigator.userAgent : "FINOPS_SYSTEM",
-          signature: `sig_react_${Date.now()}_${Math.floor(Math.random() * 999999)}`,
-          employeeId,
+          timestamp: new Date().toISOString(),
+          details: `Réactivation employé ${updatedEmp.name} (${employeeId})`,
           entityType: "EMPLOYEE",
           entityId: employeeId,
           severity: "info",
           metadata: {
+            employeeId,
             employeeName: updatedEmp.name,
             employeeEmail: updatedEmp.email,
             actionedBy: actor?.uid || "system"
           }
         });
+        await ForensicLogRepository.writeForensicLog(forensicLog);
       } catch (e) {
-        console.error("[EmployeeRepository] Forensic log write failed:", e);
+        console.warn("[EmployeeRepository] Forensic log write skipped:", e);
       }
 
       EventBus.publish(EventBus.createEvent({
@@ -255,32 +250,29 @@ export class EmployeeRepository {
     const emp = await this.updateEmployee(employeeId, sanitized, actor);
 
     try {
-      const forensicRef = doc(collection(db, "forensic_logs"));
-      await setDoc(forensicRef, {
-        id: forensicRef.id,
-        timestamp: new Date().toISOString(),
-        userId: actor.uid,
+      const forensicLog = await ForensicLogRepository.createAndSignLog({
+        business_id: emp.business_id,
+        actorId: actor.uid,
         userName: actor.name || emp.name,
         userRole: actor.role || "EMPLOYEE",
-        business_id: emp.business_id,
         action: "EMPLOYEE_PROFILE_UPDATED",
         beforeState: JSON.stringify({ phone: emp.phone, address: (emp as any).address }),
         afterState: JSON.stringify(sanitized),
-        ipAddress: "127.0.0.1",
-        userAgent: typeof window !== "undefined" ? window.navigator.userAgent : "FINOPS_SYSTEM",
-        signature: `sig_prof_${Date.now()}_${Math.floor(Math.random() * 999999)}`,
-        employeeId,
+        timestamp: new Date().toISOString(),
+        details: `Mise à jour profil employé ${emp.name} (${employeeId})`,
         entityType: "EMPLOYEE",
         entityId: employeeId,
         severity: "info",
         metadata: {
+          employeeId,
           employeeName: emp.name,
           employeeEmail: emp.email,
           updatedFields: Object.keys(sanitized)
         }
       });
+      await ForensicLogRepository.writeForensicLog(forensicLog);
     } catch (e) {
-      console.error("[EmployeeRepository] Forensic log write failed for profile update:", e);
+      console.warn("[EmployeeRepository] Forensic log write skipped for profile update:", e);
     }
 
     return emp;
@@ -970,28 +962,6 @@ export class EmployeeRepository {
 
       const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
       const totalChunks = Math.ceil(totalEmployees / CHUNK_SIZE);
-      const logId = "f_bulk_" + Date.now() + "_" + chunkIndex + "_" + Math.random().toString(36).substring(2, 7);
-      batch.set(doc(db, "forensic_logs", logId), {
-        id: logId,
-        timestamp: new Date().toISOString(),
-        userId: "sys_bulk",
-        userName: "Moteur Import FinOps",
-        userRole: "SYSTEM",
-        business_id: expectedBizId,
-        action: "HR_EMPLOYEE_ONBOARD_BULK_CHUNK",
-        beforeState: "{}",
-        afterState: JSON.stringify({ 
-          chunkIndex,
-          totalChunks,
-          chunkEmployeeCount: empChunk.length,
-          totalImportedSoFar: i + empChunk.length,
-          totalEmployees
-        }),
-        ipAddress: "201.222.45.99",
-        userAgent: "FinOps Enterprise ERP Server",
-        signature: "seal_bulk_" + Math.floor(Math.random() * 999999)
-      });
-      batchOpCount++;
 
       if (batchOpCount > 200) {
         const limitErr: any = new Error(`Batch safety limit exceeded: ${batchOpCount} operations > 200 limit (safety limit)`);
@@ -1018,6 +988,29 @@ export class EmployeeRepository {
           failedBatchIndex: committedBatches + 1
         };
         throw err;
+      }
+
+      try {
+        const bulkLog = await ForensicLogRepository.createAndSignLog({
+          business_id: expectedBizId,
+          actorId: "sys_bulk",
+          userName: "Moteur Import FinOps",
+          userRole: "SYSTEM",
+          action: "HR_EMPLOYEE_ONBOARD_BULK_CHUNK",
+          beforeState: "{}",
+          afterState: JSON.stringify({
+            chunkIndex,
+            totalChunks,
+            chunkEmployeeCount: empChunk.length,
+            totalImportedSoFar: i + empChunk.length,
+            totalEmployees
+          }),
+          timestamp: new Date().toISOString(),
+          details: `Import employé lot ${chunkIndex}/${totalChunks} (${empChunk.length} employés)`
+        });
+        await ForensicLogRepository.writeForensicLog(bulkLog);
+      } catch (logErr) {
+        console.warn("[EmployeeRepository] Bulk import forensic log skipped:", logErr);
       }
     }
 

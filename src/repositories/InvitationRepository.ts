@@ -268,192 +268,26 @@ export const InvitationRepository = {
   },
 
   /**
-   * Atomically accepts an invitation via Firestore transaction.
-   * Links user to employee record and target business, activating the account.
+   * Client-side invitation acceptance is disabled for security.
+   * All invitation acceptances must execute via EnterpriseIdentityOrchestrator -> POST /api/invitations/accept.
    */
   async acceptInvitation(
-    invitationId: string, 
-    user: { uid: string; email: string; displayName?: string; name?: string }
+    _invitationId: string,
+    _user: { uid: string; email: string; displayName?: string; name?: string }
   ): Promise<void> {
-    const activeEmail = user.email.toLowerCase().trim();
-    const activeName = user.displayName || user.name || "Collaborateur";
-
-    try {
-      let targetBizId = "";
-      let empId = "";
-
-      await runTransaction(db, async (transaction) => {
-        const invRef = doc(db, "invitations", invitationId);
-        const invSnap = await transaction.get(invRef);
-
-        if (!invSnap.exists()) {
-          throw new Error("INVITATION_NOT_FOUND");
-        }
-
-        const invitation = invSnap.data() as Invitation;
-        if (invitation.status === "ACCEPTED") {
-          console.warn("[InvitationRepository] Invitation already accepted. Idempotent skip.");
-          return;
-        }
-
-        targetBizId = invitation.business_id || invitation.businessId || "";
-        empId = invitation.employee_id || invitation.employeeId || `emp_${user.uid}`;
-
-        const employeeRef = doc(db, "employees", empId);
-        const userRef = doc(db, "users", user.uid);
-
-        const [empSnap, userSnap] = await Promise.all([
-          transaction.get(employeeRef),
-          transaction.get(userRef)
-        ]);
-
-        const existingEmp = empSnap.exists() ? empSnap.data() : {};
-        const existingUser = userSnap.exists() ? userSnap.data() : {};
-
-        const invProfileInfo = extractRawOperationalProfileFromRecord(invitation);
-        const empProfileInfo = extractRawOperationalProfileFromRecord(existingEmp);
-        if (invProfileInfo.conflict || empProfileInfo.conflict) {
-          throw new Error("CONFLICTING_OPERATIONAL_PROFILE_FIELDS");
-        }
-        const effectiveRole = invitation.role || existingEmp.role;
-        const rawProfile = invProfileInfo.hasValue ? invProfileInfo.rawValue : empProfileInfo.rawValue;
-        const profileCompat = validateRoleOperationalProfileCompatibility(effectiveRole, rawProfile, {
-          allowLegacyBarberAlias: true,
-          allowMissingForExecutiveOrOversight: true
-        });
-        if (!profileCompat.valid) {
-          throw new Error(`${profileCompat.code}: ${profileCompat.reason}`);
-        }
-        const profileFields = profileCompat.normalizedProfile
-          ? {
-              operational_profile: profileCompat.normalizedProfile,
-              operationalProfile: profileCompat.normalizedProfile
-            }
-          : {};
-
-        const nowIso = new Date().toISOString();
-
-        // 1. Mark invitation ACCEPTED
-        transaction.update(invRef, {
-          status: "ACCEPTED",
-          acceptedAt: nowIso,
-          uid: user.uid,
-          updatedAt: serverTimestamp()
-        });
-
-        // 2. Link & Activate Employee
-        const empPayload = {
-          ...existingEmp,
-          id: empId,
-          uid: user.uid,
-          firebase_uid: user.uid,
-          email: activeEmail,
-          normalizedEmail: activeEmail,
-          name: existingEmp.name || activeName,
-          displayName: existingEmp.displayName || activeName,
-          businessId: targetBizId,
-          business_id: targetBizId,
-          branchId: invitation.branchId || existingEmp.branchId || "",
-          departmentId: invitation.departmentId || existingEmp.departmentId || "",
-          status: "ACTIVE",
-          isActive: true,
-          role: effectiveRole || "EMPLOYEE",
-          ...profileFields,
-          onboardingComplete: true,
-          updatedAt: serverTimestamp()
-        };
-        transaction.set(employeeRef, empPayload, { merge: true });
-
-        // 3. Activate User Profile
-        const userPayload = {
-          ...existingUser,
-          id: user.uid,
-          uid: user.uid,
-          email: activeEmail,
-          name: activeName,
-          displayName: activeName,
-          employeeId: empId,
-          employee_id: empId,
-          businessId: targetBizId,
-          business_id: targetBizId,
-          branchId: invitation.branchId || existingEmp.branchId || existingUser.branchId || "",
-          departmentId: invitation.departmentId || existingEmp.departmentId || existingUser.departmentId || "",
-          role: effectiveRole || existingUser.role || "EMPLOYEE",
-          ...profileFields,
-          accountStatus: "ACTIVE",
-          account_status: "ACTIVE",
-          businessStatus: "ACTIVE",
-          business_status: "ACTIVE",
-          onboardingComplete: true,
-          onboarding_completed: true,
-          updatedAt: serverTimestamp()
-        };
-        transaction.set(userRef, userPayload, { merge: true });
-      });
-
-      // Clear identity caches for immediate re-orchestration
-      sessionStorage.removeItem(`finops_identity_cache_${user.uid}`);
-      localStorage.removeItem(`finops_identity_cache_${user.uid}`);
-
-      // Cryptographic Forensic Log
-      const log = await ForensicLogRepository.createAndSignLog({
-        business_id: targetBizId || "global",
-        action: "INVITATION_ACCEPTED",
-        actorId: user.uid,
-        timestamp: new Date().toISOString(),
-        details: JSON.stringify({
-          invitationId,
-          employeeId: empId,
-          businessId: targetBizId,
-          userEmail: activeEmail
-        })
-      });
-      await ForensicLogRepository.writeForensicLog(log).catch(err =>
-        console.warn("[InvitationRepository] Forensic log write warning:", err)
-      );
-
-      if (targetBizId) {
-        await NotificationEngine.send({
-          businessId: targetBizId,
-          targetRoles: ["OWNER", "MANAGER"],
-          type: "HR",
-          severity: "INFO",
-          title: "Invitation Acceptée",
-          message: `${activeEmail} (${activeName}) a accepté l'invitation et rejoint l'entreprise.`,
-          module: "INVITATION"
-        }).catch(err => console.warn("[InvitationRepository] Notification send error:", err));
-      }
-    } catch (error) {
-      throw handleFirestoreError(error, OperationType.WRITE, `invitations/${invitationId}`);
-    }
+    throw new Error(
+      "CLIENT_INVITATION_ACCEPTANCE_FORBIDDEN: Invitation acceptance must execute through POST /api/invitations/accept."
+    );
   },
 
   /**
-   * Rejects an invitation.
+   * Client-side invitation rejection is disabled for security.
+   * All invitation rejections must execute via EnterpriseIdentityOrchestrator -> POST /api/invitations/reject.
    */
-  async rejectInvitation(invitationId: string, user: { uid: string; email?: string }): Promise<void> {
-    try {
-      const invRef = doc(db, "invitations", invitationId);
-      await updateDoc(invRef, {
-        status: "REJECTED",
-        rejectedAt: new Date().toISOString(),
-        uid: user.uid,
-        updatedAt: serverTimestamp()
-      });
-
-      const log = await ForensicLogRepository.createAndSignLog({
-        business_id: "global",
-        action: "INVITATION_REJECTED",
-        actorId: user.uid,
-        timestamp: new Date().toISOString(),
-        details: JSON.stringify({ invitationId, rejectedBy: user.uid, email: user.email })
-      });
-      await ForensicLogRepository.writeForensicLog(log).catch(err =>
-        console.warn("[InvitationRepository] Forensic log write warning:", err)
-      );
-    } catch (error) {
-      throw handleFirestoreError(error, OperationType.WRITE, `invitations/${invitationId}`);
-    }
+  async rejectInvitation(_invitationId: string, _user: { uid: string; email?: string }): Promise<void> {
+    throw new Error(
+      "CLIENT_INVITATION_REJECTION_FORBIDDEN: Invitation rejection must execute through POST /api/invitations/reject."
+    );
   },
 
   /**

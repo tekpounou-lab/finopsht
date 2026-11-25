@@ -11,6 +11,7 @@ import { applyDoubleEntryRules, DEFAULT_CHART_OF_ACCOUNTS, detectOrphanTransacti
 import { durableQueueService } from "../services/queue/DurableQueueService";
 import { validateLedgerForeignKeys } from "../validations/integritySchemas";
 import { filterLedgerTransactions } from "../services/cfo/LedgerFilterEngine";
+import { ForensicLogRepository } from "./ForensicLogRepository";
 
 export interface LedgerQueryOptions {
   startDate?: string;
@@ -321,12 +322,10 @@ export const LedgerRepository = {
           
           const origRef = doc(db, "ledger_transactions", originalTx.id);
           batch.set(origRef, { ...updatedOriginalTx, updatedAt: serverTimestamp() }, { merge: true });
-
-          const logRef = doc(db, "forensic_logs", forensicLog.id);
-          batch.set(logRef, { ...forensicLog, _server_timestamp: serverTimestamp() });
         },
         event
       );
+      await ForensicLogRepository.writeForensicLog(forensicLog);
 
       // 2. Explicitly publish event on EventBus for local in-memory subscribers
       EventBus.publish(EventBus.createEvent({
@@ -466,18 +465,12 @@ export const LedgerRepository = {
                     updatedAt: serverTimestamp()
                   }, { merge: true });
                 });
-
-                // If this is the last chunk, add the forensic log
-                if (i === chunks.length - 1) {
-                  const logRef = doc(db, "forensic_logs", forensicLog.id);
-                  batch.set(logRef, {
-                    ...forensicLog,
-                    _server_timestamp: serverTimestamp()
-                  });
-                }
               },
               chunkEvent
             );
+            if (i === chunks.length - 1) {
+              await ForensicLogRepository.writeForensicLog(forensicLog);
+            }
             console.debug("[Firestore] Batch committed successfully. Docs written:", chunk.length);
           },
           { maxRetries: 3, baseDelayMs: 300, jitterStrategy: "FULL" },

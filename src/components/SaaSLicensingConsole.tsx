@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { PermissionService } from "../services/PermissionService";
 import { FeatureMatrix, SubscriptionPlanRepository, SubscriptionPlanDocument } from "../repositories";
+import { ForensicLogRepository } from "../repositories/ForensicLogRepository";
 import { FeatureFlagConfigService, ResolverFlags } from "../services/auth/FeatureFlagConfigService";
 import { ResilienceEngine } from "../services/auth/ResilienceEngine";
 import { getDbDoc, getDbCollection } from "../lib/firebase";
@@ -434,7 +435,7 @@ export default function SaaSLicensingConsole({
       if (onAddForensicLog) {
         await onAddForensicLog(forensicEvent);
       } else {
-        await setDoc(getDbDoc("forensic_logs", forensicEvent.id), forensicEvent);
+        await ForensicLogRepository.writeForensicLog(forensicEvent);
       }
       
       logs.push(`[MIGRATION COMPLETED] Succès ! ${contractsCount} contrats et ${structuresCount} structures salariales normalisés.`);

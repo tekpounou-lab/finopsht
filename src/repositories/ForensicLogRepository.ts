@@ -103,7 +103,10 @@ export const ForensicLogRepository = {
   },
 
   /**
-   * Writes an immutable ForensicLog document into Firestore.
+   * Writes an immutable ForensicLog document.
+   * Server contexts with firestoreAdmin write directly to /forensic_logs.
+   * Browser client contexts delegate to POST /api/audit/forensic-logs (server Admin SDK)
+   * and gracefully fall back to /audit_logs if server Admin IAM is unavailable in preview.
    */
   async writeForensicLog(log: ForensicLog, firestoreAdmin?: any): Promise<void> {
     if (firestoreAdmin) {
@@ -113,15 +116,89 @@ export const ForensicLogRepository = {
       });
       return;
     }
-    const path = `forensic_logs/${log.id}`;
+
+    const { auth } = await import("../lib/firebase");
+    const currentUser = auth?.currentUser || null;
+
+    if (typeof window !== "undefined") {
+      if (!currentUser) {
+        console.warn("[ForensicLogRepository] Skipping forensic log write: no authenticated user.");
+        return;
+      }
+
+      try {
+        const token = await currentUser.getIdToken();
+        const response = await fetch("/api/audit/forensic-logs", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ log })
+        });
+
+        if (response.ok) {
+          return;
+        }
+        if (response.status === 401 || response.status === 403) {
+          console.warn(`[ForensicLogRepository] Server rejected forensic log (${response.status}) for action=${log.action}`);
+          return;
+        }
+      } catch (_apiErr) {
+        // Fall through to client audit_logs fallback when API is unreachable
+      }
+    }
+
+    if (!currentUser) {
+      return;
+    }
+
+    const rawBiz =
+      typeof log.business_id === "string" && log.business_id.trim()
+        ? log.business_id.trim()
+        : typeof (log as any).businessId === "string" && (log as any).businessId.trim()
+          ? (log as any).businessId.trim()
+          : "global";
+    const normalizedBiz =
+      rawBiz.toLowerCase() === "global" || rawBiz === "none" ? "global" : rawBiz;
+
+    const originalActorId =
+      typeof log.actorId === "string" && log.actorId.trim()
+        ? log.actorId.trim()
+        : typeof (log as any).userId === "string" && (log as any).userId.trim()
+          ? (log as any).userId.trim()
+          : "";
+
+    const auditPayload: Record<string, any> = {};
+    for (const [k, v] of Object.entries(log as Record<string, any>)) {
+      if (v !== undefined) {
+        auditPayload[k] = v;
+      }
+    }
+    delete auditPayload.businessId;
+    delete auditPayload.tenantId;
+    delete auditPayload.tenant_id;
+    delete auditPayload.actor_id;
+    delete auditPayload.user_id;
+    delete auditPayload.actor_uid;
+    delete auditPayload.recordedBy;
+
+    auditPayload.business_id = normalizedBiz;
+    auditPayload.actorId = currentUser.uid;
+    auditPayload.userId = currentUser.uid;
+    if (originalActorId && originalActorId !== currentUser.uid) {
+      auditPayload.sourceActorId = originalActorId;
+    }
+    if (normalizedBiz === "global" && !auditPayload.audit_type) {
+      auditPayload.audit_type = "AUTH_AUDIT_LOGS";
+    }
+    auditPayload._server_timestamp = serverTimestamp();
+
     try {
-      const ref = doc(db, "forensic_logs", log.id);
-      await setDoc(ref, {
-        ...log,
-        _server_timestamp: serverTimestamp()
-      });
+      const ref = doc(db, "audit_logs", log.id);
+      await setDoc(ref, auditPayload);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.warn("[ForensicLogRepository] Audit log fallback skipped:", error instanceof Error ? error.message : String(error));
     }
   },
 
@@ -167,8 +244,8 @@ export const ForensicLogRepository = {
         }
       }
 
-      // 3. Fallback to audit_logs collection if forensic_logs is empty
-      if (logsMap.size === 0) {
+      // 3. Merge fallback entries from audit_logs collection when below limit
+      if (logsMap.size < limitTo) {
         try {
           const q3 = query(
             collection(db, "audit_logs"),
@@ -177,6 +254,7 @@ export const ForensicLogRepository = {
           );
           const snap3 = await getDocs(q3);
           snap3.docs.forEach((d) => {
+            if (logsMap.has(d.id)) return;
             const data = d.data();
             logsMap.set(d.id, {
               id: d.id,
@@ -241,6 +319,9 @@ export const ForensicLogRepository = {
         }
       ];
 
+      const { auth } = await import("../lib/firebase");
+      const actorUid = auth?.currentUser?.uid || "system_init";
+
       for (const tpl of initialAuditTemplates) {
         const log = await this.createAndSignLog({
           business_id: businessId,
@@ -249,7 +330,7 @@ export const ForensicLogRepository = {
           userName: actorName,
           userRole: tpl.userRole,
           timestamp: new Date(now - tpl.delayMinutes * 60000).toISOString(),
-          actorId: "system_init",
+          actorId: actorUid,
           severity: "info"
         });
         await this.writeForensicLog(log);

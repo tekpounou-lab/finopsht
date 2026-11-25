@@ -1573,7 +1573,20 @@ export async function createApp() {
 
       res.json({ success: true, invitation });
     } catch (error: any) {
-      console.error("[Invitation API] Lookup Error:", error);
+      const msg = String(error?.message || "");
+      console.error("[Invitation API] Lookup Error:", msg || "unknown");
+      if (
+        msg.includes("FIREBASE_ADMIN_") ||
+        msg.includes("ADC_INITIALIZATION_FAILED") ||
+        error?.code === "unavailable" ||
+        error?.code === "deadline-exceeded" ||
+        error?.code === "permission-denied"
+      ) {
+        return res.status(503).json({
+          error: "ADMIN_SERVICE_UNAVAILABLE",
+          message: "Service de vérification temporairement indisponible."
+        });
+      }
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Erreur lors de la vérification de l'invitation." });
     }
   });
@@ -1586,7 +1599,7 @@ export async function createApp() {
       }
 
       const { inviteId, user } = req.body || {};
-      if (!inviteId) {
+      if (!inviteId || typeof inviteId !== "string" || !inviteId.trim()) {
         return res.status(400).json({ error: "MISSING_INVITE_ID", message: "Missing inviteId." });
       }
 
@@ -1621,16 +1634,19 @@ export async function createApp() {
         isSuperAdmin: req.user.isSuperAdmin
       };
 
-      await InvitationService.acceptInvitation(inviteId, verifiedUser);
-      res.json({ success: true });
+      const acceptance = await InvitationService.acceptInvitation(inviteId.trim(), verifiedUser);
+      res.json(acceptance);
     } catch (error: any) {
-      console.error("[Invitation API] Accept Error:", error);
-      const msg = error?.message || "";
+      const msg = String(error?.message || "");
+      console.error("[Invitation API] Accept Error:", msg || "unknown");
       if (msg === "CUSTOM_CLAIMS_SYNC_FAILED") {
         return res.status(502).json({
           error: "CUSTOM_CLAIMS_SYNC_FAILED",
           message: "Firestore profile created but Custom Claims sync failed. Reconciliation required."
         });
+      }
+      if (msg === "MISSING_ACCEPTANCE_DETAILS" || msg === "INVALID_INVITATION_ID") {
+        return res.status(400).json({ error: msg, code: msg, message: "Invalid invitation identifier or acceptance payload." });
       }
       if (
         error instanceof ServerProfileVerificationError ||
@@ -1639,15 +1655,28 @@ export async function createApp() {
         msg === "FORBIDDEN_ROLE_ASSIGNMENT" ||
         msg === "TENANT_CONFLICT_EXISTING_MEMBERSHIP" ||
         msg === "EMAIL_VERIFICATION_REQUIRED" ||
-        msg === "INVALID_INVITATION_TENANT"
+        msg === "INVALID_INVITATION_TENANT" ||
+        msg === "BUSINESS_INACTIVE"
       ) {
         return res.status(403).json({ error: msg, code: msg });
       }
-      if (msg === "INVITATION_NOT_FOUND") {
+      if (msg === "INVITATION_NOT_FOUND" || msg === "BUSINESS_NOT_FOUND") {
         return res.status(404).json({ error: msg });
       }
       if (msg === "INVITATION_NOT_PENDING" || msg === "INVITATION_EXPIRED") {
         return res.status(409).json({ error: msg });
+      }
+      if (
+        msg.includes("FIREBASE_ADMIN_") ||
+        msg.includes("ADC_INITIALIZATION_FAILED") ||
+        error?.code === "unavailable" ||
+        error?.code === "deadline-exceeded" ||
+        error?.code === "permission-denied"
+      ) {
+        return res.status(503).json({
+          error: "ADMIN_SERVICE_UNAVAILABLE",
+          message: "Service d'invitation temporairement indisponible."
+        });
       }
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to accept invitation." });
     }
@@ -1670,8 +1699,8 @@ export async function createApp() {
       const result = await InvitationService.reconcileCustomClaims(uidToReconcile, req.user);
       res.json({ success: true, ...result });
     } catch (error: any) {
-      console.error("[Invitation API] Claims Reconciliation Error:", error);
-      const msg = error?.message || "";
+      const msg = String(error?.message || "");
+      console.error("[Invitation API] Claims Reconciliation Error:", msg || "unknown");
       if (msg === "UNAUTHORIZED_RECONCILIATION_ATTEMPT" || msg === "TENANT_MEMBERSHIP_MISMATCH") {
         return res.status(403).json({ error: msg });
       }
@@ -1680,6 +1709,18 @@ export async function createApp() {
       }
       if (msg === "NO_VALID_TENANT_MEMBERSHIP") {
         return res.status(400).json({ error: msg });
+      }
+      if (
+        msg.includes("FIREBASE_ADMIN_") ||
+        msg.includes("ADC_INITIALIZATION_FAILED") ||
+        error?.code === "unavailable" ||
+        error?.code === "deadline-exceeded" ||
+        error?.code === "permission-denied"
+      ) {
+        return res.status(503).json({
+          error: "ADMIN_SERVICE_UNAVAILABLE",
+          message: "Service de réconciliation temporairement indisponible."
+        });
       }
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Claims reconciliation failed." });
     }
@@ -1693,7 +1734,7 @@ export async function createApp() {
       }
 
       const { inviteId, userId } = req.body || {};
-      if (!inviteId) {
+      if (!inviteId || typeof inviteId !== "string" || !inviteId.trim()) {
         return res.status(400).json({ error: "MISSING_INVITE_ID", message: "Missing inviteId." });
       }
 
@@ -1704,7 +1745,7 @@ export async function createApp() {
         });
       }
 
-      await InvitationService.rejectInvitation(inviteId, {
+      await InvitationService.rejectInvitation(inviteId.trim(), {
         uid: req.user.uid,
         email: req.user.email,
         emailVerified: req.user.emailVerified,
@@ -1714,8 +1755,8 @@ export async function createApp() {
       });
       res.json({ success: true });
     } catch (error: any) {
-      console.error("[Invitation API] Reject Error:", error);
-      const msg = error?.message || "";
+      const msg = String(error?.message || "");
+      console.error("[Invitation API] Reject Error:", msg || "unknown");
       if (msg === "UNAUTHORIZED_INVITATION_ACTION" || msg === "EMAIL_VERIFICATION_REQUIRED") {
         return res.status(403).json({ error: msg });
       }
@@ -1724,6 +1765,18 @@ export async function createApp() {
       }
       if (msg === "INVITATION_NOT_PENDING") {
         return res.status(409).json({ error: msg });
+      }
+      if (
+        msg.includes("FIREBASE_ADMIN_") ||
+        msg.includes("ADC_INITIALIZATION_FAILED") ||
+        error?.code === "unavailable" ||
+        error?.code === "deadline-exceeded" ||
+        error?.code === "permission-denied"
+      ) {
+        return res.status(503).json({
+          error: "ADMIN_SERVICE_UNAVAILABLE",
+          message: "Service d'invitation temporairement indisponible."
+        });
       }
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to reject invitation." });
     }

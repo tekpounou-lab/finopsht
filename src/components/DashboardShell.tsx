@@ -20,6 +20,7 @@ import { AccessDenied } from "../navigation/RouteGuards";
 import { EditProfileModal } from "./profile/EditProfileModal";
 import { EmployeeRepository } from "../repositories/EmployeeRepository";
 import { PayrollRepository } from "../repositories/PayrollRepository";
+import { ForensicLogRepository } from "../repositories/ForensicLogRepository";
 import EmployeeProfileDialog from "./staff/EmployeeProfileDialog";
 import { db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
@@ -402,12 +403,10 @@ export function DashboardShell({ initialTab, initialSubTab }: DashboardShellProp
                       return;
                     }
                     console.debug(`[Payroll] Forensic log recorded: ${log.id}`);
-                    const ref = doc(db, "forensic_logs", log.id);
-                    await setDoc(ref, {
+                    await ForensicLogRepository.writeForensicLog({
                       ...log,
-                      business_id: resolvedBusinessId,
-                      _server_timestamp: serverTimestamp()
-                    }, { merge: true });
+                      business_id: resolvedBusinessId
+                    });
                   }}
                   onAddEvent={async (ev) => {
                     if (!resolvedBusinessId) {

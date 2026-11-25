@@ -539,10 +539,30 @@ export class EnterpriseIdentityOrchestrator {
   /**
    * Action: Accept an Invitation via Backend API (Backend Authority Only)
    */
-  static async acceptInvitation(invitationId: string, user: FirebaseUser): Promise<void> {
+  static async acceptInvitation(
+    invitationId: string,
+    user: FirebaseUser
+  ): Promise<{
+    success: true;
+    alreadyAccepted?: boolean;
+    inviteId?: string;
+    businessId?: string;
+    businessName?: string;
+    role?: string;
+    membershipId?: string;
+    employeeId?: string;
+  }> {
+    const cleanInviteId = typeof invitationId === "string" ? invitationId.trim() : "";
+    if (!cleanInviteId) {
+      throw new Error("MISSING_INVITE_ID: Identifiant d'invitation manquant.");
+    }
+
     const correlationId = `accept_inv_${Date.now()}`;
-    console.log(`[Orchestrator][${correlationId}] Accepting invitation ${invitationId} via backend API`);
-    
+    console.log(`[Orchestrator][${correlationId}] Accepting invitation ${cleanInviteId} via backend API`);
+
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), 15000);
+
     try {
       const idToken = await user.getIdToken();
       const response = await fetch("/api/invitations/accept", {
@@ -552,23 +572,37 @@ export class EnterpriseIdentityOrchestrator {
           "Authorization": `Bearer ${idToken}`
         },
         body: JSON.stringify({
-          inviteId: invitationId,
+          inviteId: cleanInviteId,
           user: {
             uid: user.uid,
             email: user.email,
             name: user.displayName || (user.email ? user.email.split("@")[0] : "Collaborateur")
           }
-        })
+        }),
+        signal: controller.signal
       });
 
-      if (!response.ok) {
-        let errorData: any = {};
+      let payload: any = null;
+      if (typeof (response as any)?.json === "function") {
         try {
-          errorData = await response.json();
-        } catch (e) {}
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+      }
 
-        const errMessage = errorData.message || errorData.error || `HTTP_${response.status}: Échec de l'acceptation de l'invitation.`;
+      if (!response.ok) {
+        const errMessage =
+          payload?.message ||
+          payload?.error ||
+          `HTTP_${response.status}: Échec de l'acceptation de l'invitation.`;
         throw new Error(errMessage);
+      }
+
+      if (!payload || payload.success !== true) {
+        throw new Error(
+          "MALFORMED_API_RESPONSE: Réponse serveur invalide lors de l'acceptation de l'invitation."
+        );
       }
 
       // Force refresh of ID token to pull newly assigned Custom Claims (business_id, role)
@@ -578,10 +612,17 @@ export class EnterpriseIdentityOrchestrator {
       this.inFlightOrchestration.delete(user.uid);
       this.invalidateCache(user.uid);
       clearResilientCache();
-      console.log(`[Orchestrator][${correlationId}] Invitation ${invitationId} accepted successfully via backend API.`);
-    } catch (e) {
-      console.error(`[Orchestrator][${correlationId}] Accept failed:`, e);
-      throw e;
+      console.log(`[Orchestrator][${correlationId}] Invitation ${cleanInviteId} accepted successfully via backend API.`);
+      return payload;
+    } catch (e: any) {
+      const normalizedError =
+        e?.name === "AbortError"
+          ? new Error("REQUEST_TIMEOUT: Délai d'attente dépassé lors de la validation de l'invitation. Veuillez réessayer.")
+          : e;
+      console.error(`[Orchestrator][${correlationId}] Accept failed:`, normalizedError?.message || "unknown");
+      throw normalizedError;
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 
@@ -589,31 +630,63 @@ export class EnterpriseIdentityOrchestrator {
    * Action: Reject an Invitation via Backend API (Backend Authority Only)
    */
   static async rejectInvitation(invitationId: string, user: FirebaseUser): Promise<void> {
-    const correlationId = `reject_inv_${Date.now()}`;
-    const idToken = await user.getIdToken();
-    const response = await fetch("/api/invitations/reject", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${idToken}`
-      },
-      body: JSON.stringify({
-        inviteId: invitationId,
-        userId: user.uid
-      })
-    });
-
-    if (!response.ok) {
-      let errorData: any = {};
-      try {
-        errorData = await response.json();
-      } catch (e) {}
-      throw new Error(errorData.message || errorData.error || `HTTP_${response.status}: Échec du refus de l'invitation.`);
+    const cleanInviteId = typeof invitationId === "string" ? invitationId.trim() : "";
+    if (!cleanInviteId) {
+      throw new Error("MISSING_INVITE_ID: Identifiant d'invitation manquant.");
     }
 
-    this.inFlightOrchestration.delete(user.uid);
-    this.invalidateCache(user.uid);
-    clearResilientCache();
+    const correlationId = `reject_inv_${Date.now()}`;
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/invitations/reject", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          inviteId: cleanInviteId,
+          userId: user.uid
+        }),
+        signal: controller.signal
+      });
+
+      let payload: any = null;
+      if (typeof (response as any)?.json === "function") {
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.message ||
+            payload?.error ||
+            `HTTP_${response.status}: Échec du refus de l'invitation.`
+        );
+      }
+
+      if (!payload || payload.success !== true) {
+        throw new Error("MALFORMED_API_RESPONSE: Réponse serveur invalide lors du refus de l'invitation.");
+      }
+
+      this.inFlightOrchestration.delete(user.uid);
+      this.invalidateCache(user.uid);
+      clearResilientCache();
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        throw new Error("REQUEST_TIMEOUT: Délai d'attente dépassé lors du refus de l'invitation.");
+      }
+      console.error(`[Orchestrator][${correlationId}] Reject failed:`, e?.message || "unknown");
+      throw e;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
   }
 
   private static async resolveUserProfile(user: FirebaseUser, correlationId: string): Promise<UserProfile | null> {

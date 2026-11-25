@@ -177,14 +177,27 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
         return;
       }
 
-      const explicitName = activeInvitation.business_name || activeInvitation.businessName;
+      const explicitName = activeInvitation.business_name || activeInvitation.businessName || activeInvitation.companyName;
       if (explicitName) {
         if (isMounted) setEnterpriseName(explicitName);
         return;
       }
 
+      if (activeInvitation.id) {
+        try {
+          const invMeta = await InvitationRepository.getByTokenOrCode(activeInvitation.id);
+          const resolvedLookupName = (invMeta as any)?.companyName || invMeta?.businessName || invMeta?.business_name;
+          if (resolvedLookupName && isMounted) {
+            setEnterpriseName(resolvedLookupName);
+            return;
+          }
+        } catch {
+          // Safe fallback to business ID label
+        }
+      }
+
       const bizId = activeInvitation.business_id || activeInvitation.businessId || initialBusinessId || identity?.business?.id;
-      if (bizId) {
+      if (bizId && identity?.business?.id === bizId) {
         try {
           const biz = await BusinessRepository.getById(bizId);
           if (biz && isMounted) {
@@ -283,7 +296,7 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
   const handleAccept = async (targetInv?: any) => {
     const inv = targetInv || activeInvitation;
     const invId = inv?.id;
-    if (!invId) return;
+    if (!invId || actionLoading) return;
     setActionLoading(true);
     try {
       await acceptInvitation(invId);
@@ -297,7 +310,7 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
   const handleReject = async (targetInv?: any) => {
     const inv = targetInv || activeInvitation;
     const invId = inv?.id;
-    if (!invId) return;
+    if (!invId || actionLoading) return;
     setActionLoading(true);
     try {
       await rejectInvitation(invId);

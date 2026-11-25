@@ -55,8 +55,33 @@ export function isInvalidTenantId(rawBizId: unknown): boolean {
   return INVALID_TENANT_IDS.has(normalized);
 }
 
+const ADMIN_CONFIG_ERROR_CODES = [
+  "FIREBASE_ADMIN_NOT_CONFIGURED",
+  "FIREBASE_ADMIN_INCOMPLETE_ENV",
+  "FIREBASE_ADMIN_INVALID_KEY_FORMAT",
+  "FIREBASE_ADMIN_INVALID_SERVICE_ACCOUNT_KEY",
+  "FIREBASE_ADMIN_PROJECT_MISMATCH",
+  "ADC_INITIALIZATION_FAILED"
+] as const;
+
 function mapTokenErrorToResponse(err: any, res: Response) {
-  if (err?.code === "auth/id-token-revoked" || err?.message?.includes("revoked")) {
+  const errMsg = typeof err?.message === "string" ? err.message : "";
+  const matchedAdminCode = ADMIN_CONFIG_ERROR_CODES.find((code) => errMsg.includes(code));
+  if (
+    matchedAdminCode ||
+    err?.code === "app/no-app" ||
+    err?.code === "app/invalid-credential"
+  ) {
+    const code = matchedAdminCode || "ADMIN_AUTH_UNAVAILABLE";
+    console.error(`[ServerAuth] Firebase Admin unavailable (${code})`);
+    return res.status(503).json({
+      error: "ADMIN_AUTH_UNAVAILABLE",
+      code,
+      message: "Server authentication service is temporarily unavailable."
+    });
+  }
+
+  if (err?.code === "auth/id-token-revoked" || errMsg.includes("revoked")) {
     return res.status(401).json({
       error: "TOKEN_REVOKED",
       message: "Firebase ID token has been revoked."

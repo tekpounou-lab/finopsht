@@ -10,6 +10,7 @@ import {
   limit
 } from "firebase/firestore";
 import { Business, Employee, Branch, Department, Membership, BusinessSnapshot } from "../types";
+import { ForensicLogRepository } from "./ForensicLogRepository";
 
 export interface ProvisioningPayload {
   business: Business;
@@ -100,10 +101,12 @@ export class ProvisioningRepository {
         transaction.set(doc(db, "approval_policies", pol.id), pol);
       }
       transaction.set(doc(db, "workflow_instances", payload.onboardingInstance.id), payload.onboardingInstance);
-      
-      // 8. Audit Trail
-      const auditRef = doc(collection(db, "forensic_logs"));
-      transaction.set(auditRef, payload.auditLog);
     });
+
+    if (payload.auditLog) {
+      await ForensicLogRepository.writeForensicLog(payload.auditLog).catch((err) =>
+        console.warn("[ProvisioningRepository] Forensic log write skipped:", err)
+      );
+    }
   }
 }

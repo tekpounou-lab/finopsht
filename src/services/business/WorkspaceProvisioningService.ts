@@ -2,6 +2,7 @@ import { EventBus } from "../../modules/runtime/EventBus";
 import { finopsEventOrchestrator } from "../finopsEventOrchestrator";
 import { db } from "../../lib/firebase";
 import { doc, writeBatch, serverTimestamp, collection, query, where, getDocs } from "firebase/firestore";
+import { ForensicLogRepository } from "../../repositories/ForensicLogRepository";
 
 export interface ProvisioningResult {
   businessId: string;
@@ -264,22 +265,22 @@ export class WorkspaceProvisioningService {
         updatedAt: now
       }, { merge: true });
 
-      // Forensic Log
-      const logRef = doc(collection(db, "forensic_logs"));
-      batch.set(logRef, {
-        businessId: businessId,
-        userId: founder.uid,
-        userName: founder.name,
-        userRole: "OWNER",
-        action: "BUSINESS_CREATED_PENDING",
-        timestamp: now,
-        severity: "info"
-      });
-
       try {
         await batch.commit();
         console.log(`[Provisioning] Authenticated batch committed successfully for business: ${businessId}`);
         provisioningCompleted = true;
+
+        const provLog = await ForensicLogRepository.createAndSignLog({
+          business_id: businessId,
+          actorId: founder.uid,
+          userName: founder.name,
+          userRole: "OWNER",
+          action: "BUSINESS_CREATED_PENDING",
+          timestamp: now,
+          details: `Workspace provisioned pending activation for business ${businessId}`,
+          severity: "info"
+        });
+        await ForensicLogRepository.writeForensicLog(provLog);
       } catch (batchErr: any) {
         console.error("[Provisioning] Client batch commit failed:", batchErr);
         throw batchErr;
