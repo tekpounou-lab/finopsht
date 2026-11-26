@@ -70,7 +70,9 @@ function mapTokenErrorToResponse(err: any, res: Response) {
   if (
     matchedAdminCode ||
     err?.code === "app/no-app" ||
-    err?.code === "app/invalid-credential"
+    err?.code === "app/invalid-credential" ||
+    errMsg.includes("Could not load the default credentials") ||
+    errMsg.includes("DECODER routines")
   ) {
     const code = matchedAdminCode || "ADMIN_AUTH_UNAVAILABLE";
     console.error(`[ServerAuth] Firebase Admin unavailable (${code})`);

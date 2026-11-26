@@ -650,4 +650,54 @@ describe("FINOPS — INVITATION ACCEPTANCE P0 REMEDIATION SUITE (14 Scenarios)",
     expect(mockFirestoreStore.get("users/user_alice").customClaimsSynced).toBe(true);
     expect(mockFirestoreStore.get("memberships/biz_acme_user_alice").customClaimsSynced).toBe(true);
   });
+
+  it("15. Maps numeric gRPC 7 PERMISSION_DENIED on lookup/accept to sanitized 503 ADMIN_SERVICE_UNAVAILABLE", async () => {
+    adminControl.firestoreError = Object.assign(
+      new Error("7 PERMISSION_DENIED: Missing or insufficient permissions."),
+      { code: 7 }
+    );
+    const lookupRes = await fetch(`http://127.0.0.1:${port}/api/invitations/lookup?token=inv_valid_001`);
+    expect(lookupRes.status).toBe(503);
+    const lookupBody = await lookupRes.json();
+    expect(lookupBody.error).toBe("ADMIN_SERVICE_UNAVAILABLE");
+  });
+
+  it("16. Verifies Vercel packaging configuration statically traces api/_server.cjs and sanitizes initialization errors", async () => {
+    const apiIndexSrc = fs.readFileSync(path.join(ROOT, "api/index.ts"), "utf-8");
+    const vercelCfg = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf-8"));
+
+    expect(apiIndexSrc).toContain('require("./_server.cjs")');
+    expect(apiIndexSrc).toContain("sanitizeInitErrorSummary");
+    expect(apiIndexSrc).toContain("INVALID_JSON_BODY");
+    expect(vercelCfg.functions?.["api/index.ts"]?.includeFiles).toContain("api/_server.cjs");
+    expect(vercelCfg.functions?.["api/index.ts"]?.includeFiles).toContain("firebase-applet-config.json");
+
+    // Verify malformed JSON request body through api/index handler returns 400 instead of 500 init failure
+    const { default: vercelHandler } = await import("../../../../api/index");
+    let capturedStatus = 0;
+    let capturedBody: any = null;
+    await vercelHandler(
+      {
+        method: "POST",
+        url: "/api/invitations/accept",
+        headers: { "content-type": "application/json" },
+        body: "{bad_json"
+      },
+      {
+        headersSent: false,
+        status(code: number) {
+          capturedStatus = code;
+          return this;
+        },
+        json(body: any) {
+          capturedBody = body;
+          return this;
+        },
+        on() {}
+      }
+    );
+    expect(capturedStatus).toBe(400);
+    expect(capturedBody?.error).toBe("INVALID_JSON_BODY");
+  });
 });
+

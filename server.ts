@@ -1542,6 +1542,25 @@ export async function createApp() {
     }
   });
 
+  function isAdminServiceUnavailableError(error: any): boolean {
+    const msg = String(error?.message || "");
+    const code = error?.code;
+    return (
+      msg.includes("FIREBASE_ADMIN_") ||
+      msg.includes("ADC_INITIALIZATION_FAILED") ||
+      msg.includes("Could not load the default credentials") ||
+      msg.includes("PERMISSION_DENIED") ||
+      code === "unavailable" ||
+      code === "deadline-exceeded" ||
+      code === "permission-denied" ||
+      code === "unauthenticated" ||
+      code === 4 ||
+      code === 7 ||
+      code === 14 ||
+      code === 16
+    );
+  }
+
   // Public API endpoint: Pre-authentication Invitation Lookup
   app.get("/api/invitations/lookup", async (req, res) => {
     try {
@@ -1575,13 +1594,7 @@ export async function createApp() {
     } catch (error: any) {
       const msg = String(error?.message || "");
       console.error("[Invitation API] Lookup Error:", msg || "unknown");
-      if (
-        msg.includes("FIREBASE_ADMIN_") ||
-        msg.includes("ADC_INITIALIZATION_FAILED") ||
-        error?.code === "unavailable" ||
-        error?.code === "deadline-exceeded" ||
-        error?.code === "permission-denied"
-      ) {
+      if (isAdminServiceUnavailableError(error)) {
         return res.status(503).json({
           error: "ADMIN_SERVICE_UNAVAILABLE",
           message: "Service de vérification temporairement indisponible."
@@ -1666,13 +1679,7 @@ export async function createApp() {
       if (msg === "INVITATION_NOT_PENDING" || msg === "INVITATION_EXPIRED") {
         return res.status(409).json({ error: msg });
       }
-      if (
-        msg.includes("FIREBASE_ADMIN_") ||
-        msg.includes("ADC_INITIALIZATION_FAILED") ||
-        error?.code === "unavailable" ||
-        error?.code === "deadline-exceeded" ||
-        error?.code === "permission-denied"
-      ) {
+      if (isAdminServiceUnavailableError(error)) {
         return res.status(503).json({
           error: "ADMIN_SERVICE_UNAVAILABLE",
           message: "Service d'invitation temporairement indisponible."
@@ -1710,13 +1717,7 @@ export async function createApp() {
       if (msg === "NO_VALID_TENANT_MEMBERSHIP") {
         return res.status(400).json({ error: msg });
       }
-      if (
-        msg.includes("FIREBASE_ADMIN_") ||
-        msg.includes("ADC_INITIALIZATION_FAILED") ||
-        error?.code === "unavailable" ||
-        error?.code === "deadline-exceeded" ||
-        error?.code === "permission-denied"
-      ) {
+      if (isAdminServiceUnavailableError(error)) {
         return res.status(503).json({
           error: "ADMIN_SERVICE_UNAVAILABLE",
           message: "Service de réconciliation temporairement indisponible."
@@ -1766,13 +1767,7 @@ export async function createApp() {
       if (msg === "INVITATION_NOT_PENDING") {
         return res.status(409).json({ error: msg });
       }
-      if (
-        msg.includes("FIREBASE_ADMIN_") ||
-        msg.includes("ADC_INITIALIZATION_FAILED") ||
-        error?.code === "unavailable" ||
-        error?.code === "deadline-exceeded" ||
-        error?.code === "permission-denied"
-      ) {
+      if (isAdminServiceUnavailableError(error)) {
         return res.status(503).json({
           error: "ADMIN_SERVICE_UNAVAILABLE",
           message: "Service d'invitation temporairement indisponible."
