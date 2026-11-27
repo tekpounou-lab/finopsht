@@ -310,11 +310,12 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
 
         const data = docSnap.data();
+        const docAccountStatus = data.account_status || data.accountStatus;
         console.log(`[FirestoreListener] Real-time sync for users/${user.uid}:`, {
-          account_status: data.account_status,
+          account_status: docAccountStatus,
           role: data.role,
           business_id: data.business_id,
-          onboarding_completed: data.onboarding_completed
+          onboarding_completed: data.onboarding_completed ?? data.onboardingComplete
         });
 
         setIdentity(prev => {
@@ -332,25 +333,25 @@ export const IdentityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
           // Account status safety: Never downgrade ACTIVE to NEW_USER
           let nextIdentityStatus = prev.identityStatus;
-          if (data.account_status === "ACTIVE" || data.status === "ACTIVE" || prev.employee?.status === "ACTIVE" || nextRole === "SUPER_ADMIN" || prev.onboardingStatus === "COMPLETED") {
+          if (docAccountStatus === "ACTIVE" || data.status === "ACTIVE" || prev.employee?.status === "ACTIVE" || nextRole === "SUPER_ADMIN" || prev.onboardingStatus === "COMPLETED") {
             nextIdentityStatus = "ACTIVE";
-          } else if (data.account_status === "PENDING_OWNER" || data.account_status === "PENDING_MEMBER") {
+          } else if (docAccountStatus === "PENDING_OWNER" || docAccountStatus === "PENDING_MEMBER") {
             nextIdentityStatus = "INITIAL_IDENTITY";
-          } else if (data.account_status === "SUSPENDED" || data.status === "SUSPENDED") {
+          } else if (docAccountStatus === "SUSPENDED" || data.status === "SUSPENDED") {
             nextIdentityStatus = "SUSPENDED";
-          } else if (data.account_status === "INVITED") {
+          } else if (docAccountStatus === "INVITED") {
             nextIdentityStatus = "INVITED";
           }
 
           // Onboarding status safety
-          const isCompleted = (data.onboarding_completed === true || prev.onboardingStatus === "COMPLETED" || !!prev.employee) && 
+          const isCompleted = (data.onboarding_completed === true || data.onboardingComplete === true || prev.onboardingStatus === "COMPLETED" || !!prev.employee) && 
                               (prev.business?.status === "ACTIVE" || !prev.business || nextRole === "SUPER_ADMIN");
           const nextOnboarding = isCompleted ? "COMPLETED" : prev.onboardingStatus;
 
           const updated: IdentitySnapshot = {
             ...prev,
             role: nextRole,
-            requested_role: data.requested_role || prev.requested_role,
+            requested_role: data.requested_role || data.requestedRole || prev.requested_role,
             identityStatus: nextIdentityStatus,
             onboardingStatus: nextOnboarding as any
           };

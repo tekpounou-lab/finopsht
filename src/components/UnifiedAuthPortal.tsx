@@ -10,11 +10,12 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   linkWithCredential, 
+  updateProfile,
   GoogleAuthProvider
 } from "firebase/auth";
-import { auth, db, getDbDoc, getDbCollection } from "../lib/firebase";
-import { doc, setDoc, query, collection, where, getDocs, limit } from "firebase/firestore";
+import { auth } from "../lib/firebase";
 import { EnterpriseIdentityOrchestrator } from "../modules/identity/EnterpriseIdentityOrchestrator";
+import { UserProfileRepository } from "../repositories/UserProfileRepository";
 import { isNetworkError } from "../utils/resilientFirestore";
 
 interface UnifiedAuthPortalProps {
@@ -233,46 +234,20 @@ export default function UnifiedAuthPortal({
         const userCred = await createUserWithEmailAndPassword(auth, emailToFind, password);
         console.log("[UnifiedAuthPortal] Firebase Auth user created:", userCred.user.uid);
 
-        const userDocRef = doc(db, "users", userCred.user.uid);
         const resolvedName = fullName.trim() || emailToFind.split("@")[0];
-        
-        let activeInv: any = null;
-        try {
-          const qInv = query(collection(db, "invitations"), where("email", "==", emailToFind), limit(5));
-          const qNormInv = query(collection(db, "invitations"), where("normalizedEmail", "==", emailToFind), limit(5));
-          const [snapInv, snapNormInv] = await Promise.all([
-            getDocs(qInv).catch(() => null),
-            getDocs(qNormInv).catch(() => null)
-          ]);
+        EnterpriseIdentityOrchestrator.setPendingDisplayName(userCred.user.uid, resolvedName);
+        await updateProfile(userCred.user, { displayName: resolvedName }).catch(() => undefined);
 
-          const allInvDocs = [...(snapInv?.docs || []), ...(snapNormInv?.docs || [])];
-          activeInv = allInvDocs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .find((inv: any) => inv.status === "PENDING" || inv.status === "ACTIVE" || !inv.status);
-        } catch (invErr) {
-          console.warn("[UnifiedAuthPortal] Invitation lookup warning:", invErr);
+        // Delegate initial profile creation exclusively to EnterpriseIdentityOrchestrator
+        // (coalesced with onAuthStateChanged to prevent concurrent users/{uid} writes).
+        const snapshot = await EnterpriseIdentityOrchestrator.orchestrate(userCred.user);
+
+        if (resolvedName && snapshot.displayName !== resolvedName && auth.currentUser?.uid === userCred.user.uid) {
+          await UserProfileRepository.updateUserProfile(userCred.user.uid, {
+            name: resolvedName,
+            displayName: resolvedName
+          }).catch(() => undefined);
         }
-
-        const initialRole = activeInv ? (activeInv.role || "EMPLOYEE") : "EMPLOYEE";
-        const initialBizId = activeInv ? (activeInv.business_id || activeInv.businessId || "") : "";
-        const initialBranchId = activeInv ? (activeInv.branchId || activeInv.branch_id || "") : "";
-        const initialDeptId = activeInv ? (activeInv.departmentId || activeInv.department_id || "") : "";
-
-        await setDoc(userDocRef, {
-          id: userCred.user.uid,
-          uid: userCred.user.uid,
-          email: emailToFind,
-          name: resolvedName,
-          displayName: resolvedName,
-          role: initialRole,
-          business_id: initialBizId,
-          businessId: initialBizId,
-          branchId: initialBranchId,
-          departmentId: initialDeptId,
-          accountStatus: "ACTIVE",
-          status: "ACTIVE",
-          createdAt: new Date().toISOString()
-        }, { merge: true });
 
         setAuthSuccessMsg("Compte créé avec succès ! Redirection en cours...");
         onAddEvent({
@@ -287,10 +262,10 @@ export default function UnifiedAuthPortal({
             id: userCred.user.uid,
             email: emailToFind,
             name: resolvedName,
-            role: initialRole as Role,
-            business_id: initialBizId,
-            branchId: initialBranchId,
-            departmentId: initialDeptId
+            role: (snapshot.role || "UNASSIGNED") as Role,
+            business_id: snapshot.business?.id || "",
+            branchId: snapshot.employee?.branchId || "",
+            departmentId: snapshot.employee?.departmentId || ""
           });
         }, 800);
       } catch (err: any) {

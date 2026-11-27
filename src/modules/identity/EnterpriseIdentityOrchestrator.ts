@@ -12,7 +12,7 @@ import {
   updateDoc
 } from "firebase/firestore";
 import { User as FirebaseUser } from "firebase/auth";
-import { resilientGetDoc, resilientGetDocs, FirestoreNetworkError, isNetworkError, withTimeout, clearResilientCache } from "../../utils/resilientFirestore";
+import { resilientGetDoc, resilientGetDocs, invalidateResilientDoc, FirestoreNetworkError, isNetworkError, withTimeout, clearResilientCache } from "../../utils/resilientFirestore";
 import { 
   IdentitySnapshot, 
   OrchestratorState, 
@@ -57,27 +57,51 @@ function cleanPayload<T extends Record<string, any>>(obj: T): Partial<T> {
 export class EnterpriseIdentityOrchestrator {
   private static readonly SUPER_ADMIN_EMAIL = SUPER_ADMIN_EMAIL;
   private static inFlightOrchestration: Map<string, Promise<IdentitySnapshot>> = new Map();
+  private static inFlightProfileBootstrap: Map<string, Promise<UserProfile | null>> = new Map();
   private static pendingRequestedRoles: Map<string, Role> = new Map();
+  private static pendingDisplayNames: Map<string, string> = new Map();
   private static loggedHydrations: Set<string> = new Set();
+
+  /**
+   * Registers an optional display name hint (e.g. from email sign-up) so initial
+   * profile bootstrap captures the user's name without a concurrent users/{uid} write.
+   */
+  static setPendingDisplayName(uid: string, displayName: string): void {
+    const clean = (displayName || "").trim();
+    if (uid && clean) {
+      this.pendingDisplayNames.set(uid, clean);
+    }
+  }
 
   /**
    * Action: Set the requested role (Owner or Employee) for onboarding persistence
    */
   static async setRequestedRole(user: FirebaseUser, role: Role): Promise<void> {
+    if (String(role || "").trim().toUpperCase() === "SUPER_ADMIN") {
+      throw new Error("FORBIDDEN_REQUESTED_ROLE: SUPER_ADMIN cannot be self-requested.");
+    }
+
     // Record in-memory pending role for zero-latency orchestration synchronization
     this.pendingRequestedRoles.set(user.uid, role);
 
     // Invalidate stale in-flight orchestration for this user so fresh state is resolved
     this.inFlightOrchestration.delete(user.uid);
 
+    // Ensure initial base profile creation has settled before updating requested_role
+    // so setRequestedRole never races with resolveUserProfile or writes partial creation docs.
+    await this.resolveUserProfile(user, `req_role_${Date.now()}`).catch(() => null);
+
+    const nowIso = new Date().toISOString();
     const userRef = doc(db, "users", user.uid);
     await setDoc(userRef, cleanPayload({
-      id: user.uid,
-      email: user.email || "",
-      name: user.displayName || "User",
       requestedRole: role,
-      updatedAt: new Date().toISOString()
+      requested_role: role,
+      updatedAt: nowIso,
+      updated_at: nowIso
     }), { merge: true });
+
+    OptimizedResolver.invalidateProfileCache(user.uid);
+    invalidateResilientDoc(`users/${user.uid}`);
 
     // Instantly update cache snapshot
     const cached = this.getCachedSnapshot(user.uid);
@@ -94,7 +118,9 @@ export class EnterpriseIdentityOrchestrator {
     try {
       this.loggedHydrations.delete(uid);
       this.inFlightOrchestration.delete(uid);
+      this.inFlightProfileBootstrap.delete(uid);
       this.pendingRequestedRoles.delete(uid);
+      this.pendingDisplayNames.delete(uid);
 
       if (typeof window !== "undefined") {
         if (typeof sessionStorage !== "undefined") {
@@ -125,7 +151,9 @@ export class EnterpriseIdentityOrchestrator {
     try {
       this.loggedHydrations.clear();
       this.inFlightOrchestration.clear();
+      this.inFlightProfileBootstrap.clear();
       this.pendingRequestedRoles.clear();
+      this.pendingDisplayNames.clear();
 
       CentralizedCachePurgeManager.purgeAllCaches({ reason: "ORCHESTRATOR_CLEAR_SESSION" });
       OptimizedResolver.clearAllCache();
@@ -365,6 +393,13 @@ export class EnterpriseIdentityOrchestrator {
         pendingBizPromise
       ]);
 
+      if (!snapshot.displayName && userProfile) {
+        const profileName = ((userProfile as any).displayName || userProfile.name || "").trim();
+        if (profileName && profileName !== "User") {
+          snapshot.displayName = profileName;
+        }
+      }
+
       let employee = initialEmployee;
       // If employee wasn't found by direct queries but profile has employeeId/employee_id, secondary quick direct check
       const profileEmpId = userProfile?.employeeId || userProfile?.employee_id;
@@ -454,7 +489,11 @@ export class EnterpriseIdentityOrchestrator {
       
       const pendingRole = this.pendingRequestedRoles.get(user.uid);
       const cachedSnapshot = this.getCachedSnapshot(user.uid);
-      const effectiveRequestedRole = pendingRole || cachedSnapshot?.requested_role || (userProfile as any)?.requested_role;
+      const effectiveRequestedRole =
+        pendingRole ||
+        cachedSnapshot?.requested_role ||
+        (userProfile as any)?.requested_role ||
+        (userProfile as any)?.requestedRole;
       snapshot.requested_role = effectiveRequestedRole || (isSuperUser ? "SUPER_ADMIN" : (isActualOwner ? "OWNER" : snapshot.role));
       
       if (!snapshot.permissions || snapshot.permissions.length === 0) {
@@ -690,38 +729,62 @@ export class EnterpriseIdentityOrchestrator {
   }
 
   private static async resolveUserProfile(user: FirebaseUser, correlationId: string): Promise<UserProfile | null> {
-    const res = await OptimizedResolver.resolveUserProfileWithRetry(user.uid, correlationId);
-    
-    if (res.status === "RESOLVED") {
-      return res.data;
+    const existingBootstrap = this.inFlightProfileBootstrap.get(user.uid);
+    if (existingBootstrap) {
+      return existingBootstrap;
     }
 
-    if (res.status === "ERROR") {
-      throw new FirestoreNetworkError(`Failed to fetch user profile: ${res.error}`, null, `users/${user.uid}`);
-    }
+    const bootstrapPromise = (async (): Promise<UserProfile | null> => {
+      const res = await OptimizedResolver.resolveUserProfileWithRetry(user.uid, correlationId);
 
-    // Genuine NOT_FOUND (exists === false confirmed by Firestore):
-    // Auto-create base profile for newly registered users
-    const isSuperAdmin = isSuperAdminEmail(user.email);
-    const baseProfileData = cleanPayload({
-      id: user.uid,
-      email: user.email || "",
-      name: user.displayName || "User",
-      role: isSuperAdmin ? "SUPER_ADMIN" : "UNASSIGNED",
-      accountStatus: isSuperAdmin ? "ACTIVE" : "NEW_USER",
-      onboardingComplete: isSuperAdmin,
-      updatedAt: new Date().toISOString()
+      if (res.status === "RESOLVED") {
+        return res.data;
+      }
+
+      if (res.status === "ERROR") {
+        throw new FirestoreNetworkError(`Failed to fetch user profile: ${res.error}`, null, `users/${user.uid}`);
+      }
+
+      // Genuine NOT_FOUND (exists === false confirmed by Firestore):
+      // Auto-create base profile for newly registered users.
+      // Security invariant: never write role: "UNASSIGNED" or any privileged role for non-SuperAdmin users;
+      // firestore.rules allow create restricts role to absent, 'EMPLOYEE', or ''.
+      const isSuperAdmin = isSuperAdminEmail(user.email);
+      const pendingName = this.pendingDisplayNames.get(user.uid);
+      const resolvedName = (user.displayName || pendingName || "").trim() || "User";
+      const nowIso = new Date().toISOString();
+      const baseProfileData = cleanPayload({
+        id: user.uid,
+        email: user.email || "",
+        name: resolvedName,
+        ...(isSuperAdmin ? { role: "SUPER_ADMIN" as Role } : {}),
+        accountStatus: isSuperAdmin ? "ACTIVE" : "NEW_USER",
+        account_status: isSuperAdmin ? "ACTIVE" : "NEW_USER",
+        onboardingComplete: isSuperAdmin,
+        onboarding_completed: isSuperAdmin,
+        updatedAt: nowIso,
+        updated_at: nowIso
+      });
+
+      try {
+        const userRef = doc(db, "users", user.uid);
+        await withTimeout(setDoc(userRef, baseProfileData, { merge: true }), 5000, `setDoc(users/${user.uid})`);
+        OptimizedResolver.setCachedProfile(user.uid, baseProfileData as UserProfile);
+        invalidateResilientDoc(`users/${user.uid}`);
+        console.log(`[Orchestrator][${correlationId}] Base profile created for genuine new user.`);
+      } catch (e) {
+        OptimizedResolver.invalidateProfileCache(user.uid);
+        invalidateResilientDoc(`users/${user.uid}`);
+        console.warn(`[Orchestrator][${correlationId}] Failed to create base profile (Permission/Timeout?):`, e);
+      }
+
+      return baseProfileData as UserProfile;
+    })().finally(() => {
+      this.inFlightProfileBootstrap.delete(user.uid);
     });
 
-    try {
-      const userRef = doc(db, "users", user.uid);
-      await withTimeout(setDoc(userRef, baseProfileData, { merge: true }), 5000, `setDoc(users/${user.uid})`);
-      console.log(`[Orchestrator][${correlationId}] Base profile created for genuine new user.`);
-    } catch (e) {
-      console.warn(`[Orchestrator][${correlationId}] Failed to create base profile (Permission/Timeout?):`, e);
-    }
-    
-    return baseProfileData as UserProfile;
+    this.inFlightProfileBootstrap.set(user.uid, bootstrapPromise);
+    return bootstrapPromise;
   }
 
   private static async resolveEmployee(user: FirebaseUser, profile: UserProfile | null, correlationId: string): Promise<Employee | null> {

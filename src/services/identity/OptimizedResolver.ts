@@ -1,6 +1,6 @@
 import { doc, getDoc as firestoreGetDoc, getDocFromCache } from "firebase/firestore";
 import { db, auth } from "../../lib/firebase";
-import { resilientGetDoc, FirestoreNetworkError, isNetworkError } from "../../utils/resilientFirestore";
+import { resilientGetDoc, invalidateResilientDoc, FirestoreNetworkError, isNetworkError } from "../../utils/resilientFirestore";
 import { Business, BusinessSnapshot, UserProfile } from "../../types";
 
 export interface ResolvedTenantContext {
@@ -524,11 +524,25 @@ export class OptimizedResolver {
   }
 
   /**
-   * Invalidates cached profile context in memory.
+   * Seeds the in-memory profile cache immediately after initial bootstrap creation
+   * so subsequent resolution calls do not see a stale NOT_FOUND and duplicate writes.
+   */
+  static setCachedProfile(uid: string, profile: UserProfile): void {
+    if (!uid) return;
+    profileMemoryCache.set(uid, {
+      data: { status: "RESOLVED", data: profile },
+      timestamp: Date.now()
+    });
+    pendingProfilePromises.delete(uid);
+  }
+
+  /**
+   * Invalidates cached profile context in memory and resilient doc cache.
    */
   static invalidateProfileCache(uid: string): void {
     profileMemoryCache.delete(uid);
     pendingProfilePromises.delete(uid);
+    invalidateResilientDoc(`users/${uid}`);
   }
 
   /**
