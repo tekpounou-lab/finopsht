@@ -1,0 +1,42 @@
+# .dockerignore — FINOPS ERP
+# Strictly exclude dependencies, build outputs, local secrets, and scratch files.
+
+# Dependencies & OS/IDE artifacts (never copy node_modules from host/Windows)
+node_modules/
+npm-debug.log*
+.npm/
+.cache/
+.git/
+.gitignore
+.DS_Store
+Thumbs.db
+
+# Build & test outputs
+dist/
+build/
+coverage/
+api/_server.cjs*
+*.tsbuildinfo
+
+# Secrets, environment files & Firebase/GCP credentials (NEVER bake into image)
+.env
+.env.*
+!.env.example
+*-firebase-adminsdk-*.json
+service-account*.json
+tek-pou-nou-tpn-*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Local scratch, logs & non-runtime directories
+scratch/
+.aistudio/
+*.log
+*.debug.log
+phase3_cleanup_report_*.json
+docs/
+*.md
+!README.md

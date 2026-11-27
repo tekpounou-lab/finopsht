@@ -1,5 +1,20 @@
 # FINOPS ERP — Architectural Changelog
 
+## [4.7.0] - 2026-11-27
+### Added, Hardened & Organized (Vercel OIDC/WIF Firebase Admin Auth & Workspace Handoff)
+- **Passwordless Vercel OIDC / Google WIF Firebase Admin Authentication (`ADR-019`)**:
+  - Updated `src/lib/firebaseAdmin.ts` to support `vercel_wif` using `@vercel/oidc` (`getVercelOidcToken()`), `google-auth-library` (`ExternalAccountClient`, `GoogleAuth`), and `@google-cloud/firestore` (`^7.11.6`), binding strictly to `finopsht` and named Firestore database `ai-studio-finopserp-ef001fee-dd79-4547-8e51-9e59e365e98a`.
+  - Enforced lazy request-scoped OIDC acquisition (never invoked at module initialization), strict config validation, zero secret/token logging, Cloud Run ADC preservation (`cloud_run_adc`), and existing static/local credential fallbacks.
+  - Documented WIF environment variable names in `.env.example` (`GCP_PROJECT_NUMBER`, `GCP_WORKLOAD_IDENTITY_POOL_ID`, `GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID`, `GCP_SERVICE_ACCOUNT_EMAIL`, `FIREBASE_ADMIN_PROJECT_ID`).
+  - Added `src/tests/unit/security/VercelWifFirebaseAdmin.test.ts` (12 unit/security tests).
+- **Root Workspace Cleanup & Coding Agent Handoff Documentation**:
+  - Removed 16 obsolete unreferenced scratch/one-off patch and legacy debug scripts from the repository root.
+  - Reorganized 97 root `FINOPS_*` audit/matrix/diff artifacts into `docs/audits/attendance/`, `docs/audits/business-intelligence/`, `docs/audits/p0-infrastructure/`, and `docs/audits/rbac/`.
+  - Updated `README.md`, `docs/project-structure.md`, `docs/decision-log.md`, and `docs/changelog.md`; added `HANDOFF.md`, `docs/README.md`, and `docs/audits/README.md` for seamless agent onboarding.
+- **Controlled Docker Configuration (Development & Validation)**:
+  - Added multi-stage `Dockerfile` (pinned `node:22.14.0-bookworm-slim`, `npm ci`, non-root `node`, `0.0.0.0:${PORT:-3000}`) and `.dockerignore` (strict exclusion of `node_modules`, `dist`, `.env*`, and key files).
+  - Synchronized `package-lock.json` via `npm install --package-lock-only` so `npm ci` works cleanly without modifying Vercel production architecture.
+
 ## [4.6.0] - 2026-11-06
 ### Enacted & Verified (BI-P1.5 — PIC Financial Integrity & Temporal Filter Remediation)
 - **DEF-TF-01 (Temporal Filter Unbounded / Open-Ended Semantics & Caller Propagation)**:

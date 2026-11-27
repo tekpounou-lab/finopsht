@@ -235,3 +235,17 @@
   4. **Session-Bounded & Validated Filter Persistence (`DEF-LS-01`)**: Replaced static module-level `defaultFilters` with `createDefaultExecutiveFilters(refDate)`, stamped persisted entries with `_persistedAt` and `_persistedDate`, expired cross-day or `> 12h` or un-timestamped/legacy-v2 entries while preserving safe preferences (`accountingBasis`, `presentationMode`), validated ISO calendar dates and `startDate <= endDate`, and exposed `clearPersistedFilters` in `ExecutiveFilterContext`.
 - **Consequences**: Complete elimination of payroll-to-revenue leakage across Cash and Accrual modes, 100% alignment between PIC selectors and `AnalyticsEngine` SSOT across bounded, open-ended, and unbounded (`all`) date filters, and safe cross-session filter initialization.
 
+---
+
+## ADR-019: Passwordless Vercel OIDC / Google Workload Identity Federation (WIF) for Firebase Admin
+- **Date**: 2026-11-27
+- **Status**: Accepted & Locally Verified (Pending Authorized Production Rollout)
+- **Context**: Vercel serverless invocations (`GET /api/invitations/lookup`, `POST /api/invitations/accept`, and other Express routes wrapped via `api/index.ts`) failed initialization (`FUNCTION_INVOCATION_ERROR`) when static Firebase Admin service-account JSON keys were absent, and static long-lived private keys create unnecessary key-management risk. Meanwhile, Google Cloud Workload Identity Federation (`vercel-finops` pool/provider on project `finopsht` / `231531725507`) was provisioned to impersonate `finops-backend-sa@finopsht.iam.gserviceaccount.com` using Vercel OIDC JWTs.
+- **Decision**:
+  1. **External Account WIF Resolution (`src/lib/firebaseAdmin.ts`)**: Added `vercel_wif` credential resolution using `@vercel/oidc` (`getVercelOidcToken()`), `google-auth-library` (`ExternalAccountClient`, `GoogleAuth`), and `@google-cloud/firestore`.
+  2. **Lazy Request-Scoped OIDC Acquisition**: `buildVercelWifExternalAccountConfig()` never invokes `getVercelOidcToken()` during module load or client construction; token acquisition occurs lazily inside `subject_token_supplier.getSubjectToken()` during access token exchange (`VercelWifCredential`).
+  3. **Named Database Compatibility**: Because `firebase-admin/firestore` rejects custom `Credential` implementations, `getAdminFirestore()` instantiates `@google-cloud/firestore` with `GoogleAuth` + `ExternalAccountClient` when `vercel_wif` is active, strictly bound to named database `ai-studio-finopserp-ef001fee-dd79-4547-8e51-9e59e365e98a` (refusing `(default)`).
+  4. **Strict Fallback & Runtime Isolation**: Preserved `cloud_run_adc` (`K_SERVICE` non-`ais-*`), `env_split_key`, `google_application_credentials`, `service_account_json_env`, `local_key_file`, and `local_adc_fallback`, while failing fast on Vercel if WIF configuration is partial or missing.
+  5. **Security Verification**: Added `src/tests/unit/security/VercelWifFirebaseAdmin.test.ts` (12 tests) verifying WIF config validation, lazy OIDC invocation, named database enforcement, and zero secret/token logging.
+- **Consequences**: Enables passwordless short-lived STS + service-account impersonation credentials on Vercel without static JSON keys while preserving Cloud Run ADC, local development fallbacks, RBAC, and tenant isolation.
+
