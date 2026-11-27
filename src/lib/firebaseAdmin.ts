@@ -2,13 +2,24 @@ import {
   initializeApp,
   getApp,
   getApps,
+  deleteApp,
   cert,
   applicationDefault,
   AppOptions,
-  App
+  App,
+  Credential,
+  GoogleOAuthAccessToken
 } from "firebase-admin/app";
-import { getFirestore, Firestore } from "firebase-admin/firestore";
+import { getFirestore as getAdminSdkFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth, Auth } from "firebase-admin/auth";
+import {
+  ExternalAccountClient,
+  BaseExternalAccountClient,
+  GoogleAuth,
+  IdentityPoolClientOptions
+} from "google-auth-library";
+import { Firestore as CloudFirestore } from "@google-cloud/firestore";
+import { getVercelOidcToken } from "@vercel/oidc";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -22,26 +33,65 @@ export interface FirebaseAppletConfig {
   firestoreDatabaseId?: string;
 }
 
+export type FirebaseCredentialSource =
+  | "cloud_run_adc"
+  | "vercel_wif"
+  | "env_split_key"
+  | "google_application_credentials"
+  | "service_account_json_env"
+  | "local_key_file"
+  | "local_adc_fallback";
+
+export interface VercelWifConfigSummary {
+  projectNumber: string;
+  poolId: string;
+  providerId: string;
+  serviceAccountEmail: string;
+  audience: string;
+  impersonationUrl: string;
+}
+
 export interface FirebaseAdminResolutionResult {
   projectId: string;
   firestoreDatabaseId?: string;
   runtime: "cloud_run" | "vercel" | "local";
-  credentialSource:
-    | "cloud_run_adc"
-    | "env_split_key"
-    | "google_application_credentials"
-    | "service_account_json_env"
-    | "local_key_file"
-    | "local_adc_fallback";
+  credentialSource: FirebaseCredentialSource;
   options: AppOptions;
+  wifConfig?: VercelWifConfigSummary;
+  wifAuthClient?: BaseExternalAccountClient;
+}
+
+export interface ResolveFirebaseAdminOptions {
+  oidcTokenSupplier?: () => Promise<string>;
 }
 
 const DEFAULT_PROJECT_ID = "finopsht";
 const DEFAULT_FIRESTORE_DATABASE_ID =
   "ai-studio-finopserp-ef001fee-dd79-4547-8e51-9e59e365e98a";
 
+export const VERCEL_WIF_OAUTH_SCOPES = [
+  "https://www.googleapis.com/auth/cloud-platform",
+  "https://www.googleapis.com/auth/datastore",
+  "https://www.googleapis.com/auth/identitytoolkit",
+  "https://www.googleapis.com/auth/userinfo.email"
+];
+
 let cachedAppletConfig: FirebaseAppletConfig | null = null;
 let adminApp: App | null = null;
+let cachedResolvedConfig: FirebaseAdminResolutionResult | null = null;
+let cachedWifFirestore: Firestore | null = null;
+
+/**
+ * Resets cached Firebase Admin state (intended strictly for isolated unit tests).
+ */
+export async function resetFirebaseAdminStateForTests(): Promise<void> {
+  cachedAppletConfig = null;
+  adminApp = null;
+  cachedResolvedConfig = null;
+  cachedWifFirestore = null;
+  const apps = getApps();
+  await Promise.all(apps.map((app) => deleteApp(app).catch(() => undefined)));
+}
 
 /**
  * Dynamically reads firebase-applet-config.json without ESM static JSON imports
@@ -107,11 +157,179 @@ export function normalizeAdminPrivateKey(rawKey: string): string {
 }
 
 /**
- * Resolves Firebase Admin SDK AppOptions across Cloud Run, Vercel, and Local runtimes.
- * Never logs or exposes private keys or sensitive secrets in errors.
+ * Validates and builds the Google ExternalAccountClient JSON configuration for Vercel OIDC WIF.
+ * Never invokes the OIDC token supplier during construction.
+ */
+export function buildVercelWifExternalAccountConfig(
+  params: {
+    projectNumber: string;
+    poolId: string;
+    providerId: string;
+    serviceAccountEmail: string;
+  },
+  oidcTokenSupplier?: () => Promise<string>
+): {
+  summary: VercelWifConfigSummary;
+  externalAccountConfig: IdentityPoolClientOptions;
+} {
+  const projectNumber = params.projectNumber.trim();
+  const poolId = params.poolId.trim();
+  const providerId = params.providerId.trim();
+  const serviceAccountEmail = params.serviceAccountEmail.trim();
+
+  if (!/^\d+$/.test(projectNumber)) {
+    throw new Error("FIREBASE_ADMIN_INVALID_WIF_CONFIG: GCP_PROJECT_NUMBER must be numeric.");
+  }
+  if (!/^[a-zA-Z0-9-]+$/.test(poolId)) {
+    throw new Error(
+      "FIREBASE_ADMIN_INVALID_WIF_CONFIG: GCP_WORKLOAD_IDENTITY_POOL_ID contains invalid characters."
+    );
+  }
+  if (!/^[a-zA-Z0-9-]+$/.test(providerId)) {
+    throw new Error(
+      "FIREBASE_ADMIN_INVALID_WIF_CONFIG: GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID contains invalid characters."
+    );
+  }
+  if (!/^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(serviceAccountEmail)) {
+    throw new Error(
+      "FIREBASE_ADMIN_INVALID_WIF_CONFIG: GCP_SERVICE_ACCOUNT_EMAIL is not a valid email address."
+    );
+  }
+
+  const audience = `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
+  const impersonationUrl = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`;
+  const resolveOidcToken = oidcTokenSupplier ?? (() => getVercelOidcToken());
+
+  const externalAccountConfig: IdentityPoolClientOptions = {
+    type: "external_account",
+    audience,
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: "https://sts.googleapis.com/v1/token",
+    service_account_impersonation_url: impersonationUrl,
+    scopes: VERCEL_WIF_OAUTH_SCOPES,
+    subject_token_supplier: {
+      getSubjectToken: async () => {
+        try {
+          const oidcToken = await resolveOidcToken();
+          if (!oidcToken || typeof oidcToken !== "string") {
+            throw new Error(
+              "VERCEL_WIF_OIDC_UNAVAILABLE: Unable to acquire Vercel OIDC token from request context."
+            );
+          }
+          return oidcToken;
+        } catch (err: any) {
+          const rawMessage = typeof err?.message === "string" ? err.message : "";
+          if (rawMessage.startsWith("VERCEL_WIF_OIDC_UNAVAILABLE")) {
+            throw err;
+          }
+          throw new Error(
+            "VERCEL_WIF_OIDC_UNAVAILABLE: Failed to retrieve Vercel OIDC token from runtime context."
+          );
+        }
+      }
+    }
+  };
+
+  return {
+    summary: {
+      projectNumber,
+      poolId,
+      providerId,
+      serviceAccountEmail,
+      audience,
+      impersonationUrl
+    },
+    externalAccountConfig
+  };
+}
+
+/**
+ * Firebase Admin Credential adapter wrapping Google's BaseExternalAccountClient.
+ * Maps { token } + credentials.expiry_date into Firebase Admin's { access_token, expires_in }.
+ */
+export class VercelWifCredential implements Credential {
+  constructor(private readonly externalAccountClient: BaseExternalAccountClient) {}
+
+  async getAccessToken(): Promise<GoogleOAuthAccessToken> {
+    let tokenResponse: { token?: string | null };
+    try {
+      tokenResponse = await this.externalAccountClient.getAccessToken();
+    } catch (err: any) {
+      const code = typeof err?.code === "string" ? ` (${err.code})` : "";
+      throw new Error(
+        `VERCEL_WIF_TOKEN_EXCHANGE_FAILED: Failed to exchange Vercel OIDC token for impersonated Google access token${code}.`
+      );
+    }
+
+    const accessToken = tokenResponse?.token;
+    if (!accessToken || typeof accessToken !== "string") {
+      throw new Error(
+        "VERCEL_WIF_TOKEN_ERROR: ExternalAccountClient did not return a valid Google access token."
+      );
+    }
+
+    const expiryDate = this.externalAccountClient.credentials?.expiry_date;
+    const expiresIn =
+      typeof expiryDate === "number" && Number.isFinite(expiryDate)
+        ? Math.max(1, Math.ceil((expiryDate - Date.now()) / 1000))
+        : 3600;
+
+    return {
+      access_token: accessToken,
+      expires_in: expiresIn
+    };
+  }
+}
+
+function inspectVercelWifEnv(env: NodeJS.ProcessEnv): {
+  complete: boolean;
+  anyProvided: boolean;
+  missing: string[];
+  params?: {
+    projectNumber: string;
+    poolId: string;
+    providerId: string;
+    serviceAccountEmail: string;
+  };
+} {
+  const entries = [
+    ["GCP_PROJECT_NUMBER", env.GCP_PROJECT_NUMBER?.trim() || ""],
+    ["GCP_WORKLOAD_IDENTITY_POOL_ID", env.GCP_WORKLOAD_IDENTITY_POOL_ID?.trim() || ""],
+    [
+      "GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID",
+      env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID?.trim() || ""
+    ],
+    ["GCP_SERVICE_ACCOUNT_EMAIL", env.GCP_SERVICE_ACCOUNT_EMAIL?.trim() || ""]
+  ] as const;
+
+  const missing = entries.filter(([, val]) => !val).map(([key]) => key);
+  const anyProvided = missing.length < entries.length;
+  const complete = missing.length === 0;
+
+  if (!complete) {
+    return { complete: false, anyProvided, missing };
+  }
+
+  return {
+    complete: true,
+    anyProvided: true,
+    missing: [],
+    params: {
+      projectNumber: entries[0][1],
+      poolId: entries[1][1],
+      providerId: entries[2][1],
+      serviceAccountEmail: entries[3][1]
+    }
+  };
+}
+
+/**
+ * Resolves Firebase Admin SDK AppOptions across Cloud Run, Vercel (WIF or static fallback), and Local runtimes.
+ * Never logs or exposes OIDC tokens, access tokens, private keys, or sensitive secrets in errors.
  */
 export function resolveFirebaseAdminConfig(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  resolveOptions?: ResolveFirebaseAdminOptions
 ): FirebaseAdminResolutionResult {
   const firebaseConfig = readFirebaseAppletConfig();
   const targetProjectId =
@@ -142,7 +360,7 @@ export function resolveFirebaseAdminConfig(
   if (isCloudRun) {
     try {
       options.credential = applicationDefault();
-    } catch (err: any) {
+    } catch {
       throw new Error(
         `ADC_INITIALIZATION_FAILED: Cloud Run runtime failed to load Application Default Credentials for project ${targetProjectId}.`
       );
@@ -156,7 +374,32 @@ export function resolveFirebaseAdminConfig(
     };
   }
 
-  // 1. Explicit split environment variables (documented Vercel standard)
+  // 1. Passwordless Vercel OIDC / Google Workload Identity Federation (preferred when configured)
+  const wifEnv = inspectVercelWifEnv(env);
+  if (wifEnv.complete && wifEnv.params) {
+    const { summary, externalAccountConfig } = buildVercelWifExternalAccountConfig(
+      wifEnv.params,
+      resolveOptions?.oidcTokenSupplier
+    );
+    const authClient = ExternalAccountClient.fromJSON(externalAccountConfig);
+    if (!authClient) {
+      throw new Error(
+        "FIREBASE_ADMIN_INVALID_WIF_CONFIG: ExternalAccountClient.fromJSON failed to construct a WIF client."
+      );
+    }
+    options.credential = new VercelWifCredential(authClient);
+    return {
+      projectId: targetProjectId,
+      firestoreDatabaseId,
+      runtime,
+      credentialSource: "vercel_wif",
+      options,
+      wifConfig: summary,
+      wifAuthClient: authClient
+    };
+  }
+
+  // 2. Explicit split environment variables (legacy / local static credential path)
   const rawClientEmail = env.FIREBASE_ADMIN_CLIENT_EMAIL?.trim();
   const rawPrivateKey = env.FIREBASE_ADMIN_PRIVATE_KEY;
   if (rawClientEmail || rawPrivateKey) {
@@ -188,7 +431,7 @@ export function resolveFirebaseAdminConfig(
     };
   }
 
-  // 2. GOOGLE_APPLICATION_CREDENTIALS file path (local / container dev)
+  // 3. GOOGLE_APPLICATION_CREDENTIALS file path (local / container dev)
   const envCredPath = env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
   if (envCredPath) {
     const resolvedPath = path.isAbsolute(envCredPath)
@@ -220,7 +463,7 @@ export function resolveFirebaseAdminConfig(
     }
   }
 
-  // 3. FIREBASE_SERVICE_ACCOUNT_KEY env var (raw JSON or base64 JSON)
+  // 4. FIREBASE_SERVICE_ACCOUNT_KEY env var (raw JSON or base64 JSON)
   if (env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     try {
       let raw = env.FIREBASE_SERVICE_ACCOUNT_KEY.trim();
@@ -257,14 +500,19 @@ export function resolveFirebaseAdminConfig(
     }
   }
 
-  // 4. Fail fast on Vercel if no explicit credentials are present (avoid hanging on GCP metadata server)
+  // 5. Fail fast on Vercel if neither WIF nor explicit static credentials are present
   if (isVercel) {
+    if (wifEnv.anyProvided) {
+      throw new Error(
+        `FIREBASE_ADMIN_NOT_CONFIGURED: Incomplete Vercel WIF configuration. Missing: ${wifEnv.missing.join(", ")}.`
+      );
+    }
     throw new Error(
-      "FIREBASE_ADMIN_NOT_CONFIGURED: Firebase Admin credentials are missing in Vercel runtime. Set FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL, and FIREBASE_ADMIN_PRIVATE_KEY (or FIREBASE_SERVICE_ACCOUNT_KEY)."
+      "FIREBASE_ADMIN_NOT_CONFIGURED: Firebase Admin credentials are missing in Vercel runtime. Configure Vercel WIF (GCP_PROJECT_NUMBER, GCP_WORKLOAD_IDENTITY_POOL_ID, GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID, GCP_SERVICE_ACCOUNT_EMAIL) or set static fallback credentials."
     );
   }
 
-  // 5. Local workspace service account files (local dev only)
+  // 6. Local workspace service account files (local dev only)
   try {
     const candidates = [
       path.resolve(process.cwd(), "service-account-key.json"),
@@ -308,7 +556,7 @@ export function resolveFirebaseAdminConfig(
     // Directory scan skipped
   }
 
-  // 6. Local fallback to Application Default Credentials (ADC)
+  // 7. Local fallback to Application Default Credentials (ADC)
   try {
     options.credential = applicationDefault();
   } catch (e: any) {
@@ -333,6 +581,7 @@ export function getAdminApp(): App {
   }
 
   const resolved = resolveFirebaseAdminConfig(process.env);
+  cachedResolvedConfig = resolved;
   adminApp = initializeApp(resolved.options);
   console.log(
     `[Firebase Admin] App initialized (${resolved.runtime}/${resolved.credentialSource}) for project: ${resolved.projectId}`
@@ -341,16 +590,40 @@ export function getAdminApp(): App {
 }
 
 /**
- * Returns the Firestore Admin instance bound exclusively to the target project and database.
- * Strictly uses Firebase Admin SDK without client fallback.
+ * Returns the Firestore Admin instance bound exclusively to the target project and named database.
+ * Uses dedicated @google-cloud/firestore with GoogleAuth + ExternalAccountClient when WIF is active
+ * (because firebase-admin/firestore rejects custom Credential instances), and never falls back to (default).
  */
 export function getAdminFirestore(): Firestore {
   const app = getAdminApp();
-  const dbId = readFirebaseAppletConfig().firestoreDatabaseId;
-  if (dbId && dbId !== "YOUR_FIRESTORE_DATABASE_ID" && dbId !== "(default)") {
-    return getFirestore(app, dbId);
+  const dbId =
+    cachedResolvedConfig?.firestoreDatabaseId ||
+    readFirebaseAppletConfig().firestoreDatabaseId ||
+    DEFAULT_FIRESTORE_DATABASE_ID;
+
+  if (!dbId || dbId === "YOUR_FIRESTORE_DATABASE_ID" || dbId === "(default)") {
+    throw new Error(
+      "FIRESTORE_DATABASE_ID_REQUIRED: Explicit named Firestore database ID is missing or invalid; refusing fallback to (default)."
+    );
   }
-  return getFirestore(app);
+
+  if (cachedResolvedConfig?.credentialSource === "vercel_wif" && cachedResolvedConfig.wifAuthClient) {
+    if (!cachedWifFirestore) {
+      const googleAuth = new GoogleAuth({
+        projectId: cachedResolvedConfig.projectId,
+        authClient: cachedResolvedConfig.wifAuthClient,
+        scopes: VERCEL_WIF_OAUTH_SCOPES
+      });
+      cachedWifFirestore = new CloudFirestore({
+        projectId: cachedResolvedConfig.projectId,
+        databaseId: dbId,
+        auth: googleAuth
+      }) as unknown as Firestore;
+    }
+    return cachedWifFirestore;
+  }
+
+  return getAdminSdkFirestore(app, dbId);
 }
 
 /**
@@ -360,3 +633,4 @@ export function getAdminAuth(): Auth {
   const app = getAdminApp();
   return getAuth(app);
 }
+
